@@ -10,6 +10,11 @@ pub fn build(b: *std.Build) void {
         .backend = .raylib_zig,
     });
 
+    const clap = b.dependency("clap", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     const exe = b.addExecutable(.{
         .name = "prototype1",
         .root_module = b.createModule(.{
@@ -18,6 +23,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "dvui", .module = dvui_dep.module("dvui_raylib_zig") },
+                .{ .name = "clap", .module = clap.module("clap") },
             },
         }),
     });

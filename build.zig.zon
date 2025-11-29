@@ -12,6 +12,10 @@
             .url = "git+https://github.com/foxnne/dvui-dev.git#0ed011a2157dcb154a98cbaa7fd9f14921289368",
             .hash = "dvui-0.4.0-dev-AQFJmWEy2AABzX_-NPzCX5-pjWfrnbuN8q86ag9FA-gi",
         },
+        .clap = .{
+            .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.11.0.tar.gz",
+            .hash = "clap-0.11.0-oBajB-HnAQDPCKYzwF7rO3qDFwRcD39Q0DALlTSz5H7e",
+        },
     },
     .paths = .{
         "build.zig",
