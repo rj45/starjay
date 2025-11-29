@@ -1,0 +1,21 @@
+.{
+    .name = .starj_console,
+    .version = "0.0.1",
+    .fingerprint = 0xa2c40a86857ec2a4,
+    .minimum_zig_version = "0.15.1",
+    .dependencies = .{
+        .raylib_zig = .{
+            .url = "git+https://github.com/raylib-zig/raylib-zig.git#a4d18b2d1cf8fdddec68b5b084535fca0475f466",
+            .hash = "raylib_zig-5.6.0-dev-KE8REL5MBQAf3p497t52Xw9P7ojndIkVOWPXnLiLLw2P",
+        },
+        .dvui = .{
+            .url = "git+https://github.com/foxnne/dvui-dev.git#0ed011a2157dcb154a98cbaa7fd9f14921289368",
+            .hash = "dvui-0.4.0-dev-AQFJmWEy2AABzX_-NPzCX5-pjWfrnbuN8q86ag9FA-gi",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
