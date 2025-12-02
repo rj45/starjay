@@ -1,32 +1,18 @@
 const std = @import("std");
 const dvui = @import("dvui");
-// const backend = dvui.backend;
 const RaylibBackend =  dvui.backend;
 const raylib = RaylibBackend.raylib;
-const clap = @import("clap");
 
 const colors = @import("colors.zig").colors;
 const theme = @import("theme.zig");
 
-
 // TODO: Figure out an icon to embed here
 //const window_icon_png = @embedFile("zig-favicon.png");
-
-var gpa_instance = std.heap.GeneralPurposeAllocator(.{}){};
-const gpa = gpa_instance.allocator();
 
 const vsync = true;
 var scale_val: f32 = 1.0;
 
-pub fn main() !void {
-    defer _ = gpa_instance.deinit();
-
-    const run_gui = try handle_cli();
-    if (!run_gui) {
-        // all done, no GUI requested
-        return;
-    }
-
+pub fn main(gpa: std.mem.Allocator) !void {
     if (@import("builtin").os.tag == .windows) { // optional
         // on windows graphical apps have no console, so output goes to nowhere
         // so, attach it manually
@@ -76,37 +62,6 @@ pub fn main() !void {
         const wait_event_micros = win.waitTime(end_micros);
         backend.EndDrawingWaitEventTimeout(wait_event_micros);
     }
-}
-
-fn handle_cli() !bool {
-    const params = comptime clap.parseParamsComptime(
-        \\-h, --help             Display this help and exit.
-        \\-d, --debugger         Show debugger GUI window.
-        \\
-    );
-
-    var diag = clap.Diagnostic{};
-    var res = clap.parse(clap.Help, &params, clap.parsers.default, .{
-        .diagnostic = &diag,
-        .allocator = gpa,
-    }) catch |err| {
-        // Report useful error and exit.
-        try diag.reportToFile(.stderr(), err);
-        return err;
-    };
-    defer res.deinit();
-
-    if (res.args.help != 0) {
-        try clap.helpToFile(.stderr(), clap.Help, &params, .{});
-        return false;
-    }
-
-    if (res.args.debugger == 0) {
-        // insert call to headless CLI mode here
-        return false;
-    }
-
-    return true;
 }
 
 // return true to keep running
