@@ -14,6 +14,7 @@ pub fn main() !void {
     const params = comptime clap.parseParamsComptime(
         \\-h, --help             Display this help and exit.
         \\-d, --debugger         Show debugger GUI window.
+        \\-r, --rom <str>        Load ROM file.
         \\
     );
 
@@ -38,5 +39,13 @@ pub fn main() !void {
         return;
     }
 
-    try emulator.main();
+    if (res.args.rom) |rom| {
+        try emulator.main(rom, 10000000, gpa);
+    }
+
+}
+
+test {
+    // Run all tests in submodules
+    @import("std").testing.refAllDecls(@This());
 }

@@ -3,7 +3,7 @@
 ; Emulator checks: TOS = 99, depth = 1
 ; The branch should NOT be taken because sub result is 0
 
-#bank code
+#bank vector
 _start:
     push 5
     push 5

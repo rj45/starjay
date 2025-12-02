@@ -2,7 +2,7 @@
 ; Validates: push imm, or
 ; Emulator checks: TOS = 0xFF, depth = 1
 
-#bank code
+#bank vector
 _start:
     push 0xF0
     push 0x0F

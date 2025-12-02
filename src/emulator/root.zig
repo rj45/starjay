@@ -7,6 +7,7 @@ pub const Word = types.Word;
 
 pub const run = cpu.run;
 
-pub fn main() !void {
-    cpu.run();
+pub fn main(rom_file: []const u8, max_cycles: usize, gpa: std.mem.Allocator) !void {
+    const errorLevel = try cpu.run(rom_file, max_cycles, gpa);
+    std.process.exit(@intCast(errorLevel));
 }

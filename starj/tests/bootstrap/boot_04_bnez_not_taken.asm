@@ -2,7 +2,7 @@
 ; Validates: push imm, sub, bnez (taken path), jump (push_pcrel + add pc)
 ; Emulator checks: TOS = 99, depth = 1
 
-#bank code
+#bank vector
 _start:
     push 10
     push 5

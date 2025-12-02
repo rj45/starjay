@@ -4,7 +4,7 @@
 ; Emulator checks: TOS = 1, depth = 2
 ; No halt mechanism - uses PC-at-zero detection
 
-#bank code
+#bank vector
 _start:
     push 10       ; stack: [10], depth = 1
     push depth    ; expands to: push 4; pushcsr

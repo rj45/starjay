@@ -3,7 +3,7 @@
 ; Sets halt bit directly via popcsr, no syscall/vectors needed
 ; Emulator checks: CPU halted with TOS = 1, depth = 1
 
-#bank code
+#bank vector
 _start:
     push 1        ; success code, stack: [1], depth = 1
     push status   ; read status register (expands to: push 0; pushcsr)

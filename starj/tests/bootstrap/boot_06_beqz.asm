@@ -2,7 +2,7 @@
 ; Validates: push imm, beqz
 ; Emulator checks: TOS = 99, depth = 1
 
-#bank code
+#bank vector
 _start:
     push 0
     beqz _good    ; Should branch (0 == 0)
