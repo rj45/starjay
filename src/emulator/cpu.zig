@@ -132,6 +132,12 @@ pub const Cpu = struct {
                         std.log.info("{x} SUB {} - {}", .{ir, a, b});
                         try self.push(a - b);
                     },
+                    0x0D => { // OR
+                        const b = try self.pop();
+                        const a = try self.pop();
+                        std.log.info("{x} OR {} | {}", .{ir, a, b});
+                        try self.push(a | b);
+                    },
                     else => return Error.IllegalInstruction,
                 }
             }
@@ -185,7 +191,12 @@ test "bnez not taken instruction" {
 }
 
 test "bnez taken instruction" {
-    std.testing.log_level = .debug;
     const value = try run("starj/tests/bootstrap/boot_04_bnez_taken.bin", 20, std.testing.allocator);
     try std.testing.expect(value == 99);
+}
+
+test "or instruction" {
+    std.testing.log_level = .debug;
+    const value = try run("starj/tests/bootstrap/boot_05_or.bin", 20, std.testing.allocator);
+    try std.testing.expect(value == 0xFF);
 }
