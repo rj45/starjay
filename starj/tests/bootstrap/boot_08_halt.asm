@@ -15,3 +15,4 @@ _start:
                   ; stack: [1], depth = 1
     ; CPU should halt here due to halt bit being set
     ; Emulator verifies: TOS = 1, depth = 1
+    push 99       ; Should NOT execute

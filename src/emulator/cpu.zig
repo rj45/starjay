@@ -22,6 +22,12 @@ pub const Registers = struct {
     ar: Word = 0,
 };
 
+pub const StatusFlags = struct {
+    pub const KM: Word = 0x1;
+    pub const IE: Word = 0x2;
+    pub const HALT: Word = 0x4;
+};
+
 pub const Csrs = struct {
    status: Word = 1,
    estatus: Word = 0,
@@ -149,14 +155,29 @@ pub const Cpu = struct {
                         try self.push(a | b);
                     },
                     0x1c => { // PUSH <csr>
-                        const csr_id = try self.pop();
+                        const csr = try self.pop();
                         var csr_value: Word = 0;
-                        switch (csr_id) {
+                        switch (csr) {
                             0 => csr_value = self.csr.status,
                             else => return Error.IllegalInstruction,
                         }
-                        std.log.info("{x} PUSH CSR[{}] = {}", .{ir, csr_id, csr_value});
+                        std.log.info("{x} PUSH CSR[{}] = {}", .{ir, csr, csr_value});
                         try self.push(csr_value);
+                    },
+                    0x1d => { // POP <csr>
+                        const csr = try self.pop();
+                        const value = try self.pop();
+                        std.log.info("{x} POP CSR[{}] = {}", .{ir, csr, value});
+                        switch (csr) {
+                            0 => {
+                                self.csr.status = value;
+                                if ((value & StatusFlags.HALT) != 0) {
+                                    std.log.info("HALT encountered, stopping execution", .{});
+                                    return;
+                                }
+                            },
+                            else => return Error.IllegalInstruction,
+                        }
                     },
                     else => return Error.IllegalInstruction,
                 }
@@ -225,8 +246,13 @@ test "beqz instruction" {
     try std.testing.expect(value == 99);
 }
 
-test "push <csr> instruction" {
-    std.testing.log_level = .debug;
+test "push status instruction" {
     const value = try run("starj/tests/bootstrap/boot_07_csr.bin", 20, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "pop status and halt instruction" {
+    std.testing.log_level = .debug;
+    const value = try run("starj/tests/bootstrap/boot_08_halt.bin", 20, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
