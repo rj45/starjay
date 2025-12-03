@@ -100,7 +100,7 @@ pub const Cpu = struct {
         while (cycle < cycles) : (cycle += 1) {
             // fetch
             const ir = progMem[self.reg.pc];
-            const npc = self.reg.pc + 1;
+            var npc = self.reg.pc + 1;
 
             // decode & execute
             if ((ir & 0x80) == 0x80) {
@@ -115,6 +115,16 @@ pub const Cpu = struct {
                 switch (ir & 0x3f) {
                     0x00 => { // syscall
                         return; // TODO: implement syscall handling
+                    },
+                    0x03 => { // BNEZ
+                        const offset = try self.pop();
+                        const t = try self.pop();
+                        if (t != 0) {
+                            std.log.info("{x} BNEZ {}, {} taken", .{ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
+                            npc = self.reg.pc + @as(Word, @bitCast(offset));
+                        } else {
+                            std.log.info("{x} BNEZ {}, {} not taken", .{ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
+                        }
                     },
                     0x09 => { // SUB
                         const b = try self.pop();
@@ -165,7 +175,17 @@ test "shi instruction" {
 }
 
 test "sub instruction" {
-    std.testing.log_level = .debug;
     const value = try run("starj/tests/bootstrap/boot_02_sub.bin", 10, std.testing.allocator);
     try std.testing.expect(value == 2);
+}
+
+test "bnez not taken instruction" {
+    const value = try run("starj/tests/bootstrap/boot_03_bnez_not_taken.bin", 20, std.testing.allocator);
+    try std.testing.expect(value == 99);
+}
+
+test "bnez taken instruction" {
+    std.testing.log_level = .debug;
+    const value = try run("starj/tests/bootstrap/boot_04_bnez_taken.bin", 20, std.testing.allocator);
+    try std.testing.expect(value == 99);
 }

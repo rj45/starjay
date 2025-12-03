@@ -5,12 +5,11 @@
 
 #bank vector
 _start:
-    push 5
-    push 5
-    sub           ; TOS = 0
+    push 0        ; TOS = 0
     bnez _bad     ; Should NOT branch
     push 99       ; Should execute
-    jump _end
+    push 1
+    bnez _end
 _bad:
     push 0        ; Should NOT execute
 _end:

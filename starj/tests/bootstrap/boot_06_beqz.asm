@@ -7,7 +7,7 @@ _start:
     push 0
     beqz _good    ; Should branch (0 == 0)
     push 0        ; Should NOT execute
-    jump _end
+    beqz _end
 _good:
     push 99       ; Should execute
 _end:
