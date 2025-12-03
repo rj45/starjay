@@ -18,14 +18,11 @@
 
 ; Reset vector at 0x0000
 _reset_handler:
-  push 0xffff
-  pop fp        ; initialize kernel frame pointer
-  push 0xdfff
-  pop afp       ; initialize alternate (user) frame pointer
+  li fp, 0xffff        ; initialize kernel frame pointer
+  li afp, 0xdfff       ; initialize alternate (user) frame pointer
 
   ; Set up exception vector to point to our handler
-  push _exception_handler
-  pop evec
+  li evec, _exception_handler
 
   jump _kernel_start
 

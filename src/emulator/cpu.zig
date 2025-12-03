@@ -164,6 +164,31 @@ pub const Cpu = struct {
                         std.log.info("{x} PUSH CSR[{}] = {}", .{ir, csr, csr_value});
                         try self.push(csr_value);
                     },
+                    0x10, 0x11, 0x12, 0x13 => { // PUSH <reg>
+                        const reg = ir & 0x03;
+                        var value: Word = 0;
+                        switch (reg) {
+                            // 0 => value = self.reg.pc,
+                            1 => value = self.reg.fp,
+                            // 2 => value = self.reg.ra,
+                            // 3 => value = self.reg.ar,
+                            else => return Error.IllegalInstruction,
+                        }
+                        std.log.info("{x} PUSH REG[{}] = {}", .{ir, reg, value});
+                        try self.push(value);
+                    },
+                    0x14, 0x15, 0x16, 0x17 => { // POP <reg>
+                        const reg = ir & 0x03;
+                        const value = try self.pop();
+                        std.log.info("{x} POP REG[{}] = {}", .{ir, reg, value});
+                        switch (reg) {
+                            // 0 => npc = value,
+                            1 => self.reg.fp = value,
+                            // 2 => self.reg.ra = value,
+                            // 3 => self.reg.ar = value,
+                            else => return Error.IllegalInstruction,
+                        }
+                    },
                     0x18, 0x19, 0x1a, 0x1b => { // ADD <reg>
                         const addend = try self.pop();
                         const reg = ir & 0x03;
@@ -291,7 +316,19 @@ test "pop status and halt instruction" {
 }
 
 test "jump instruction" {
-    std.testing.log_level = .debug;
     const value = try runTest("starj/tests/bootstrap/boot_09_jump.bin", 40, std.testing.allocator);
     try std.testing.expect(value == 0xffff); // AKA -1
 }
+
+
+test "push/pop fp instruction" {
+    // std.testing.log_level = .debug;
+    const value = try runTest("starj/tests/bootstrap/boot_10_push_pop_fp.bin", 40, std.testing.allocator);
+    try std.testing.expect(value == 3);
+}
+
+// test "syscall" {
+//     std.testing.log_level = .debug;
+//     const value = try runTest("starj/tests/bootstrap/boot_10_syscall.bin", 100, std.testing.allocator);
+//     try std.testing.expect(value == 0xffff); // AKA -1
+// }

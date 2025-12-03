@@ -378,6 +378,16 @@
     or 0b100
     pop status
   }
+
+  li {reg:reg}, {imm} => asm {
+    push {imm}
+    pop {reg}
+  }
+
+  li {csr:csr}, {imm} => asm {
+    push {imm}
+    pop {csr}
+  }
 }
 
 ; ==========================================
