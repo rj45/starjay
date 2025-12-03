@@ -152,7 +152,7 @@ pub const Cpu = struct {
                         const csr_id = try self.pop();
                         var csr_value: Word = 0;
                         switch (csr_id) {
-                            4 => csr_value = self.csr.depth,
+                            0 => csr_value = self.csr.status,
                             else => return Error.IllegalInstruction,
                         }
                         std.log.info("{x} PUSH CSR[{}] = {}", .{ir, csr_id, csr_value});
