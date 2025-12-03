@@ -116,6 +116,12 @@ pub const Cpu = struct {
                     0x00 => { // syscall
                         return; // TODO: implement syscall handling
                     },
+                    0x09 => { // SUB
+                        const b = try self.pop();
+                        const a = try self.pop();
+                        std.log.info("{x} SUB {} - {}", .{ir, a, b});
+                        try self.push(a - b);
+                    },
                     else => return Error.IllegalInstruction,
                 }
             }
@@ -156,4 +162,10 @@ test "push instruction" {
 test "shi instruction" {
     const value = try run("starj/tests/bootstrap/boot_01_push_shi.bin", 10, std.testing.allocator);
     try std.testing.expect(value == 0xABCD);
+}
+
+test "sub instruction" {
+    std.testing.log_level = .debug;
+    const value = try run("starj/tests/bootstrap/boot_02_sub.bin", 10, std.testing.allocator);
+    try std.testing.expect(value == 2);
 }
