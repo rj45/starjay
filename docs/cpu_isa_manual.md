@@ -1,10 +1,10 @@
-# Starj - A 16/32-bit Stack Machine for C-like Languages
+# StarJette - A 16/32-bit Stack Machine for C-like Languages
 
 ## 1.1. Overview
 
-Starj is a stack machine architecture designed to execute C-like languages, simplifying both the hardware and compiler implementation. In the compiler, register allocation can be avoided, as the register file that would normally be present for holding temporary values is replaced by a stack.
+StarJette is the microprocessor in the StarJay console ecosystem. It is a stack machine architecture designed to execute C-like languages, simplifying both the hardware and compiler implementation. In the compiler, register allocation can be avoided, as the register file that would normally be present for holding temporary values is replaced by a stack.
 
-Starj is designed to be a "progressive complexity" implementation in hardware. There are only 3 instruction formats, all instructions are 8 bits wide, and only a subset of 25 instructions need to be implemented, the rest can be emulated in software (though it will be slow). If more complexity is acceptable, instructions may be fused together to greatly speed up the processor. The processor can be pipelined up to 3 stages, and if the frame stack is stored in a cache, and local load/store with the preceding push immediate is fused to the alu instructions, then one could even potentially get 4 or 5 pipeline stages by treating the frame stack with its locals like another register file. 
+StarJette is designed to be a "progressive complexity" implementation in hardware. There are only 3 instruction formats, all instructions are 8 bits wide, and only a subset of 25 instructions need to be implemented, the rest can be emulated in software (though it will be slow). If more complexity is acceptable, instructions may be fused together to greatly speed up the processor. The processor can be pipelined up to 3 stages, and if the frame stack is stored in a cache, and local load/store with the preceding push immediate is fused to the alu instructions, then one could even potentially get 4 or 5 pipeline stages by treating the frame stack with its locals like another register file. 
 
 The instruction set architecture could be used equally well as a 16 bit machine or 32 bit machine. It is a little-endian architecture where the smallest addressable unit is a byte (8 bits). Multi-byte values are aligned to their size (e.g., 16-bit values are aligned to even addresses, 32-bit values to addresses divisible by 4). All instructions are 8 bits wide, with no alignment requirements (jumping into the middle of a word is legal).
 
@@ -36,7 +36,7 @@ The instruction set architecture could be used equally well as a 16 bit machine 
 
 ### 1.3. Stacks
 
-Starj has two stacks:
+StarJette has two stacks:
 
 1. Data Stack: Used for holding temporary values during computation.
     - Stored in a separate memory from main memory to avoid memory bus congestion.
@@ -52,7 +52,7 @@ Starj has two stacks:
 
 ## 2. Registers
 
-Starj has a minimal set of registers:
+StarJette has a minimal set of registers:
 
 ```text
    Num    Name                             Description
@@ -68,7 +68,7 @@ Note that implementations may store `tos`, `nos`, and `ros` in registers for per
 
 Also note that the `pc` register points to the next instruction to execute after the currently executing instruction, so then in an implementation with pipelining it should not be necessary to forward both the current `pc` and the next `pc`. All instructions that reference the `pc` will reference the next instruction to execute.
 
-Starj does not have a flags register or condition codes. Instead, comparison instructions push their results onto the data stack. Conditional branches then pop the top of the stack to determine the branch direction. There is no add-with-carry or subtract-with-borrow: ltu instructions can be used to read the carry flag and implement multi-precision arithmetic in a manner similar to RISC-V.
+StarJette does not have a flags register or condition codes. Instead, comparison instructions push their results onto the data stack. Conditional branches then pop the top of the stack to determine the branch direction. There is no add-with-carry or subtract-with-borrow: ltu instructions can be used to read the carry flag and implement multi-precision arithmetic in a manner similar to RISC-V.
 
 `ar` is intended to be used for memory copy operations using the `lnw` and `snw` instructions, allowing efficient copying of data between the data stack and memory. It can also be used for efficient stack spilling and filling during context switches, or in stack overflow/underflow handlers.
 
