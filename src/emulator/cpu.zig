@@ -42,7 +42,7 @@ pub const Cpu = struct {
     reg: Registers = .{},
     csr: Csrs = .{},
     stack: [STACK_SIZE]Word = undefined,
-    memory: [*]u16 = undefined,
+    memory: []u16 = undefined,
 
     pub const Error = error{
         StackOverflow,
@@ -50,7 +50,7 @@ pub const Cpu = struct {
         IllegalInstruction,
     };
 
-    pub fn init(memory: [*]u16) Cpu {
+    pub fn init(memory: []u16) Cpu {
         return .{
             .reg = .{},
             .csr = .{},
@@ -201,78 +201,97 @@ pub const Cpu = struct {
             self.reg.pc = npc;
         }
     }
+
+    pub fn loadRom(self: *Cpu, rom_file: []const u8) !void {
+        var file = try std.fs.cwd().openFile(rom_file, .{});
+        defer file.close();
+
+        const file_size = try file.getEndPos();
+
+        for (self.memory) |*word| {
+            word.* = 0;
+        }
+
+        std.log.info("Load {} bytes as rom", .{file_size});
+        _ = try file.readAll(@ptrCast(self.memory));
+    }
 };
 
 pub fn run(rom_file: []const u8, max_cycles: usize, gpa: std.mem.Allocator) !Word {
-    var file = try std.fs.cwd().openFile(rom_file, .{});
-    defer file.close();
+    const memory = try gpa.alloc(u16, 128 * 1024);
+    defer gpa.free(memory);
 
-    const file_size = try file.getEndPos();
-    const word_count = (file_size + 1) / 2;
-    const memory_buf = try gpa.alloc(u16, if (file_size < 256 * 1024) 256 * 1024 / 2 else word_count);
-    defer gpa.free(memory_buf);
-
-    for (memory_buf) |*word| {
-        word.* = 0;
-    }
-
-    std.log.info("Load {} bytes as rom", .{file_size});
-    _ = try file.readAll(@ptrCast(memory_buf));
-    const memory: [*]u16 = @ptrCast(memory_buf);
     var cpu = Cpu.init(memory);
+    try cpu.loadRom(rom_file);
     try cpu.run(max_cycles);
 
     return try cpu.pop();
 }
 
+/// Helper function for tests to run a ROM and return the top of stack value, checking the depth is 1
+pub fn runTest(rom_file: []const u8, max_cycles: usize, gpa: std.mem.Allocator) !Word {
+    const memory = try gpa.alloc(u16, 128 * 1024);
+    defer gpa.free(memory);
+
+    var cpu = Cpu.init(memory);
+    try cpu.loadRom(rom_file);
+    try cpu.run(max_cycles);
+
+    if (cpu.csr.depth != 1) {
+        std.log.err("Expected exactly one value on stack after execution, found {}", .{cpu.csr.depth});
+        return Cpu.Error.StackUnderflow;
+    }
+
+    return try cpu.pop();
+}
+
 test "push instruction" {
-    const value = try run("starj/tests/bootstrap/boot_00_push.bin", 10, std.testing.allocator);
+    const value = try runTest("starj/tests/bootstrap/boot_00_push.bin", 10, std.testing.allocator);
     try std.testing.expect(value == 7);
 }
 
-
 test "shi instruction" {
-    const value = try run("starj/tests/bootstrap/boot_01_push_shi.bin", 10, std.testing.allocator);
+    const value = try runTest("starj/tests/bootstrap/boot_01_push_shi.bin", 10, std.testing.allocator);
     try std.testing.expect(value == 0xABCD);
 }
 
 test "sub instruction" {
-    const value = try run("starj/tests/bootstrap/boot_02_sub.bin", 10, std.testing.allocator);
+    const value = try runTest("starj/tests/bootstrap/boot_02_sub.bin", 10, std.testing.allocator);
     try std.testing.expect(value == 2);
 }
 
 test "bnez not taken instruction" {
-    const value = try run("starj/tests/bootstrap/boot_03_bnez_not_taken.bin", 20, std.testing.allocator);
+    const value = try runTest("starj/tests/bootstrap/boot_03_bnez_not_taken.bin", 20, std.testing.allocator);
     try std.testing.expect(value == 99);
 }
 
 test "bnez taken instruction" {
-    const value = try run("starj/tests/bootstrap/boot_04_bnez_taken.bin", 20, std.testing.allocator);
+    const value = try runTest("starj/tests/bootstrap/boot_04_bnez_taken.bin", 20, std.testing.allocator);
     try std.testing.expect(value == 99);
 }
 
 test "or instruction" {
-    const value = try run("starj/tests/bootstrap/boot_05_or.bin", 20, std.testing.allocator);
+    const value = try runTest("starj/tests/bootstrap/boot_05_or.bin", 20, std.testing.allocator);
     try std.testing.expect(value == 0xFF);
 }
 
 test "beqz instruction" {
-    const value = try run("starj/tests/bootstrap/boot_06_beqz.bin", 20, std.testing.allocator);
+    const value = try runTest("starj/tests/bootstrap/boot_06_beqz.bin", 20, std.testing.allocator);
     try std.testing.expect(value == 99);
 }
 
 test "push status instruction" {
-    const value = try run("starj/tests/bootstrap/boot_07_csr.bin", 20, std.testing.allocator);
+    const value = try runTest("starj/tests/bootstrap/boot_07_csr.bin", 20, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "pop status and halt instruction" {
-    const value = try run("starj/tests/bootstrap/boot_08_halt.bin", 20, std.testing.allocator);
+    const value = try runTest("starj/tests/bootstrap/boot_08_halt.bin", 20, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "jump instruction" {
     std.testing.log_level = .debug;
-    const value = try run("starj/tests/bootstrap/boot_09_jump.bin", 40, std.testing.allocator);
+    const value = try runTest("starj/tests/bootstrap/boot_09_jump.bin", 40, std.testing.allocator);
     try std.testing.expect(value == 0xffff); // AKA -1
 }
