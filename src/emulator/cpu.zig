@@ -90,25 +90,26 @@ pub const Cpu = struct {
     }
 
     inline fn signExtend(value: Word, bits: Word) Word {
-        const m = 1 << (bits - 1);
-        return (value ^ m) - m;
+        const m: Word = 1 << (bits - 1);
+        return @subWithOverflow(value ^ m, m)[0];
     }
 
     pub fn run(self: *Cpu, cycles: usize) !void {
+        const progMem: [*]u8 = @ptrCast(self.memory);
         var cycle: usize = 0;
         while (cycle < cycles) : (cycle += 1) {
             // fetch
-            const ir = self.memory[self.reg.pc];
+            const ir = progMem[self.reg.pc];
             const npc = self.reg.pc + 1;
 
             // decode & execute
             if ((ir & 0x80) == 0x80) {
                 const value = ir & 0x7f;
-                std.log.info("SHI {}", .{value});
+                std.log.info("{x} SHI {}", .{ir, value});
                 try self.push((try self.pop() << 7) | value);
             } else if ((ir & 0xc0) == 0x40) {
                 const value = signExtend(ir & 0x3f, 6);
-                std.log.info("PUSH {}", .{value});
+                std.log.info("{x} PUSH {}", .{ir, @as(i16, @bitCast(value))});
                 try self.push(value);
             } else {
                 switch (ir & 0x3f) {
@@ -149,4 +150,10 @@ pub fn run(rom_file: []const u8, max_cycles: usize, gpa: std.mem.Allocator) !Wor
 test "push instruction" {
     const value = try run("starj/tests/bootstrap/boot_00_push.bin", 10, std.testing.allocator);
     try std.testing.expect(value == 7);
+}
+
+
+test "shi instruction" {
+    const value = try run("starj/tests/bootstrap/boot_01_push_shi.bin", 10, std.testing.allocator);
+    try std.testing.expect(value == 0xABCD);
 }
