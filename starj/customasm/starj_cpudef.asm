@@ -114,7 +114,7 @@
   }
 
   push_pcrel {label} => {
-    imm = label - ($ + 1)
+    imm = label - ($ + 2)
     imm = ((imm & 0x8000) == 0) ? imm : -((!imm & 0xffff) + 1)
     assert(imm < (1<<5) && imm >= -(1<<5))
     0b01`2 @ imm`6
@@ -127,7 +127,7 @@
   }
 
   push_pcrel {label} => {
-    imm = label - ($ + 2)
+    imm = label - ($ + 3)
     imm = ((imm & 0x8000) == 0) ? imm : -((!imm & 0xffff) + 1)
     assert(imm < (1<<(5+7)) && imm >= -(1<<(5+7)))
     0b01`2 @ (imm >> 7)`6 @ 0b1`1 @ (imm & 0x7F)`7
@@ -140,7 +140,7 @@
   }
 
   push_pcrel {label} => {
-    imm = label - ($ + 3)
+    imm = label - ($ + 4)
     imm = ((imm & 0x8000) == 0) ? imm : -((!imm & 0xffff) + 1)
     assert(imm < (1<<(5+7+7)) && imm >= -(1<<(5+7+7)))
     0b01`2 @ (imm >> 14)`6 @ 0b1`1 @ ((imm >> 7) & 0x7F)`7 @ 0b1`1 @ (imm & 0x7F)`7

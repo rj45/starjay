@@ -171,8 +171,6 @@ _vector_snw:
 #addr 0x01C0
 _vector_call:
   push epc
-  push 1
-  sub
   add
   jump _vector_callp
 #addr 0x01C8
@@ -527,13 +525,10 @@ _mod:
 
 _kernel_start:
   ; Initialize kernel and user data segments to be at 0x10000
-  push 0x10
-  dup
-  dup
-  pop udset
-  pop kdset
+  li udset, 0x10
+  li kdset, 0x10
 
-  push 0b10     ; usermode with interrupts enabled
+  push 0        ; usermode with interrupts disabled
   pop estatus   ; set initial status register
   push _start
   pop epc       ; set initial pc to start of code

@@ -106,7 +106,7 @@ pub const Cpu = struct {
         while (cycle < cycles) : (cycle += 1) {
             // fetch
             const ir = progMem[self.reg.pc];
-            var npc = self.reg.pc + 1;
+            self.reg.pc += 1;
 
             // decode & execute
             if ((ir & 0x80) == 0x80) {
@@ -127,7 +127,7 @@ pub const Cpu = struct {
                         const t = try self.pop();
                         if (t == 0) {
                             std.log.info("{x} BEQZ {}, {} taken", .{ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
-                            npc = self.reg.pc + @as(Word, @bitCast(offset));
+                            self.reg.pc = @addWithOverflow(self.reg.pc, @as(Word, @bitCast(offset)))[0];
                         } else {
                             std.log.info("{x} BEQZ {}, {} not taken", .{ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
                         }
@@ -137,7 +137,7 @@ pub const Cpu = struct {
                         const t = try self.pop();
                         if (t != 0) {
                             std.log.info("{x} BNEZ {}, {} taken", .{ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
-                            npc = self.reg.pc + @as(Word, @bitCast(offset));
+                            self.reg.pc = @addWithOverflow(self.reg.pc, @as(Word, @bitCast(offset)))[0];
                         } else {
                             std.log.info("{x} BNEZ {}, {} not taken", .{ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
                         }
@@ -184,8 +184,8 @@ pub const Cpu = struct {
                         const reg = ir & 0x03;
                         switch (reg) {
                             0 => { // ADD PC aka JUMP
-                                npc = @addWithOverflow(self.reg.pc, addend)[0];
-                                std.log.info("{x} JUMP {} to {x}", .{ir, addend, npc});
+                                self.reg.pc = @addWithOverflow(self.reg.pc, addend)[0];
+                                std.log.info("{x} JUMP {} to {x}", .{ir, addend, self.reg.pc});
                             },
 
                             else => return Error.IllegalInstruction,
@@ -232,8 +232,6 @@ pub const Cpu = struct {
                     },
                 }
             }
-
-            self.reg.pc = npc;
         }
     }
 

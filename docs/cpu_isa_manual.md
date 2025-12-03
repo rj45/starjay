@@ -57,7 +57,7 @@ Starj has a minimal set of registers:
 ```text
    Num    Name                             Description
   +---+---------+-------------------------------------------------------------------------------+
-  | 0 | pc      | Program Counter - Points to the currently executing instruction.              |
+  | 0 | pc      | Program Counter - Points to the next instruction to execute.                  |
   | 1 | fp      | Frame Pointer - Points to the base of the current stack frame.                |
   | 2 | ra      | Return Address - Holds the return address during function calls.              |
   | 3 | ar      | Address Register - Holds an address for memory copies.                        |
@@ -65,6 +65,8 @@ Starj has a minimal set of registers:
 ```
 
 Note that implementations may store `tos`, `nos`, and `ros` in registers for performance, but the semantics of the architecture treat them as part of the data stack.
+
+Also note that the `pc` register points to the next instruction to execute after the currently executing instruction, so then in an implementation with pipelining it should not be necessary to forward both the current `pc` and the next `pc`. All instructions that reference the `pc` will reference the next instruction to execute.
 
 Starj does not have a flags register or condition codes. Instead, comparison instructions push their results onto the data stack. Conditional branches then pop the top of the stack to determine the branch direction. There is no add-with-carry or subtract-with-borrow: ltu instructions can be used to read the carry flag and implement multi-precision arithmetic in a manner similar to RISC-V.
 
@@ -95,7 +97,7 @@ There these CSRs:
 14. `kpmask` (Kernel Program Address Mask): Bits of kernel-mode program addresses forced to zero
 15. `kpset` (Kernel Program Address Set Bits): Bits of kernel-mode program addresses forced to one
 
-Note: Undefined CSRs read as zero, and writes to them are ignored. Attempts to read any CSR in user mode other than `depth` return zero, and writes to all CSRs (including depth) are ignored.
+Note: Undefined or reserved CSRs raise an illegal instruction exception. Attempts to read any CSR in user mode other than `depth` raise an illegal instruction exception. Attempts to write any CSR in user mode raise an illegal instruction exception.
 
 ### 2.2. Boot Value of Registers
 
@@ -154,7 +156,7 @@ On boot / reset, this register is set to `1`, starting the processor with interr
 
 ### 2.4. `epc`, `estatus` - Exception Program Counter and Exception Status
 
-The `epc` register holds the value of the `pc` register at the time an exception or interrupt occurs. This allows the processor to return to the correct instruction after handling the exception.
+The `epc` register holds the value of the `pc` register at the time an exception or interrupt occurs. This will be the address of the instruction after the one causing the exception. This may have to be adjusted if the instruction should be retried after the exception is handled.
 
 The `estatus` register holds a copy of the `status` register at the time an exception or interrupt occurs. This allows the processor to restore the previous status when returning from the exception.
 
@@ -170,7 +172,7 @@ See the interrupt handling section below for more information on the data stack 
 
 The `ar` register and `lnw` / `snw` instructions may be used to efficiently copy the data stack to and from memory.
 
-The `depth` register may be read in user mode, but writes to it are ignored. In kernel mode, any writes to this register will write as zero, as the stack only supports being reset.
+The `depth` register may be read in user mode, but writes cause an illegal instruction exception. In kernel mode, any writes to this register will write as zero, as the stack only supports being reset.
 
 ### 2.6. `ecause` - Exception Cause Register
 
@@ -225,7 +227,7 @@ Note: Macro instructions (extended instructions implemented in software) do NOT 
 
 ### 2.7. `evec` - Exception Vector Register
 
-The `evec` register holds the address that will be loaded into `pc` when an exception, interrupt, or syscall occurs. This provides a single entry point for all exception handling, with the `ecause` register indicating the specific cause.
+The `evec` register holds the address that will be loaded into `pc` when an exception, interrupt, or syscall occurs. This provides a single entry point for all exception handling except macro instructions, with the `ecause` register indicating the specific cause.
 
 On boot/reset, `evec` is initialized to 0. The reset code should set `evec` to point to the exception handler before enabling interrupts or executing instructions that might cause exceptions.
 
@@ -236,7 +238,7 @@ _exception_handler:
   ; Check ecause to determine cause
   push ecause
   and 0xF0          ; Get category
-  add pc            ; Jump to category handler
+  jump              ; Jump to category handler
   ; ... 16-byte handler entries for each category ...
 ```
 
@@ -415,13 +417,13 @@ Implementations may choose to optimise `push` (or `push` + `shi` chains) by fusi
   | O | 0   0 | 0   0 | 0   0   0   0 |
   +---+-------+-------+---------------+
 
-  if (km == 0) then fp, afp = afp, fp; epc = pc + 1; estatus = status; ecause = 0x00; ie = 0; km = 1; pc = evec
+  if (km == 0) then fp, afp = afp, fp; epc = pc; estatus = status; ecause = 0x00; ie = 0; km = 1; pc = evec
 ```
 
 Causes a system call exception. The following procedure happens:
 
 1. If not already in kernel mode (`km == 0`), swap the `fp` and `afp` registers.
-2. Save the address of the next instruction (`pc + 1`) into the `epc` register.
+2. Save the address of the next instruction (`pc`) into the `epc` register.
 3. Save the current `status` register into the `estatus` register.
 4. Set the `ecause` register to `0x00` (syscall).
 5. Clear the `ie` bit to disable interrupts.
@@ -458,7 +460,7 @@ Returns from a kernel exception (interrupt, exception, breakpoint or syscall). T
   next_pc = pc + tos!; if (nos! == 0) then pc = next_pc
 ```
 
-Branches to a target address if the popped next on stack value is equal to zero. The target address is calculated by adding the current program counter to the top of stack value which is always popped whether the branch is taken or not.
+Branches to a target address if the popped next on stack value is equal to zero. The target address is calculated by adding the address of the next instruction to execute to the top of stack value which is always popped whether the branch is taken or not.
 
 ##### 3.4.6. `bnez` - Branch if Not Equal Zero
 
@@ -471,7 +473,7 @@ Branches to a target address if the popped next on stack value is equal to zero.
   next_pc = pc + tos!; if (nos! != 0) then pc = next_pc
 ```
 
-Branches to a target address if the popped next on stack value is not equal to zero. The target address is calculated by adding the current program counter to the top of stack value which is always popped whether the branch is taken or not.
+Branches to a target address if the popped next on stack value is not equal to zero. The target address is calculated by adding the address of the next instruction to execute to the top of stack value which is always popped whether the branch is taken or not.
 
 ##### 3.4.7. `dup` - Duplicate
 
@@ -701,7 +703,7 @@ See the section 2 for the list of available registers and their numbers.
 
 Pops the top of stack value and increments the specified register by it.
 
-The `add pc` instruction has an alias of `jump`.
+The `add pc` instruction has an alias of `jump`, and note that the `pc` register holds the address of the next instruction to execute (after the `jump`).
 
 See the section 2 for the list of available registers and their numbers.
 
@@ -718,7 +720,7 @@ See the section 2 for the list of available registers and their numbers.
 
 Pushes the CSR specified by the popped top of stack on to the stack.
 
-This instruction is only available in kernel mode. Implementations may choose to raise an illegal instruction exception if executed in user mode.
+Only the `depth` CSR may be read in user mode. An illegal instruction exception is expected to be raised if any other CSR is read in user mode.
 
 ##### 3.4.23. `popcsr` - Pop Computer Status Register
 
@@ -733,7 +735,7 @@ This instruction is only available in kernel mode. Implementations may choose to
 
 Sets the CSR specified by the popped top of stack to the next on stack value (which is then popped).
 
-This instruction is only available in kernel mode. Implementations may choose to raise an illegal instruction exception if executed in user mode.
+This instruction is only available in kernel mode. An illegal instruction exception is expected to be raised if executed in user mode.
 
 ##### 3.4.24. `llw` - Load Local Word
 
@@ -748,7 +750,7 @@ This instruction is only available in kernel mode. Implementations may choose to
 
 Loads a local variable word from main memory. The address is calculated by adding the frame pointer to the top of stack value (which is then popped). The loaded word replaces the top of stack value.
 
-It is illegal to load a word from an unaligned address (that is, the lower 1 (16-bit) or 2 (32-bit) bits of the address are not zero). Implementations may choose to raise an exception if this occurs.
+It is illegal to load a word from an unaligned address (that is, the lower 1 (16-bit) or 2 (32-bit) bits of the address are not zero). Implementations are expected to raise an exception if this occurs.
 
 ##### 3.4.25. `slw` - Store Local Word
 
@@ -763,7 +765,7 @@ It is illegal to load a word from an unaligned address (that is, the lower 1 (16
 
 Stores a local variable word to main memory. The address is calculated by adding the frame pointer to the top of stack value (which is then popped). The value to be stored is taken from the next on stack value (which is then popped).
 
-It is illegal to store a word to an unaligned address (that is, the lower 1 (16-bit) or 2 (32-bit) bits of the address are not zero). Implementations may choose to raise an exception if this occurs.
+It is illegal to store a word to an unaligned address (that is, the lower 1 (16-bit) or 2 (32-bit) bits of the address are not zero). Implementations are expected to raise an exception if this occurs.
 
 #### 3.5. Extended Arithmetic and Logic Instructions
 
@@ -775,12 +777,13 @@ It is illegal to store a word to an unaligned address (that is, the lower 1 (16-
   | O | 0   0 | 1   0 | 0   0   0   0 |
   +---+-------+-------+---------------+
 
+  if (tos! == 0) then raise { if (km == 0) then fp, afp = afp, fp; epc = pc; estatus = status; ecause = 0x40; ie = 0; km = 1; pc = evec } else
   push(signed(nos! / tos!))
 ```
 
 Performs signed integer division on the top two values on the data stack which are popped and the result pushed on the top of the stack.
 
-If a division by zero is attempted, implementations may choose to raise an exception.
+If a division by zero is attempted, implementations are expected to raise an division by zero exception. If this instruction is emulated, the exception can be simulated by loading `ecause` with `0x40` and jumping to `evec`.
 
 ##### 3.5.2. `divu` - Unsigned Divide
 
@@ -790,12 +793,13 @@ If a division by zero is attempted, implementations may choose to raise an excep
   | O | 0   0 | 1   0 | 0   0   0   1 |
   +---+-------+-------+---------------+
 
+  if (tos! == 0) then raise { if (km == 0) then fp, afp = afp, fp; epc = pc; estatus = status; ecause = 0x40; ie = 0; km = 1; pc = evec } else
   push(unsigned(nos! / tos!))
 ```
 
 Performs unsigned integer division on the top two values on the data stack which are popped and the result pushed on the top of the stack.
 
-If a division by zero is attempted, implementations may choose to raise an exception.
+If a division by zero is attempted, implementations are expected to raise an division by zero exception. If this instruction is emulated, the exception can be simulated by loading `ecause` with `0x40` and jumping to `evec`.
 
 ##### 3.5.3. `mod` - Signed Modulus
 
@@ -805,12 +809,13 @@ If a division by zero is attempted, implementations may choose to raise an excep
   | O | 0   0 | 1   0 | 0   0   1   0 |
   +---+-------+-------+---------------+
 
+  if (tos! == 0) then raise { if (km == 0) then fp, afp = afp, fp; epc = pc; estatus = status; ecause = 0x40; ie = 0; km = 1; pc = evec } else
   push(signed(nos! % tos!))
 ```
 
 Performs signed integer modulus on the top two values on the data stack which are popped and the result pushed on the top of the stack.
 
-If a modulus by zero is attempted, implementations may choose to raise an exception.
+If a modulus by zero is attempted, implementations are expected to raise an division by zero exception. If this instruction is emulated, the exception can be simulated by loading `ecause` with `0x40` and jumping to `evec`.
 
 ##### 3.5.4. `modu` - Unsigned Modulus
 
@@ -820,12 +825,13 @@ If a modulus by zero is attempted, implementations may choose to raise an except
   | O | 0   0 | 1   0 | 0   0   1   1 |
   +---+-------+-------+---------------+
 
+  if (tos! == 0) then raise { if (km == 0) then fp, afp = afp, fp; epc = pc; estatus = status; ecause = 0x40; ie = 0; km = 1; pc = evec } else
   push(unsigned(nos! % tos!))
 ```
 
 Performs unsigned integer modulus on the top two values on the data stack which are popped and the result pushed on the top of the stack.
 
-If a modulus by zero is attempted, implementations may choose to raise an exception.
+If a modulus by zero is attempted, implementations are expected to raise an division by zero exception. If this instruction is emulated, the exception can be simulated by loading `ecause` with `0x40` and jumping to `evec`.
 
 ##### 3.5.5. `mul` - Multiply
 
@@ -965,7 +971,7 @@ Loads a half-word (16 bits) from main memory. The address is taken from the top 
 
 This instruction is identical to `lw` on a 16-bit machine and implementations can trigger the same implementation for both instructions.
 
-It is illegal to load a half-word from an unaligned address (that is, the least significant bit of the address is not zero). Implementations may choose to raise an exception if this occurs.
+It is illegal to load a half-word from an unaligned address (that is, the least significant bit of the address is not zero). Implementations are expected to raise an exception if this occurs.
 
 ##### 3.6.4. `sh` - Store Halfword
 
@@ -982,7 +988,7 @@ Stores a half-word (16 bits) to main memory. The address is taken from the top o
 
 This instruction is identical to `sw` on a 16-bit machine and implementations can trigger the same implementation for both instructions.
 
-It is illegal to store a half-word to an unaligned address (that is, the least significant bit of the address is not zero). Implementations may choose to raise an exception if this occurs.
+It is illegal to store a half-word to an unaligned address (that is, the least significant bit of the address is not zero). Implementations are expected to raise an exception if this occurs.
 
 ##### 3.6.5. `lw` - Load Word
 
@@ -997,7 +1003,7 @@ It is illegal to store a half-word to an unaligned address (that is, the least s
 
 Loads a word from main memory. The address is taken from the top of stack value which is popped and the result pushed on the top of the stack.
 
-It is illegal to load a word from an unaligned address (that is, the lower 1 (16-bit) or 2 (32-bit) bits of the address are not zero). Implementations may choose to raise an exception if this occurs.
+It is illegal to load a word from an unaligned address (that is, the lower 1 (16-bit) or 2 (32-bit) bits of the address are not zero). Implementations are expected to raise an exception if this occurs.
 
 ##### 3.6.6. `sw` - Store Word
 
@@ -1012,7 +1018,7 @@ It is illegal to load a word from an unaligned address (that is, the lower 1 (16
 
 Stores a word to main memory. The address is taken from the top of stack value (which is then popped). The value to be stored is taken from the next on stack value (which is then popped).
 
-It is illegal to store a word to an unaligned address (that is, the lower 1 (16-bit) or 2 (32-bit) bits of the address are not zero). Implementations may choose to raise an exception if this occurs.
+It is illegal to store a word to an unaligned address (that is, the lower 1 (16-bit) or 2 (32-bit) bits of the address are not zero). Implementations are expected to raise an exception if this occurs.
 
 ##### 3.6.7. `lnw` - Load Next Word
 
@@ -1027,7 +1033,7 @@ It is illegal to store a word to an unaligned address (that is, the lower 1 (16-
 
 Pushes a word from main memory onto the data stack from the address in the `ar` register. The `ar` register is then incremented by the number of bytes in a word. This can be used to implement more efficient memory copies or for loops over a block of memory.
 
-It is illegal to load a word from an unaligned address (that is, the lower 1 (16-bit) or 2 (32-bit) bits of the address are not zero). Implementations may choose to raise an exception if this occurs.
+It is illegal to load a word from an unaligned address (that is, the lower 1 (16-bit) or 2 (32-bit) bits of the address are not zero). Implementations are expected to raise an exception if this occurs.
 
 ##### 3.6.8. `snw` - Store Next Word
 
@@ -1042,7 +1048,7 @@ It is illegal to load a word from an unaligned address (that is, the lower 1 (16
 
 Pops a word from the data stack and stores it to main memory at the address in the `ar` register. The `ar` register is then incremented by the number of bytes in a word. This can be used to implement more efficient memory copies or for loops over a block of memory.
 
-It is illegal to store a word to an unaligned address (that is, the lower 1 (16-bit) or 2 (32-bit) bits of the address are not zero). Implementations may choose to raise an exception if this occurs.
+It is illegal to store a word to an unaligned address (that is, the lower 1 (16-bit) or 2 (32-bit) bits of the address are not zero). Implementations are expected to raise an exception if this occurs.
 
 #### 3.7. Extended Control Flow Instructions
 
@@ -1054,10 +1060,10 @@ It is illegal to store a word to an unaligned address (that is, the lower 1 (16-
   | O | 0   0 | 1   1   1 | 0   0   0 |
   +---+-------+-----------+-----------+
 
-  ra = pc + 1; pc = pc + tos!
+  ra = pc; pc += tos!
 ```
 
-Calls a function at a pc-relative target address. The return address (the address of the instruction after the `call`) is saved to the `ra` register. The program counter is then set to the target address, which is calculated by adding the current program counter to the top of stack value (which is then popped).
+Calls a function at a pc-relative target address. The return address (the address of the instruction after the `call`) is saved to the `ra` register. The program counter is then set to the target address, which is calculated by adding the address of the next instruction to execute to the top of stack value (which is then popped).
 
 ##### 3.7.2. `callp` - Call Function Pointer
 
@@ -1067,7 +1073,7 @@ Calls a function at a pc-relative target address. The return address (the addres
   | O | 0   0 | 1   1   1 | 0   0   1 |
   +---+-------+-----------+-----------+
 
-  ra = pc + 1; pc = tos!
+  ra = pc; pc = tos!
 ```
 
 Calls a function at an absolute target address. The return address (the address of the instruction after the `call`) is saved to the `ra` register. The program counter is then set to the top of stack value (which is then popped).
@@ -1144,7 +1150,7 @@ Kernel mode can be entered through several mechanisms: system calls, interrupts,
 
 Architecturally, interrupts and exceptions appear to occur (from the programmer's perspective) at the beginning of the instruction's execution. If an instruction during the course of execution causes an exception, the state of the processor will be preserved as if the instruction had not started executing yet, and instead the processor will execute the trap sequence.
 
-Syscalls save the return address as `pc + 1` (to resume after the syscall), while interrupts and exceptions save the return address as `pc` (to retry the faulting instruction). Let us call this the return address `return_address` for the following descriptions.
+The `epc` CSR is always set to the address of the next instruction to execute (`pc`), even if the exception occurred during the execution of an instruction. As such, `epc` may need to be adjusted in order to retry a failed instruction.
 
 When entering kernel mode via syscall, exception, or interrupt, the following steps occur:
 
@@ -1153,7 +1159,7 @@ When entering kernel mode via syscall, exception, or interrupt, the following st
 2. The current `status` CSR is stored in the `estatus` CSR.
 3. The `km` flag is set to `1`.
 4. The `ie` flag is cleared to `0`.
-5. The `return_address` is stored in the `epc` CSR.
+5. The `pc` is stored in the `epc` CSR.
 6. The `ecause` CSR is set to the appropriate cause code (see section 2.6 for the cause table).
 7. `pc` is set to the value in the `evec` CSR.
 
@@ -1240,9 +1246,11 @@ The macro instruction vector table is located at addresses 0x0100-0x01FF, with e
 
 Space should be reserved at 0x02XX for macro instruction handlers to jump to if needed, should they overflow the allotted 8-byte space.
 
+Only 8 bytes are reserved for each macro instruction handler, so if more space is needed, the handler should jump to a different location in memory.
+
 Note: The Invalid Instruction Exception (`ecause` = 0x10) does not include macro instructions (`0b001XXXXX`). Those instead trigger the specific macro instruction handler vector. If a specific instruction is implemented in hardware, it must not trigger an exception.
 
-Only 8 bytes are reserved for each macro instruction handler, so if more space is needed, the handler should jump to a different location in memory.
+Note 2: The divide related instructions (`div`, `divu`, `mod`, `modu`) are defined to cause a division by zero exception if the divisor is zero. This can be simulated by writing the `ecause` for division by zero and jumping to the general exception vector at `evec`.
 
 **Warning**: Macro instruction handlers must either use no more than 4 stack slots, or they must first save `epc` and `estatus` to the frame stack before using more than 4 stack slots. See the previous two sections for more details.
 
