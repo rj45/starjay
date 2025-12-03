@@ -154,16 +154,6 @@ pub const Cpu = struct {
                         std.log.info("{x} OR {} | {}", .{ir, a, b});
                         try self.push(a | b);
                     },
-                    0x1c => { // PUSH <csr>
-                        const csr = try self.pop();
-                        var csr_value: Word = 0;
-                        switch (csr) {
-                            0 => csr_value = self.csr.status,
-                            else => return Error.IllegalInstruction,
-                        }
-                        std.log.info("{x} PUSH CSR[{}] = {}", .{ir, csr, csr_value});
-                        try self.push(csr_value);
-                    },
                     0x10, 0x11, 0x12, 0x13 => { // PUSH <reg>
                         const reg = ir & 0x03;
                         var value: Word = 0;
@@ -201,6 +191,21 @@ pub const Cpu = struct {
                             else => return Error.IllegalInstruction,
                         }
                     },
+                    0x1c => { // PUSH <csr>
+                        const csr = try self.pop();
+                        var csr_value: Word = 0;
+                        switch (csr) {
+                            0 => csr_value = self.csr.status,
+                            3 => csr_value = self.csr.afp,
+                            6 => csr_value = self.csr.evec,
+                            else => {
+                                std.log.err("Illegal CSR: {x}", .{csr});
+                                return Error.IllegalInstruction;
+                            },
+                        }
+                        std.log.info("{x} PUSH CSR[{}] = {}", .{ir, csr, csr_value});
+                        try self.push(csr_value);
+                    },
                     0x1d => { // POP <csr>
                         const csr = try self.pop();
                         const value = try self.pop();
@@ -213,7 +218,12 @@ pub const Cpu = struct {
                                     return;
                                 }
                             },
-                            else => return Error.IllegalInstruction,
+                            3 => self.csr.afp = value,
+                            6 => self.csr.evec = value,
+                            else => {
+                                std.log.err("Illegal CSR: {x}", .{csr});
+                                return Error.IllegalInstruction;
+                            }
                         }
                     },
                     else => {
@@ -322,8 +332,18 @@ test "jump instruction" {
 
 
 test "push/pop fp instruction" {
-    // std.testing.log_level = .debug;
     const value = try runTest("starj/tests/bootstrap/boot_10_push_pop_fp.bin", 40, std.testing.allocator);
+    try std.testing.expect(value == 3);
+}
+
+test "push/pop afp instruction" {
+    const value = try runTest("starj/tests/bootstrap/boot_11_push_pop_afp.bin", 40, std.testing.allocator);
+    try std.testing.expect(value == 3);
+}
+
+test "push/pop evec instruction" {
+    std.testing.log_level = .debug;
+    const value = try runTest("starj/tests/bootstrap/boot_12_push_pop_evec.bin", 40, std.testing.allocator);
     try std.testing.expect(value == 3);
 }
 
