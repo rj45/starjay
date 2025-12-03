@@ -116,6 +116,16 @@ pub const Cpu = struct {
                     0x00 => { // syscall
                         return; // TODO: implement syscall handling
                     },
+                    0x02 => { // BEQZ
+                        const offset = try self.pop();
+                        const t = try self.pop();
+                        if (t == 0) {
+                            std.log.info("{x} BEQZ {}, {} taken", .{ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
+                            npc = self.reg.pc + @as(Word, @bitCast(offset));
+                        } else {
+                            std.log.info("{x} BEQZ {}, {} not taken", .{ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
+                        }
+                    },
                     0x03 => { // BNEZ
                         const offset = try self.pop();
                         const t = try self.pop();
@@ -196,7 +206,12 @@ test "bnez taken instruction" {
 }
 
 test "or instruction" {
-    std.testing.log_level = .debug;
     const value = try run("starj/tests/bootstrap/boot_05_or.bin", 20, std.testing.allocator);
     try std.testing.expect(value == 0xFF);
+}
+
+test "beqz instruction" {
+    std.testing.log_level = .debug;
+    const value = try run("starj/tests/bootstrap/boot_06_beqz.bin", 20, std.testing.allocator);
+    try std.testing.expect(value == 99);
 }
