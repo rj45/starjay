@@ -372,6 +372,12 @@
     push {imm}
     sll
   }
+
+  halt => asm {
+    push status
+    or 0b100
+    pop status
+  }
 }
 
 ; ==========================================

@@ -58,13 +58,13 @@ tests/bootstrap/%_listing.txt: tests/bootstrap/%.asm $(ISA) $(KERNEL)
 	customasm -q -f annotated,base:16,group:2,addr_base:16,labels:true -o $@ $(ISA) $<
 
 # Special rule for boot_09 which needs the full kernel
-tests/bootstrap/boot_09_syscall.bin: tests/bootstrap/boot_09_syscall.asm $(ISA) $(KERNEL)
+tests/bootstrap/boot_10_syscall.bin: tests/bootstrap/boot_10_syscall.asm $(ISA) $(KERNEL)
 	customasm -q -f binary -o $@ $(ISA) $(KERNEL) $<
 
-tests/bootstrap/boot_09_syscall.hex: tests/bootstrap/boot_09_syscall.asm $(ISA) $(KERNEL)
+tests/bootstrap/boot_10_syscall.hex: tests/bootstrap/boot_10_syscall.asm $(ISA) $(KERNEL)
 	customasm -q -f intelhex,addr_unit:8 -o $@ $(ISA) $(KERNEL) $<
 
-tests/bootstrap/boot_09_syscall_listing.txt: tests/bootstrap/boot_09_syscall.asm $(ISA) $(KERNEL)
+tests/bootstrap/boot_10_syscall_listing.txt: tests/bootstrap/boot_10_syscall.asm $(ISA) $(KERNEL)
 	customasm -q -f annotated,base:16,group:2,addr_base:16,labels:true -o $@ $(ISA) $(KERNEL) $<
 
 clean:

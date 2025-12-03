@@ -146,7 +146,7 @@ pub const Cpu = struct {
                         const b = try self.pop();
                         const a = try self.pop();
                         std.log.info("{x} SUB {} - {}", .{ir, a, b});
-                        try self.push(a - b);
+                        try self.push(@subWithOverflow(a, b)[0]);
                     },
                     0x0d => { // OR
                         const b = try self.pop();
@@ -164,6 +164,18 @@ pub const Cpu = struct {
                         std.log.info("{x} PUSH CSR[{}] = {}", .{ir, csr, csr_value});
                         try self.push(csr_value);
                     },
+                    0x18, 0x19, 0x1a, 0x1b => { // ADD <reg>
+                        const addend = try self.pop();
+                        const reg = ir & 0x03;
+                        switch (reg) {
+                            0 => { // ADD PC aka JUMP
+                                npc = @addWithOverflow(self.reg.pc, addend)[0];
+                                std.log.info("{x} JUMP {} to {x}", .{ir, addend, npc});
+                            },
+
+                            else => return Error.IllegalInstruction,
+                        }
+                    },
                     0x1d => { // POP <csr>
                         const csr = try self.pop();
                         const value = try self.pop();
@@ -179,7 +191,10 @@ pub const Cpu = struct {
                             else => return Error.IllegalInstruction,
                         }
                     },
-                    else => return Error.IllegalInstruction,
+                    else => {
+                        std.log.err("Illegal instruction: {x}", .{ir});
+                        return Error.IllegalInstruction;
+                    },
                 }
             }
 
@@ -252,7 +267,12 @@ test "push status instruction" {
 }
 
 test "pop status and halt instruction" {
-    std.testing.log_level = .debug;
     const value = try run("starj/tests/bootstrap/boot_08_halt.bin", 20, std.testing.allocator);
     try std.testing.expect(value == 1);
+}
+
+test "jump instruction" {
+    std.testing.log_level = .debug;
+    const value = try run("starj/tests/bootstrap/boot_09_jump.bin", 40, std.testing.allocator);
+    try std.testing.expect(value == 0xffff); // AKA -1
 }

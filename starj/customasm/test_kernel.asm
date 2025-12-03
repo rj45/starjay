@@ -45,7 +45,9 @@ _exception_handler:
 _exception_not_syscall:
   ; Not a syscall - negate ecause for error code
   ; ecause is already on stack from the bnez check
-  neg           ; negate to get negative error code
+  push 0           ; negate to get negative error code
+  swap
+  sub
   jump _halt
 
 ; ==========================================
