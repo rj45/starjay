@@ -142,11 +142,21 @@ pub const Cpu = struct {
                         std.log.info("{x} SUB {} - {}", .{ir, a, b});
                         try self.push(a - b);
                     },
-                    0x0D => { // OR
+                    0x0d => { // OR
                         const b = try self.pop();
                         const a = try self.pop();
                         std.log.info("{x} OR {} | {}", .{ir, a, b});
                         try self.push(a | b);
+                    },
+                    0x1c => { // PUSH <csr>
+                        const csr_id = try self.pop();
+                        var csr_value: Word = 0;
+                        switch (csr_id) {
+                            4 => csr_value = self.csr.depth,
+                            else => return Error.IllegalInstruction,
+                        }
+                        std.log.info("{x} PUSH CSR[{}] = {}", .{ir, csr_id, csr_value});
+                        try self.push(csr_value);
                     },
                     else => return Error.IllegalInstruction,
                 }
@@ -211,7 +221,12 @@ test "or instruction" {
 }
 
 test "beqz instruction" {
-    std.testing.log_level = .debug;
     const value = try run("starj/tests/bootstrap/boot_06_beqz.bin", 20, std.testing.allocator);
     try std.testing.expect(value == 99);
+}
+
+test "push <csr> instruction" {
+    std.testing.log_level = .debug;
+    const value = try run("starj/tests/bootstrap/boot_07_csr.bin", 20, std.testing.allocator);
+    try std.testing.expect(value == 1);
 }
