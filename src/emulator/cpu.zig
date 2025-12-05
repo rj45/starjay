@@ -451,6 +451,12 @@ pub const Cpu = struct {
                         std.log.info("{x}: {x} OR {} | {}", .{self.reg.pc-1, ir, a, b});
                         try self.push(a | b);
                     },
+                    0x2c => { // SUB
+                        const b = try self.pop();
+                        const a = try self.pop();
+                        std.log.info("{x}: {x} SUB {} - {}", .{self.reg.pc-1, ir, a, b});
+                        try self.push(@subWithOverflow(a, b)[0]);
+                    },
                     0x30 => { // LB
                         const addr = try self.pop();
                         std.log.info("{x}: {x} LB from {x}", .{self.reg.pc-1, ir, addr});
@@ -808,7 +814,16 @@ test "srl instruction" {
 }
 
 test "sra instruction" {
-    // std.testing.log_level = .debug;
     const value = try runTest("starj/tests/sra.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "sub instruction" {
+    const value = try runTest("starj/tests/sub.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "xor instruction" {
+    const value = try runTest("starj/tests/xor.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
