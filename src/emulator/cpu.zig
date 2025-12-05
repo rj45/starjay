@@ -348,6 +348,21 @@ pub const Cpu = struct {
                             try self.push(@divFloor(dividend, divisor));
                         }
                     },
+                    0x30 => { // LB
+                        const addr = try self.pop();
+                        std.log.info("{x}: {x} LB from {x}", .{self.reg.pc-1, ir, addr});
+                        const mem_byte: []u8 = @ptrCast(self.memory);
+                        const byte = mem_byte[addr];
+                        const value = signExtend(byte, 8);
+                        try self.push(value);
+                    },
+                    0x31 => { // SB
+                        const addr = try self.pop();
+                        const value:u8 = @truncate(try self.pop() & 0xff);
+                        std.log.info("{x}: {x} SB to {x} = {}", .{self.reg.pc-1, ir, addr, value});
+                        const mem_byte: []u8 = @ptrCast(self.memory);
+                        mem_byte[addr] = value;
+                    },
                     0x32, 0x34 => { // LH, LW
                         const addr = try self.pop();
                         std.log.info("{x}: {x} LW from {x}", .{self.reg.pc-1, ir, addr});
@@ -582,7 +597,12 @@ test "lw sw instructions" {
 }
 
 test "lh sh instructions" {
-    // std.testing.log_level = .debug;
     const value = try runTest("starj/tests/lh_sh.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "lb sb instructions" {
+    // std.testing.log_level = .debug;
+    const value = try runTest("starj/tests/lb_sb.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
