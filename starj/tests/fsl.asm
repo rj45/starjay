@@ -105,11 +105,11 @@
     xor
     failnez
 
-    ; Test 11: Mixed pattern shift by 12
-    ; {0x00F0, 0x0F00} << 12 = 0xF00F0000, upper = 0xF00F
+    ; Test 11: Mixed pattern shift by 8
+    ; {0x00F0, 0x0F00} << 8 = 0xF00F0000, upper = 0xF00F
     push 0x00F0     ; ros
     push 0x0F00     ; nos
-    push 12         ; shift
+    push 8          ; shift
     fsl
     push 0xF00F
     xor

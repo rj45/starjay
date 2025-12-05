@@ -205,6 +205,16 @@ pub const Cpu = struct {
                         std.log.info("{x}: {x} XOR {} ^ {}", .{self.reg.pc-1, ir, a, b});
                         try self.push(a ^ b);
                     },
+                    0x0f => { // FSL
+                        const shift = try self.pop();
+                        const lower = try self.pop();
+                        const upper = try self.pop();
+                        std.log.info("{x}: {x} FSL ({x} @ {x} << {}) >> 16", .{self.reg.pc-1, ir, upper, lower, shift});
+                        const value: u32 = (@as(u32, upper) << 16) | @as(u32, lower);
+                        const shifted = value << @truncate(shift & 0x1f);
+                        const result = @as(Word, @truncate(shifted >> 16));
+                        try self.push(result);
+                    },
                     0x10, 0x11, 0x12, 0x13 => { // PUSH <reg>
                         const reg = ir & 0x03;
                         var value: Word = 0;
@@ -514,7 +524,12 @@ test "drop instructions" {
 }
 
 test "dup instructions" {
-    // std.testing.log_level = .debug;
     const value = try runTest("starj/tests/dup.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "fsl instructions" {
+    // std.testing.log_level = .debug;
+    const value = try runTest("starj/tests/fsl.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
