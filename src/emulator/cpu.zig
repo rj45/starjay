@@ -383,6 +383,28 @@ pub const Cpu = struct {
                         }
                         self.memory[addr >> 1] = value;
                     },
+                    0x36 => { // LNW
+                        const addr = self.reg.ar;
+                        std.log.info("{x}: {x} LNW from {x}", .{self.reg.pc-1, ir, addr});
+                        if ((addr & 1) == 1) {
+                            std.log.err("Unaligned LNW from {x}", .{addr});
+                            return Error.UnalignedAccess;
+                        }
+                        self.reg.ar = @addWithOverflow(self.reg.ar, 2)[0];
+                        const value = self.memory[addr >> 1];
+                        try self.push(value);
+                    },
+                    0x37 => { // SNW
+                        const addr = self.reg.ar;
+                        const value = try self.pop();
+                        std.log.info("{x}: {x} SNW to {x} = {}", .{self.reg.pc-1, ir, addr, value});
+                        if ((addr & 1) == 1) {
+                            std.log.err("Unaligned SNW to {x}", .{addr});
+                            return Error.UnalignedAccess;
+                        }
+                        self.reg.ar = @addWithOverflow(self.reg.ar, 2)[0];
+                        self.memory[addr >> 1] = value;
+                    },
                     0x38 => { // CALL
                         const pcrel = try self.pop();
                         std.log.info("{x}: {x} CALL to {x}, return address {x}", .{self.reg.pc-1, ir, self.reg.pc+pcrel, self.reg.pc});
@@ -602,7 +624,12 @@ test "lh sh instructions" {
 }
 
 test "lb sb instructions" {
-    // std.testing.log_level = .debug;
     const value = try runTest("starj/tests/lb_sb.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "lnw snw instructions" {
+    // std.testing.log_level = .debug;
+    const value = try runTest("starj/tests/lnw_snw.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
