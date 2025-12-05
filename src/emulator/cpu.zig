@@ -398,6 +398,12 @@ pub const Cpu = struct {
                         std.log.info("{x}: {x} MULH {} * {} = {}", .{self.reg.pc-1, ir, a, b, result});
                         try self.push(@bitCast(result));
                     },
+                    0x2b => { // OR
+                        const b = try self.pop();
+                        const a = try self.pop();
+                        std.log.info("{x}: {x} OR {} | {}", .{self.reg.pc-1, ir, a, b});
+                        try self.push(a | b);
+                    },
                     0x30 => { // LB
                         const addr = try self.pop();
                         std.log.info("{x}: {x} LB from {x}", .{self.reg.pc-1, ir, addr});
@@ -710,7 +716,12 @@ test "mul instruction" {
 }
 
 test "mulh instruction" {
-    // std.testing.log_level = .debug;
     const value = try runTest("starj/tests/mulh.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "or instruction" {
+    // std.testing.log_level = .debug;
+    const value = try runTest("starj/tests/or.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
