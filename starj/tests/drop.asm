@@ -18,7 +18,6 @@
     push 2
     xor
     failnez
-    drop        ; remove 2
     push 1
     xor
     failnez

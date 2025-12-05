@@ -177,6 +177,10 @@ pub const Cpu = struct {
                         try self.push(b);
                         try self.push(a);
                     },
+                    0x08 => { // DROP
+                        const a = try self.pop();
+                        std.log.info("{x}: {x} DROP {}", .{self.reg.pc-1, ir, a});
+                    },
                     0x0c => { // ADD
                         const b = try self.pop();
                         const a = try self.pop();
@@ -494,7 +498,12 @@ test "div instructions" {
 }
 
 test "divu instructions" {
-    // std.testing.log_level = .debug;
     const value = try runTest("starj/tests/divu.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "drop instructions" {
+    std.testing.log_level = .debug;
+    const value = try runTest("starj/tests/drop.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }

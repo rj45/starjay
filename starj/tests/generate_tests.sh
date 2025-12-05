@@ -313,8 +313,9 @@ DUP_EOF
     push 1
     push 2
     push 3
-    drop        ; remove 3
-    push 2
+    push 4
+    drop        ; remove 4
+    push 3
     xor
     failnez
     drop        ; remove 2
