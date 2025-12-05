@@ -183,6 +183,12 @@ pub const Cpu = struct {
                         std.log.info("{x}: {x} ADD {} + {}", .{self.reg.pc-1, ir, a, b});
                         try self.push(@addWithOverflow(a, b)[0]);
                     },
+                    0x0d => { // AND
+                        const b = try self.pop();
+                        const a = try self.pop();
+                        std.log.info("{x}: {x} AND {} & {}", .{self.reg.pc-1, ir, a, b});
+                        try self.push(a & b);
+                    },
                     0x0e => { // XOR
                         const b = try self.pop();
                         const a = try self.pop();
@@ -415,7 +421,12 @@ test "swap instruction" {
 }
 
 test "add <reg> instruction" {
-    // std.testing.log_level = .debug;
     const value = try runTest("starj/tests/add_reg.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "and instruction" {
+    // std.testing.log_level = .debug;
+    const value = try runTest("starj/tests/and.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
