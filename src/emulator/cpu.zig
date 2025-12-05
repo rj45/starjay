@@ -308,7 +308,7 @@ pub const Cpu = struct {
                     },
                     0x1e => { // LLW
                         const fprel = try self.pop();
-                        const value = @as(Word, self.memory[self.reg.fp + fprel]);
+                        const value = self.memory[(self.reg.fp + fprel) >> 1];
                         std.log.info("{x}: {x} LLW from fp+{} = {}", .{self.reg.pc-1, ir, fprel, value});
                         if ((fprel + self.reg.fp) & 1 == 1) {
                             std.log.err("Unaligned LLW from fp+{} = {x}", .{fprel, self.reg.fp + fprel});
@@ -324,7 +324,7 @@ pub const Cpu = struct {
                             std.log.err("Unaligned SLW from fp+{} = {x}", .{fprel, self.reg.fp + fprel});
                             return Error.UnalignedAccess;
                         }
-                        self.memory[self.reg.fp + fprel] = value;
+                        self.memory[(self.reg.fp + fprel) >> 1] = value;
                     },
                     // -------- extended instructions --------
                     0x20 => { // DIV
