@@ -179,6 +179,14 @@ pub const Cpu = struct {
                         try self.push(b);
                         try self.push(a);
                     },
+                    0x07 => { // OVER
+                        const b = try self.pop();
+                        const a = try self.pop();
+                        std.log.info("{x}: {x} OVER {}", .{self.reg.pc-1, ir, a});
+                        try self.push(a);
+                        try self.push(b);
+                        try self.push(a);
+                    },
                     0x08 => { // DROP
                         const a = try self.pop();
                         std.log.info("{x}: {x} DROP {}", .{self.reg.pc-1, ir, a});
@@ -721,7 +729,12 @@ test "mulh instruction" {
 }
 
 test "or instruction" {
-    // std.testing.log_level = .debug;
     const value = try runTest("starj/tests/or.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "over instruction" {
+    // std.testing.log_level = .debug;
+    const value = try runTest("starj/tests/over.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
