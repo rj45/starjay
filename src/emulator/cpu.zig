@@ -304,6 +304,18 @@ pub const Cpu = struct {
                             }
                         }
                     },
+                    0x1e => { // LLW
+                        const fprel = try self.pop();
+                        const value = @as(Word, self.memory[self.reg.fp + fprel]);
+                        std.log.info("{x}: {x} LLW from fp+{} = {}", .{self.reg.pc-1, ir, fprel, value});
+                        try self.push(value);
+                    },
+                    0x1f => { // SLW
+                        const fprel = try self.pop();
+                        const value = try self.pop();
+                        std.log.info("{x}: {x} SLW to fp+{} = {}", .{self.reg.pc-1, ir, fprel, value});
+                        self.memory[self.reg.fp + fprel] = value;
+                    },
                     // -------- extended instructions --------
                     0x20 => { // DIV
                         const divisor: i16 = @bitCast(try self.pop());
@@ -527,7 +539,12 @@ test "dup instructions" {
 }
 
 test "fsl instructions" {
-    // std.testing.log_level = .debug;
     const value = try runTest("starj/tests/fsl.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "llw slw instructions" {
+    // std.testing.log_level = .debug;
+    const value = try runTest("starj/tests/llw_slw.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
