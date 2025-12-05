@@ -7,7 +7,7 @@ PYTHON := $(shell command -v python3 2>/dev/null || command -v python 2>/dev/nul
 ISA := customasm/starj_cpudef.asm
 
 # Test kernel for the tests
-KERNEL := customasm/test_kernel.asm
+KERNEL := customasm/test_shim.asm
 
 # Find all test .asm files (regular and bootstrap)
 TEST_SRCS := $(wildcard tests/*.asm)
@@ -56,16 +56,6 @@ tests/bootstrap/%.hex: tests/bootstrap/%.asm $(ISA)
 # Build _listing.txt from .asm (regular tests - use full kernel)
 tests/bootstrap/%_listing.txt: tests/bootstrap/%.asm $(ISA) $(KERNEL)
 	customasm -q -f annotated,base:16,group:2,addr_base:16,labels:true -o $@ $(ISA) $<
-
-# Special rule for boot_09 which needs the full kernel
-tests/bootstrap/boot_10_syscall.bin: tests/bootstrap/boot_10_syscall.asm $(ISA) $(KERNEL)
-	customasm -q -f binary -o $@ $(ISA) $(KERNEL) $<
-
-tests/bootstrap/boot_10_syscall.hex: tests/bootstrap/boot_10_syscall.asm $(ISA) $(KERNEL)
-	customasm -q -f intelhex,addr_unit:8 -o $@ $(ISA) $(KERNEL) $<
-
-tests/bootstrap/boot_10_syscall_listing.txt: tests/bootstrap/boot_10_syscall.asm $(ISA) $(KERNEL)
-	customasm -q -f annotated,base:16,group:2,addr_base:16,labels:true -o $@ $(ISA) $(KERNEL) $<
 
 clean:
 	rm -f tests/*.bin tests/*.hex tests/*_listing.txt tests/bootstrap/*.bin tests/bootstrap/*.hex tests/bootstrap/*_listing.txt

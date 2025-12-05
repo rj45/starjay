@@ -136,55 +136,57 @@ pub const Cpu = struct {
             // decode & execute
             if ((ir & 0x80) == 0x80) {
                 const value = ir & 0x7f;
-                std.log.info("{x} SHI {}", .{ir, value});
+                std.log.info("{x}: {x} SHI {}", .{self.reg.pc-1, ir, value});
                 try self.push((try self.pop() << 7) | value);
             } else if ((ir & 0xc0) == 0x40) {
                 const value = signExtend(ir & 0x3f, 6);
-                std.log.info("{x} PUSH {}", .{ir, @as(i16, @bitCast(value))});
+                std.log.info("{x}: {x} PUSH {}", .{self.reg.pc-1, ir, @as(i16, @bitCast(value))});
                 try self.push(value);
             } else {
                 switch (ir & 0x3f) {
                     0x00 => { // HALT
                         if (self.csr.status & StatusFlags.TH == 0) {
-                            std.log.info("{x} HALT - halting execution as requested", .{ir});
+                            std.log.info("{x}: {x} HALT - halting execution as requested", .{self.reg.pc-1, ir});
                             return;
                         }
-                    },
-                    0x03 => { // RETS
-                        std.log.info("{x} RETS", .{ir});
-                        self.csr.status = self.csr.estatus;
-                        self.reg.pc = self.csr.epc;
                     },
                     0x04 => { // BEQZ
                         const offset = try self.pop();
                         const t = try self.pop();
                         if (t == 0) {
-                            std.log.info("{x} BEQZ {}, {} taken", .{ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
+                            std.log.info("{x}: {x} BEQZ {}, {} taken", .{self.reg.pc-1, ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
                             self.reg.pc = @addWithOverflow(self.reg.pc, @as(Word, @bitCast(offset)))[0];
                         } else {
-                            std.log.info("{x} BEQZ {}, {} not taken", .{ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
+                            std.log.info("{x}: {x} BEQZ {}, {} not taken", .{self.reg.pc-1, ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
                         }
                     },
                     0x05 => { // BNEZ
                         const offset = try self.pop();
                         const t = try self.pop();
                         if (t != 0) {
-                            std.log.info("{x} BNEZ {}, {} taken", .{ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
+                            std.log.info("{x}: {x} BNEZ {}, {} taken", .{self.reg.pc-1, ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
                             self.reg.pc = @addWithOverflow(self.reg.pc, @as(Word, @bitCast(offset)))[0];
                         } else {
-                            std.log.info("{x} BNEZ {}, {} not taken", .{ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
+                            std.log.info("{x}: {x} BNEZ {}, {} not taken", .{self.reg.pc-1, ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
                         }
+                    },
+                    0x06 => { // SWAP
+                        const b = try self.pop();
+                        const a = try self.pop();
+                        std.log.info("{x}: {x} SWAP {} <-> {}", .{self.reg.pc-1, ir, a, b});
+                        try self.push(b);
+                        try self.push(a);
                     },
                     0x0c => { // ADD
                         const b = try self.pop();
                         const a = try self.pop();
-                        std.log.info("{x} ADD {} + {}", .{ir, a, b});
+                        std.log.info("{x}: {x} ADD {} + {}", .{self.reg.pc-1, ir, a, b});
                         try self.push(@addWithOverflow(a, b)[0]);
                     },
                     0x0e => { // XOR
                         const b = try self.pop();
                         const a = try self.pop();
-                        std.log.info("{x} XOR {} ^ {}", .{ir, a, b});
+                        std.log.info("{x}: {x} XOR {} ^ {}", .{self.reg.pc-1, ir, a, b});
                         try self.push(a ^ b);
                     },
                     0x10, 0x11, 0x12, 0x13 => { // PUSH <reg>
@@ -193,17 +195,17 @@ pub const Cpu = struct {
                         switch (reg) {
                             // 0 => value = self.reg.pc,
                             1 => value = self.framePointer(),
-                            // 2 => value = self.reg.ra,
-                            // 3 => value = self.reg.ar,
+                            2 => value = self.reg.ra,
+                            3 => value = self.reg.ar,
                             else => return Error.IllegalInstruction,
                         }
-                        std.log.info("{x} PUSH REG[{}] = {}", .{ir, reg, value});
+                        std.log.info("{x}: {x} PUSH REG[{}] = {}", .{self.reg.pc-1, ir, reg, value});
                         try self.push(value);
                     },
                     0x14, 0x15, 0x16, 0x17 => { // POP <reg>
                         const reg = ir & 0x03;
                         const value = try self.pop();
-                        std.log.info("{x} POP REG[{}] = {}", .{ir, reg, value});
+                        std.log.info("{x}: {x} POP REG[{}] = {}", .{self.reg.pc-1, ir, reg, value});
                         switch (reg) {
                             // 0 => npc = value,
                             1 => if (self.inKernel()) {
@@ -211,8 +213,8 @@ pub const Cpu = struct {
                             } else {
                                 self.reg.fp = value;
                             },
-                            // 2 => self.reg.ra = value,
-                            // 3 => self.reg.ar = value,
+                            2 => self.reg.ra = value,
+                            3 => self.reg.ar = value,
                             else => return Error.IllegalInstruction,
                         }
                     },
@@ -222,7 +224,25 @@ pub const Cpu = struct {
                         switch (reg) {
                             0 => { // ADD PC aka JUMP
                                 self.reg.pc = @addWithOverflow(self.reg.pc, addend)[0];
-                                std.log.info("{x} JUMP {} to {x}", .{ir, addend, self.reg.pc});
+                                std.log.info("{x}: {x} JUMP {} to {x}", .{self.reg.pc-1, ir, addend, self.reg.pc});
+                            },
+                            1 => { // ADD FP
+                                const fp = self.framePointer();
+                                const new_fp = @addWithOverflow(fp, addend)[0];
+                                self.setFramePointer(new_fp);
+                                std.log.info("{x}: {x} ADD FP {} + {} = {}", .{self.reg.pc-1, ir, fp, addend, new_fp});
+                            },
+                            2 => { // ADD RA
+                                const ra = self.reg.ra;
+                                const new_ra = @addWithOverflow(ra, addend)[0];
+                                self.reg.ra = new_ra;
+                                std.log.info("{x}: {x} ADD RA {} + {} = {}", .{self.reg.pc-1, ir, ra, addend, new_ra});
+                            },
+                            3 => { // ADD AR
+                                const ar = self.reg.ar;
+                                const new_ar = @addWithOverflow(ar, addend)[0];
+                                self.reg.ar = new_ar;
+                                std.log.info("{x}: {x} ADD AR {} + {} = {}", .{self.reg.pc-1, ir, ar, addend, new_ar});
                             },
 
                             else => return Error.IllegalInstruction,
@@ -232,33 +252,25 @@ pub const Cpu = struct {
                         const csr = try self.pop();
                         var csr_value: Word = 0;
                         switch (csr) {
-                            0 => csr_value = self.csr.status,
-                            1 => csr_value = self.csr.estatus,
-                            2 => csr_value = self.csr.epc,
                             3 => csr_value = self.alternateFramePointer(),
+                            5 => csr_value = self.csr.ecause,
                             6 => csr_value = self.csr.evec,
                             else => {
                                 std.log.err("Illegal CSR: {x}", .{csr});
                                 return Error.IllegalInstruction;
                             },
                         }
-                        std.log.info("{x} PUSH CSR[{}] = {}", .{ir, csr, csr_value});
+                        std.log.info("{x}: {x} PUSH CSR[{}] = {}", .{self.reg.pc-1, ir, csr, csr_value});
                         try self.push(csr_value);
                     },
                     0x1d => { // POP <csr>
                         const csr = try self.pop();
                         const value = try self.pop();
-                        std.log.info("{x} POP CSR[{}] = {}", .{ir, csr, value});
+                        std.log.info("{x}: {x} POP CSR[{}] = {}", .{self.reg.pc-1, ir, csr, value});
                         switch (csr) {
-                            0 => {
-                                self.csr.status = value;
-                            },
-                            1 => self.csr.estatus = value,
-                            2 => self.csr.epc = value,
                             3 => self.setAlternateFramePointer(value),
+                            5 => self.csr.ecause = value,
                             6 => self.csr.evec = value,
-                            9 => std.log.info("Ignoring set of udset", .{}),
-                            13 => std.log.info("Ignoring set of kdset", .{}),
 
                             else => {
                                 std.log.err("Illegal CSR: {}", .{csr});
@@ -319,107 +331,91 @@ pub fn runTest(rom_file: []const u8, max_cycles: usize, gpa: std.mem.Allocator) 
     return try cpu.pop();
 }
 
-test "push instruction" {
+///////////////////////////////////////////////////////
+// Bootstrap tests
+///////////////////////////////////////////////////////
+
+test "bootstrap push instruction" {
     const value = try runTest("starj/tests/bootstrap/boot_00_push.bin", 10, std.testing.allocator);
     try std.testing.expect(value == 7);
 }
 
-test "shi instruction" {
+test "bootstrap shi instruction" {
     const value = try runTest("starj/tests/bootstrap/boot_01_push_shi.bin", 10, std.testing.allocator);
     try std.testing.expect(value == 0xABCD);
 }
 
-test "xor instruction" {
+test "bootstrap xor instruction" {
     const value = try runTest("starj/tests/bootstrap/boot_02_xor.bin", 10, std.testing.allocator);
     try std.testing.expect(value == 2);
 }
 
-test "bnez not taken instruction" {
+test "bootstrap bnez not taken instruction" {
     const value = try runTest("starj/tests/bootstrap/boot_03_bnez_not_taken.bin", 20, std.testing.allocator);
     try std.testing.expect(value == 99);
 }
 
-test "bnez taken instruction" {
+test "bootstrap bnez taken instruction" {
     const value = try runTest("starj/tests/bootstrap/boot_04_bnez_taken.bin", 20, std.testing.allocator);
     try std.testing.expect(value == 99);
 }
 
-test "add instruction" {
+test "bootstrap add instruction" {
     const value = try runTest("starj/tests/bootstrap/boot_05_add.bin", 20, std.testing.allocator);
     try std.testing.expect(value == 0xFF);
 }
 
-test "beqz instruction" {
+test "bootstrap beqz instruction" {
     const value = try runTest("starj/tests/bootstrap/boot_06_beqz.bin", 20, std.testing.allocator);
     try std.testing.expect(value == 99);
 }
 
-test "push status instruction" {
-    const value = try runTest("starj/tests/bootstrap/boot_07_csr.bin", 20, std.testing.allocator);
-    try std.testing.expect(value == 1);
-}
-
-test "pop status and halt instruction" {
+test "bootstrap halt instruction" {
     const value = try runTest("starj/tests/bootstrap/boot_08_halt.bin", 20, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
-test "jump instruction" {
+test "bootstrap jump instruction" {
     const value = try runTest("starj/tests/bootstrap/boot_09_jump.bin", 40, std.testing.allocator);
     try std.testing.expect(value == 9);
 }
 
-test "push/pop fp instruction" {
+test "bootstrap push/pop fp instruction" {
     const value = try runTest("starj/tests/bootstrap/boot_10_push_pop_fp.bin", 40, std.testing.allocator);
     try std.testing.expect(value == 5);
 }
 
-test "push/pop afp instruction" {
+test "bootstrap push/pop afp instruction" {
     const value = try runTest("starj/tests/bootstrap/boot_11_push_pop_afp.bin", 40, std.testing.allocator);
     try std.testing.expect(value == 5);
 }
 
-test "push/pop evec instruction" {
+test "bootstrap push/pop evec instruction" {
     const value = try runTest("starj/tests/bootstrap/boot_12_push_pop_evec.bin", 40, std.testing.allocator);
     try std.testing.expect(value == 5);
 }
 
-test "push/pop estatus instruction" {
-    const value = try runTest("starj/tests/bootstrap/boot_13_push_pop_estatus.bin", 40, std.testing.allocator);
+test "bootstrap push/pop ecause instruction" {
+    const value = try runTest("starj/tests/bootstrap/boot_13_push_pop_ecause.bin", 40, std.testing.allocator);
     try std.testing.expect(value == 5);
 }
 
-test "push/pop epc instruction" {
+///////////////////////////////////////////////////////
+// Regular instruction tests
+///////////////////////////////////////////////////////
+
+test "add instruction" {
+    const value = try runTest("starj/tests/add.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "swap instruction" {
+    const value = try runTest("starj/tests/swap.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "add <reg> instruction" {
     // std.testing.log_level = .debug;
-    const value = try runTest("starj/tests/bootstrap/boot_14_push_pop_epc.bin", 40, std.testing.allocator);
-    try std.testing.expect(value == 5);
+    const value = try runTest("starj/tests/add_reg.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
 }
-
-test "rets instruction" {
-    const gpa = std.testing.allocator;
-    const memory = try gpa.alloc(u16, 128 * 1024);
-    defer gpa.free(memory);
-
-    var cpu = Cpu.init(memory);
-    try cpu.loadRom("starj/tests/bootstrap/boot_15_rets.bin");
-    cpu.haltOnSyscall = true;
-    try cpu.run(40);
-
-    if (cpu.csr.depth != 1) {
-        std.log.err("Expected exactly one value on stack after execution, found {}", .{cpu.csr.depth});
-        return Cpu.Error.StackUnderflow;
-    }
-
-    try std.testing.expect(!cpu.inKernel());
-    try std.testing.expect(cpu.framePointer() == 20);
-
-    const value = try cpu.pop();
-    try std.testing.expect(value == 13);
-}
-
-
-// test "syscall" {
-//     std.testing.log_level = .debug;
-//     const value = try runTest("starj/tests/bootstrap/boot_10_syscall.bin", 100, std.testing.allocator);
-//     try std.testing.expect(value == 0xffff); // AKA -1
-// }

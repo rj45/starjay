@@ -374,13 +374,13 @@
   }
 
   failnez => asm {
-    beqz 2
+    beqz $+4
     push 0
     halt
   }
 
   faileqz => asm {
-    bnez 2
+    bnez $+4
     push 0
     halt
   }

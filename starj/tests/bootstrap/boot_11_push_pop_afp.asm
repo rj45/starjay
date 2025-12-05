@@ -5,9 +5,9 @@
 #bank vector
 _start:
     push 2
-    pop afp      ; Set FP = 5
+    pop afp
     push 5
-    push afp     ; Push FP (5)
+    push afp
     add         ; should be 5 + 2 = 7
     xor 7       ; should be 7 ^ 7 = 0
     bnez end     ; Should NOT branch
@@ -15,7 +15,7 @@ _start:
     push 9
     pop afp
     push 12
-    push afp    ; Push FP (9)
+    push afp
     xor         ; should be 12 ^ 9 = 5
 
 end:
