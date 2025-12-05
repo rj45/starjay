@@ -348,6 +348,26 @@ pub const Cpu = struct {
                             try self.push(@divFloor(dividend, divisor));
                         }
                     },
+                    0x32, 0x34 => { // LH, LW
+                        const addr = try self.pop();
+                        std.log.info("{x}: {x} LW from {x}", .{self.reg.pc-1, ir, addr});
+                        if ((addr & 1) == 1) {
+                            std.log.err("Unaligned LW from {x}", .{addr});
+                            return Error.UnalignedAccess;
+                        }
+                        const value = self.memory[addr >> 1];
+                        try self.push(value);
+                    },
+                    0x33, 0x35 => { // SH, SW
+                        const addr = try self.pop();
+                        const value = try self.pop();
+                        std.log.info("{x}: {x} SW to {x} = {}", .{self.reg.pc-1, ir, addr, value});
+                        if ((addr & 1) == 1) {
+                            std.log.err("Unaligned SW to {x}", .{addr});
+                            return Error.UnalignedAccess;
+                        }
+                        self.memory[addr >> 1] = value;
+                    },
                     0x38 => { // CALL
                         const pcrel = try self.pop();
                         std.log.info("{x}: {x} CALL to {x}, return address {x}", .{self.reg.pc-1, ir, self.reg.pc+pcrel, self.reg.pc});
@@ -552,7 +572,17 @@ test "fsl instructions" {
 }
 
 test "llw slw instructions" {
-    // std.testing.log_level = .debug;
     const value = try runTest("starj/tests/llw_slw.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "lw sw instructions" {
+    const value = try runTest("starj/tests/lw_sw.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "lh sh instructions" {
+    // std.testing.log_level = .debug;
+    const value = try runTest("starj/tests/lh_sh.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
