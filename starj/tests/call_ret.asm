@@ -4,7 +4,7 @@
     call _test_func
     ; If we get here, call/ret worked
     push 1
-    syscall
+    halt
 
 _test_func:
     ; ra should contain return address
@@ -14,4 +14,4 @@ _test_func:
 
 _fail:
     push 0
-    syscall
+    halt

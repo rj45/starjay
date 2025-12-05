@@ -8,15 +8,15 @@ _start:
     pop fp      ; Set fp = 5
     push 5
     push fp     ; Push fp (5)
-    sub         ; should be 5 - 2 = 3
-    sub 3       ; should be 3 - 3 = 0
+    add         ; should be 5 + 2 = 7
+    xor 7       ; should be 7 ^ 7 = 0
     bnez end    ; Should NOT branch
 
     push 9
     pop fp
     push 12
     push fp     ; Push fp (9)
-    sub         ; should be 12 - 9 = 3
+    xor         ; should be 12 ^ 9 = 3
 
 end:
     halt

@@ -12,8 +12,8 @@
     push 0          ; shift
     fsl
     push 0xAAAA
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 2: Shift by 16 - should return nos (low word moves to high)
     ; {0xAAAA, 0x5555} << 16 = 0x55550000, upper = 0x5555
@@ -22,8 +22,8 @@
     push 16         ; shift
     fsl
     push 0x5555
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 3: Shift by 4 - partial shift
     ; {0x0000, 0x1234} << 4 = 0x00012340, upper = 0x0001
@@ -32,8 +32,8 @@
     push 4          ; shift
     fsl
     push 0x0001
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 4: Shift by 8
     ; {0x0000, 0xFF00} << 8 = 0x00FF0000, upper = 0x00FF
@@ -42,8 +42,8 @@
     push 8          ; shift
     fsl
     push 0x00FF
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 5: Shift by 1
     ; {0x8000, 0x0000} << 1 = 0x00000000, upper = 0x0000 (high bit shifted out)
@@ -52,8 +52,8 @@
     push 1          ; shift
     fsl
     push 0x0000
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 6: Shift by 1 with carry from nos to ros position
     ; {0x0000, 0x8000} << 1 = 0x00010000, upper = 0x0001
@@ -62,8 +62,8 @@
     push 1          ; shift
     fsl
     push 0x0001
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 7: Shift by 15
     ; {0x0001, 0x0000} << 15 = 0x80000000, upper = 0x8000
@@ -72,8 +72,8 @@
     push 15         ; shift
     fsl
     push 0x8000
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 8: Shift by 31 (max shift)
     ; {0x0000, 0x0001} << 31 = 0x80000000, upper = 0x8000
@@ -82,8 +82,8 @@
     push 31         ; shift
     fsl
     push 0x8000
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 9: Shift by 32 should wrap to shift by 0 (masked to 31 bits)
     ; {0xAAAA, 0x5555} << 0 = 0xAAAA5555, upper = 0xAAAA
@@ -92,8 +92,8 @@
     push 32         ; shift (masked to 0)
     fsl
     push 0xAAAA
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 10: All ones
     ; {0xFFFF, 0xFFFF} << 4 = 0xFFFFFFF0, upper = 0xFFFF
@@ -102,8 +102,8 @@
     push 4          ; shift
     fsl
     push 0xFFFF
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 11: Mixed pattern shift by 12
     ; {0x00F0, 0x0F00} << 12 = 0xF00F0000, upper = 0xF00F
@@ -112,8 +112,8 @@
     push 12         ; shift
     fsl
     push 0xF00F
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 12: Verify shift implements sll correctly
     ; sll can be done as: push 0; swap; push N; fsl
@@ -124,8 +124,8 @@
     push 20         ; shift (16 + 4, so nos shifts up 4 into result)
     fsl
     push 0x0010
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 13: Verify shift implements srl correctly
     ; srl can be done as: push 0; push value; push (16-N); fsl
@@ -136,12 +136,12 @@
     push 12         ; shift (16 - 4)
     fsl
     push 0x0800
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 1
-    syscall
+    halt
 
 _fail:
     push 0
-    syscall
+    halt

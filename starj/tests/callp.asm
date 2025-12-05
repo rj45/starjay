@@ -4,7 +4,7 @@
     callp
     ; If we get here, callp worked
     push 1
-    syscall
+    halt
 
 _test_func2:
     push ra
@@ -12,4 +12,4 @@ _test_func2:
 
 _fail:
     push 0
-    syscall
+    halt

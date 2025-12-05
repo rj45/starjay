@@ -9,15 +9,11 @@ def write_test(filename, content):
         f.write(content)
 
 
-def test_epilogue(fail_label="_fail"):
+def test_epilogue():
     """Generate the pass/fail epilogue for tests."""
-    return f"""    ; All passed
+    return """    ; All passed
     push 1
-    syscall
-
-{fail_label}:
-    push 0
-    syscall
+    halt
 """
 
 
@@ -36,8 +32,8 @@ def generate_binary_op_test(opcode_name, cases):
         code += f"    push {b}\n"
         code += f"    {opcode_name}\n"
         code += f"    push {expected}\n"
-        code += "    sub\n"
-        code += "    bnez _fail\n\n"
+        code += "    xor\n"
+        code += "    failnez\n\n"
 
     code += test_epilogue()
     write_test(filename, code)
@@ -57,17 +53,10 @@ def generate_unary_op_test(opcode_name, cases):
         code += f"    push {inp}\n"
         code += f"    {opcode_name}\n"
         code += f"    push {expected}\n"
-        code += "    sub\n"
-        code += f"    bnez _fail_{i}\n\n"
+        code += "    xor\n"
+        code += "    failnez\n\n"
 
-    code += "    ; All passed\n"
-    code += "    push 1\n"
-    code += "    syscall\n\n"
-
-    for i in range(len(cases)):
-        code += f"_fail_{i}:\n"
-        code += "    push 0\n"
-        code += "    syscall\n"
+    code += test_epilogue()
 
     write_test(filename, code)
 
@@ -99,7 +88,7 @@ _forward_taken:
 
 _forward_not_taken_fail:
     push 0
-    syscall
+    halt
 
 _test_backward:
     jump _backward_setup
@@ -124,7 +113,7 @@ _test_backward_not_taken:
 
 _backward_not_taken_fail:
     push 0
-    syscall
+    halt
 
 _check_stack:
     ; Stack should only have our sentinel 0xAAAA
@@ -132,17 +121,9 @@ _check_stack:
 
     ; Check that top of stack is our sentinel
     push 0xAAAA
-    sub
-    bnez _fail
-
-    ; All tests passed
-    push 1
-    syscall
-
-_fail:
-    push 0
-    syscall
-""")
+    xor
+    failnez
+""" + test_epilogue())
 
     # bnez - comprehensive test
     write_test("tests/bnez.asm", """; Test bnez instruction
@@ -170,7 +151,7 @@ _forward_taken:
 
 _forward_not_taken_fail:
     push 0
-    syscall
+    halt
 
 _test_backward:
     jump _backward_setup
@@ -195,7 +176,7 @@ _test_backward_not_taken:
 
 _backward_not_taken_fail:
     push 0
-    syscall
+    halt
 
 _check_stack:
     ; Stack should only have our sentinel 0xBBBB
@@ -203,17 +184,9 @@ _check_stack:
 
     ; Check that top of stack is our sentinel
     push 0xBBBB
-    sub
-    bnez _fail
-
-    ; All tests passed
-    push 1
-    syscall
-
-_fail:
-    push 0
-    syscall
-""")
+    xor
+    failnez
+""" + test_epilogue())
 
 
 def generate_stack_manip_tests():
@@ -226,63 +199,64 @@ def generate_stack_manip_tests():
     dup
     ; Stack: 123, 123
     push 123
-    sub
-    bnez _fail
+    xor
+    failnez
+
     ; Stack: 123
     push 123
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 2: Dup zero
     push 0
     dup
     push 0
-    sub
-    bnez _fail
+    xor
+    failnez
     push 0
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 3: Dup negative
     push -1
     dup
     push -1
-    sub
-    bnez _fail
+    xor
+    failnez
     push -1
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 4: Dup large value
     push 0x7FFF
     dup
     push 0x7FFF
-    sub
-    bnez _fail
+    xor
+    failnez
     push 0x7FFF
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 5: Dup with existing stack values
     push 0xAAAA     ; will be ros after dup
     push 0xBBBB     ; will be nos after dup
     dup             ; -> 0xAAAA, 0xBBBB, 0xBBBB
     push 0xBBBB
-    sub
-    bnez _fail
+    xor
+    failnez
     push 0xBBBB
-    sub
-    bnez _fail
+    xor
+    failnez
     push 0xAAAA
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 1
-    syscall
+    halt
 
 _fail:
     push 0
-    syscall
+    halt
 """)
 
     # drop
@@ -295,8 +269,8 @@ _fail:
     drop
     ; Stack should have 10
     push 10
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 2: Multiple drops
     push 1
@@ -304,35 +278,35 @@ _fail:
     push 3
     drop        ; remove 3
     push 2
-    sub
-    bnez _fail
+    xor
+    failnez
     drop        ; remove 2
     push 1
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 3: Drop zero
     push 0xABCD
     push 0
     drop
     push 0xABCD
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 4: Drop negative
     push 0x1234
     push -1
     drop
     push 0x1234
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 1
-    syscall
+    halt
 
 _fail:
     push 0
-    syscall
+    halt
 """)
 
     # over
@@ -345,16 +319,16 @@ _fail:
     over    ; -> 10, 20, 10
 
     push 10
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 20
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 10
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 2: Over with different values
     push 0xAAAA
@@ -362,16 +336,16 @@ _fail:
     over        ; -> 0xAAAA, 0xBBBB, 0xAAAA
 
     push 0xAAAA
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 0xBBBB
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 0xAAAA
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 3: Over with zeros
     push 0
@@ -379,16 +353,16 @@ _fail:
     over        ; -> 0, 0x1234, 0
 
     push 0
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 0x1234
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 0
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 4: Over with same values
     push 42
@@ -396,23 +370,23 @@ _fail:
     over        ; -> 42, 42, 42
 
     push 42
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 42
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 42
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 1
-    syscall
+    halt
 
 _fail:
     push 0
-    syscall
+    halt
 """)
 
     # swap
@@ -425,12 +399,12 @@ _fail:
     swap    ; -> 20, 10
 
     push 10
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 20
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 2: Swap with different values
     push 0xAAAA
@@ -438,12 +412,12 @@ _fail:
     swap        ; -> 0xBBBB, 0xAAAA
 
     push 0xAAAA
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 0xBBBB
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 3: Double swap returns to original
     push 0x1111
@@ -452,12 +426,12 @@ _fail:
     swap        ; back to original
 
     push 0x2222
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 0x1111
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 4: Swap with zero
     push 0
@@ -465,12 +439,12 @@ _fail:
     swap
 
     push 0
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 0x5678
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 5: Swap same values (should still work)
     push 99
@@ -478,19 +452,19 @@ _fail:
     swap
 
     push 99
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 99
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 1
-    syscall
+    halt
 
 _fail:
     push 0
-    syscall
+    halt
 """)
 
 
@@ -509,8 +483,8 @@ def generate_fsl_test():
     push 0          ; shift
     fsl
     push 0xAAAA
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 2: Shift by 16 - should return nos (low word moves to high)
     ; {0xAAAA, 0x5555} << 16 = 0x55550000, upper = 0x5555
@@ -519,8 +493,8 @@ def generate_fsl_test():
     push 16         ; shift
     fsl
     push 0x5555
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 3: Shift by 4 - partial shift
     ; {0x0000, 0x1234} << 4 = 0x00012340, upper = 0x0001
@@ -529,8 +503,8 @@ def generate_fsl_test():
     push 4          ; shift
     fsl
     push 0x0001
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 4: Shift by 8
     ; {0x0000, 0xFF00} << 8 = 0x00FF0000, upper = 0x00FF
@@ -539,8 +513,8 @@ def generate_fsl_test():
     push 8          ; shift
     fsl
     push 0x00FF
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 5: Shift by 1
     ; {0x8000, 0x0000} << 1 = 0x00000000, upper = 0x0000 (high bit shifted out)
@@ -549,8 +523,8 @@ def generate_fsl_test():
     push 1          ; shift
     fsl
     push 0x0000
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 6: Shift by 1 with carry from nos to ros position
     ; {0x0000, 0x8000} << 1 = 0x00010000, upper = 0x0001
@@ -559,8 +533,8 @@ def generate_fsl_test():
     push 1          ; shift
     fsl
     push 0x0001
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 7: Shift by 15
     ; {0x0001, 0x0000} << 15 = 0x80000000, upper = 0x8000
@@ -569,8 +543,8 @@ def generate_fsl_test():
     push 15         ; shift
     fsl
     push 0x8000
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 8: Shift by 31 (max shift)
     ; {0x0000, 0x0001} << 31 = 0x80000000, upper = 0x8000
@@ -579,8 +553,8 @@ def generate_fsl_test():
     push 31         ; shift
     fsl
     push 0x8000
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 9: Shift by 32 should wrap to shift by 0 (masked to 31 bits)
     ; {0xAAAA, 0x5555} << 0 = 0xAAAA5555, upper = 0xAAAA
@@ -589,8 +563,8 @@ def generate_fsl_test():
     push 32         ; shift (masked to 0)
     fsl
     push 0xAAAA
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 10: All ones
     ; {0xFFFF, 0xFFFF} << 4 = 0xFFFFFFF0, upper = 0xFFFF
@@ -599,8 +573,8 @@ def generate_fsl_test():
     push 4          ; shift
     fsl
     push 0xFFFF
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 11: Mixed pattern shift by 12
     ; {0x00F0, 0x0F00} << 12 = 0xF00F0000, upper = 0xF00F
@@ -609,8 +583,8 @@ def generate_fsl_test():
     push 12         ; shift
     fsl
     push 0xF00F
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 12: Verify shift implements sll correctly
     ; sll can be done as: push 0; swap; push N; fsl
@@ -621,8 +595,8 @@ def generate_fsl_test():
     push 20         ; shift (16 + 4, so nos shifts up 4 into result)
     fsl
     push 0x0010
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 13: Verify shift implements srl correctly
     ; srl can be done as: push 0; push value; push (16-N); fsl
@@ -633,15 +607,15 @@ def generate_fsl_test():
     push 12         ; shift (16 - 4)
     fsl
     push 0x0800
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 1
-    syscall
+    halt
 
 _fail:
     push 0
-    syscall
+    halt
 """)
 
 
@@ -656,8 +630,8 @@ def generate_select_test():
     push 1      ; tos (true)
     select
     push 0xBBBB
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Case 2: False (tos = 0) -> select ros
     push 0xAAAA ; ros
@@ -665,8 +639,8 @@ def generate_select_test():
     push 0      ; tos (false)
     select
     push 0xAAAA
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Case 3: True with negative condition (-1 is non-zero)
     push 0x1111 ; ros
@@ -674,8 +648,8 @@ def generate_select_test():
     push -1     ; tos (true, -1 != 0)
     select
     push 0x2222
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Case 4: True with large positive condition
     push 0x3333 ; ros
@@ -683,8 +657,8 @@ def generate_select_test():
     push 0x7FFF ; tos (true)
     select
     push 0x4444
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Case 5: Select between same values
     push 0x5555 ; ros
@@ -692,8 +666,8 @@ def generate_select_test():
     push 1      ; tos
     select
     push 0x5555
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Case 6: Select with zeros
     push 0      ; ros
@@ -701,15 +675,15 @@ def generate_select_test():
     push 0      ; tos (false) -> ros
     select
     push 0
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 1
-    syscall
+    halt
 
 _fail:
     push 0
-    syscall
+    halt
 """)
 
 
@@ -727,16 +701,16 @@ def generate_rot_test():
     ; Stack should be: B(tos), C(nos), A(ros)
 
     push 0xBBBB ; expect tos = B
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 0xCCCC ; expect nos = C
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 0xAAAA ; expect ros = A
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 2: Rotation with different values
     push 0x1111 ; ros
@@ -745,16 +719,16 @@ def generate_rot_test():
     rot
 
     push 0x2222 ; expect tos
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 0x1111 ; expect nos
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 0x3333 ; expect ros
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 3: Three rotations should return to original
     push 0x0001 ; ros
@@ -765,16 +739,16 @@ def generate_rot_test():
     rot         ; -> 3, 2, 1 (back to original)
 
     push 0x0003 ; expect tos
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 0x0002 ; expect nos
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 0x0001 ; expect ros
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 4: Rotation with zeros
     push 0      ; ros
@@ -783,23 +757,23 @@ def generate_rot_test():
     rot
 
     push 0      ; expect tos (was nos)
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 0      ; expect nos (was ros)
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 0x1234 ; expect ros (was tos)
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 1
-    syscall
+    halt
 
 _fail:
     push 0
-    syscall
+    halt
 """)
 
 
@@ -827,8 +801,8 @@ def generate_memory_tests():
 
     ; Check result
     push 0x1234
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 2: Store and load 0xABCD at different offset
     push 0xABCD
@@ -843,8 +817,8 @@ def generate_memory_tests():
     lw
 
     push 0xABCD
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 3: Verify first location still has 0x1234
     push fp
@@ -853,15 +827,15 @@ def generate_memory_tests():
     lw
 
     push 0x1234
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 1
-    syscall
+    halt
 
 _fail:
     push 0
-    syscall
+    halt
 """)
 
     # lb/sb test
@@ -884,8 +858,8 @@ _fail:
     lb
 
     push 0x42
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 2: Sign extension - 0xFF should load as -1
     push 0xFF
@@ -900,8 +874,8 @@ _fail:
     lb
 
     push -1         ; 0xFF sign-extended = -1
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 3: Sign extension boundary - 0x7F should stay positive (127)
     push 0x7F
@@ -916,8 +890,8 @@ _fail:
     lb
 
     push 0x7F
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 4: Sign extension boundary - 0x80 should become -128
     push 0x80
@@ -932,15 +906,15 @@ _fail:
     lb
 
     push -128
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 1
-    syscall
+    halt
 
 _fail:
     push 0
-    syscall
+    halt
 """)
 
     # lh/sh test
@@ -963,8 +937,8 @@ _fail:
     lh
 
     push 0x5678
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 2: Store and load negative value
     push -1234
@@ -979,15 +953,15 @@ _fail:
     lh
 
     push -1234
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 1
-    syscall
+    halt
 
 _fail:
     push 0
-    syscall
+    halt
 """)
 
 
@@ -1002,8 +976,8 @@ def generate_register_tests():
     pop fp      ; set fp to 0x1234
     push fp     ; read it back
     push 0x1234
-    sub
-    bnez _fail
+    xor
+    failnez
     pop fp      ; restore original fp
 
     ; Test push ra / pop ra
@@ -1011,27 +985,27 @@ def generate_register_tests():
     pop ra
     push ra
     push 0x5678
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test push ar / pop ar
     push 0xABCD
     pop ar
     push ar
     push 0xABCD
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test push pc (should push current pc value)
     push pc
     drop        ; just verify it doesn't crash
 
     push 1
-    syscall
+    halt
 
 _fail:
     push 0
-    syscall
+    halt
 """)
 
     # add reg test
@@ -1045,8 +1019,8 @@ _fail:
     swap        ; original, new_fp
     push 100
     add         ; original + 100
-    sub         ; should be 0
-    bnez _fail
+    xor         ; should be 0
+    failnez
     push -100
     add fp      ; restore fp
 
@@ -1057,8 +1031,8 @@ _fail:
     add ra      ; ra += 50
     push ra
     push 50
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test add ar
     push 0
@@ -1067,15 +1041,15 @@ _fail:
     add ar
     push ar
     push 200
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 1
-    syscall
+    halt
 
 _fail:
     push 0
-    syscall
+    halt
 """)
 
 
@@ -1087,7 +1061,7 @@ def generate_call_tests():
     call _test_func
     ; If we get here, call/ret worked
     push 1
-    syscall
+    halt
 
 _test_func:
     ; ra should contain return address
@@ -1097,7 +1071,7 @@ _test_func:
 
 _fail:
     push 0
-    syscall
+    halt
 """)
 
     # Test callp (call function pointer)
@@ -1107,7 +1081,7 @@ _fail:
     callp
     ; If we get here, callp worked
     push 1
-    syscall
+    halt
 
 _test_func2:
     push ra
@@ -1115,7 +1089,7 @@ _test_func2:
 
 _fail:
     push 0
-    syscall
+    halt
 """)
 
 
@@ -1149,8 +1123,8 @@ def generate_next_word_tests():
     ; Verify ar has been incremented correctly (should be fp now)
     push ar
     push fp
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Now read them back using lnw
     ; Reset ar to fp-8
@@ -1162,29 +1136,29 @@ def generate_next_word_tests():
     ; Load 4 words sequentially using lnw
     lnw             ; push(mem[fp-8]) = 0x1111, ar = fp-6
     push 0x1111
-    sub
-    bnez _fail
+    xor
+    failnez
 
     lnw             ; push(mem[fp-6]) = 0x2222, ar = fp-4
     push 0x2222
-    sub
-    bnez _fail
+    xor
+    failnez
 
     lnw             ; push(mem[fp-4]) = 0x3333, ar = fp-2
     push 0x3333
-    sub
-    bnez _fail
+    xor
+    failnez
 
     lnw             ; push(mem[fp-2]) = 0x4444, ar = fp
     push 0x4444
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Verify ar has been incremented correctly again
     push ar
     push fp
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test with different values to ensure no aliasing
     push fp
@@ -1205,20 +1179,20 @@ def generate_next_word_tests():
 
     lnw
     push 0xAAAA
-    sub
-    bnez _fail
+    xor
+    failnez
 
     lnw
     push 0xBBBB
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 1
-    syscall
+    halt
 
 _fail:
     push 0
-    syscall
+    halt
 """)
 
 
@@ -1233,16 +1207,16 @@ def generate_shi_tests():
     push 1
     shi 0
     push 0x80
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 2: shi with non-zero immediate
     ; Start with 0, shift left 7 (still 0), OR with 0x55 = 0x55
     push 0
     shi 0x55
     push 0x55
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 3: Build a larger value with push + shi
     ; push 1 gives 1, shi 0 gives 0x80, shi 0 gives 0x4000
@@ -1250,8 +1224,8 @@ def generate_shi_tests():
     shi 0
     shi 0
     push 0x4000
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 4: Build 0x1234 using push + shi sequence
     ; 0x1234 = 0b0001_0010_0011_0100
@@ -1260,15 +1234,15 @@ def generate_shi_tests():
     shi 0x24
     shi 0x34
     push 0x1234
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 5: shi with max immediate (0x7F = 127)
     push 0
     shi 0x7F
     push 127
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 6: Multiple shi to build 16-bit value
     ; Build 0xABCD:
@@ -1278,23 +1252,23 @@ def generate_shi_tests():
     shi 0x57
     shi 0x4D
     push 0xABCD
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 7: Verify shi only uses low 7 bits of immediate
     ; This depends on assembler behavior, but instruction should mask to 7 bits
     push 1
     shi 0           ; (1 << 7) | 0 = 128
     push 128
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 8: shi with existing value gets shifted
     push 0x01       ; 1
     shi 0x02        ; (1 << 7) | 2 = 128 + 2 = 130 = 0x82
     push 0x82
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 9: Build negative number via shi
     ; Build 0xFF00 = -256
@@ -1303,15 +1277,15 @@ def generate_shi_tests():
     push -2
     shi 0
     push 0xFF00
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 1
-    syscall
+    halt
 
 _fail:
     push 0
-    syscall
+    halt
 """)
 
 
@@ -1322,8 +1296,7 @@ def generate_local_tests():
 
     ; Allocate some space by adjusting fp
     push fp         ; save original fp
-    push -8
-    add fp          ; allocate 8 bytes (4 words for 16-bit)
+    add fp, -8      ; allocate 8 bytes (4 words for 16-bit)
 
     ; Store to offset 0 from fp
     push 0x1111
@@ -1339,28 +1312,21 @@ def generate_local_tests():
     push 0
     llw
     push 0x1111
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Load from offset 2
     push 2
     llw
     push 0x2222
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Restore fp
     push 8
     add fp
     drop            ; drop saved fp (we restored manually)
-
-    push 1
-    syscall
-
-_fail:
-    push 0
-    syscall
-""")
+"""+test_epilogue())
 
 
 def main():

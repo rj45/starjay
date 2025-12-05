@@ -23,7 +23,7 @@ _forward_taken:
 
 _forward_not_taken_fail:
     push 0
-    syscall
+    halt
 
 _test_backward:
     jump _backward_setup
@@ -48,7 +48,7 @@ _test_backward_not_taken:
 
 _backward_not_taken_fail:
     push 0
-    syscall
+    halt
 
 _check_stack:
     ; Stack should only have our sentinel 0xBBBB
@@ -56,13 +56,8 @@ _check_stack:
 
     ; Check that top of stack is our sentinel
     push 0xBBBB
-    sub
-    bnez _fail
-
-    ; All tests passed
+    xor
+    failnez
+    ; All passed
     push 1
-    syscall
-
-_fail:
-    push 0
-    syscall
+    halt

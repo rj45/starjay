@@ -1,4 +1,4 @@
-; Bootstrap test 09: Full syscall/halt mechanism
+; Bootstrap test 10: Full syscall/halt mechanism
 ; Validates: syscall instruction with ecause/evec exception mechanism
 ; This uses the full kernel (compiled with test_kernel.asm)
 ; syscall sets ecause=0x00 and jumps to evec (which points to _exception_handler)

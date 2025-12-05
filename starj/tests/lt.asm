@@ -4,53 +4,49 @@
     push 20
     lt
     push 1
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Case 1: 20 lt 10 -> 0
     push 20
     push 10
     lt
     push 0
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Case 2: 10 lt 10 -> 0
     push 10
     push 10
     lt
     push 0
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Case 3: -10 lt 5 -> 1
     push -10
     push 5
     lt
     push 1
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Case 4: 5 lt -10 -> 0
     push 5
     push -10
     lt
     push 0
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Case 5: -20 lt -10 -> 1
     push -20
     push -10
     lt
     push 1
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; All passed
     push 1
-    syscall
-
-_fail:
-    push 0
-    syscall
+    halt

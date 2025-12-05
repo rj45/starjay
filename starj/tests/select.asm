@@ -8,8 +8,8 @@
     push 1      ; tos (true)
     select
     push 0xBBBB
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Case 2: False (tos = 0) -> select ros
     push 0xAAAA ; ros
@@ -17,8 +17,8 @@
     push 0      ; tos (false)
     select
     push 0xAAAA
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Case 3: True with negative condition (-1 is non-zero)
     push 0x1111 ; ros
@@ -26,8 +26,8 @@
     push -1     ; tos (true, -1 != 0)
     select
     push 0x2222
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Case 4: True with large positive condition
     push 0x3333 ; ros
@@ -35,8 +35,8 @@
     push 0x7FFF ; tos (true)
     select
     push 0x4444
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Case 5: Select between same values
     push 0x5555 ; ros
@@ -44,8 +44,8 @@
     push 1      ; tos
     select
     push 0x5555
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Case 6: Select with zeros
     push 0      ; ros
@@ -53,12 +53,12 @@
     push 0      ; tos (false) -> ros
     select
     push 0
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 1
-    syscall
+    halt
 
 _fail:
     push 0
-    syscall
+    halt

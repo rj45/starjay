@@ -132,16 +132,16 @@ Note: the first instructions should be to set the initial `fp` and `afp` registe
 ### 2.3. `status` - Computer Status Register
 
 ```text
-    WORDSIZE-1 .. 3    2     1    0
-  +-----------------+-----+----+----+
-  |      unused     | hlt | ie | km |
-  +-----------------+-----+----+----+
+    WORDSIZE-1 .. 3    2    1    0
+  +------------------+----+----+----+
+  |      unused      | th | ie | km |
+  +------------------+----+----+----+
 ```
 
 Specified bits:
 - `0`: `km` - Kernel Mode - specifies whether the processor is in kernel mode or not
 - `1`: `ie` - Interrupt Enable - specifies whether interrupts are enabled or not
-- `2`: `hlt` - Halted - indicates whether the CPU is halted
+- `2`: `th` - Trap Halt - indicates whether a `halt` instruction throws an exception
 - `3..WORDSIZE-1`: unused - reserved for future use
 
 This register may only be accessed in kernel mode, attempts to write it in user mode are ignored, and attempts to read it return zero.
@@ -150,7 +150,7 @@ Clearing the `km` bit while in kernel mode will immediately drop to user mode wi
 
 The `ie` bit controls whether interrupts are enabled or disabled. If an interrupt occurs while this bit is clear, the interrupt is deferred until the bit is set again. Interrupts are disabled on boot / reset. When an interrupt is taken, the `ie` bit is cleared, and then the exception sequence is followed as described in the exception section.
 
-Setting the `hlt` bit will cause the CPU to halt execution after the current instruction completes. This can be used by the emulator to exit. The top of stack can be used as the exit code of the emulator for use in end-to-end or integration testing.
+Setting the `th` bit will cause the `halt` instruction to raise a halt exception instead of halting the CPU. This can be used by an operating system to implement a trap for execution of zeroed memory, or a syscall for exit of a program. During testing and processor bring up, it can be useful to leave this bit clear, simplifying tests. By convension, whatever is on the top of stack when the exception is raised is used as the exit code of the program, or the exit code of the emulator if the `th` bit is clear.
 
 On boot / reset, this register is set to `1`, starting the processor with interrupts disabled and in kernel mode.
 
@@ -203,6 +203,7 @@ This layout is designed for efficient jump table dispatch using the `add pc` ins
   +------+----------+-----------+----------------------------------------+
   | 0x10 |    1     |     0     | Invalid instruction (illegal opcode)   |
   | 0x11 |    1     |     1     | Privileged instruction in user mode    |
+  | 0x12 |    1     |     2     | Halt (if trapped)                      |
   +------+----------+-----------+----------------------------------------+
   | 0x20 |    2     |     0     | Unaligned memory access                |
   | 0x21 |    2     |     1     | Memory access fault (unmapped)         |
@@ -223,7 +224,7 @@ This layout is designed for efficient jump table dispatch using the `add pc` ins
   +------+----------+-----------+----------------------------------------+
 ```
 
-Note: Macro instructions (extended instructions implemented in software) do NOT use the `ecause`/`evec` mechanism. They continue to use their dedicated vector table at addresses 0x0100-0x01FF.
+Note: Macro instructions (extended instructions implemented in software) do NOT use the `ecause`/`evec` mechanism. They us a dedicated vector table at addresses 0x0100-0x01FF.
 
 ### 2.7. `evec` - Exception Vector Register
 
@@ -302,22 +303,22 @@ All instructions are 8 bits wide. There are three instruction formats:
   +---+---+-----------------------+------------+--------------------------------+
   | 0   1 |          imm          | push <imm> | Push sign extended immediate   |
   +-------+-------+---------------+------------+--------------------------------+
-  | 0   0 | 0   0 | 0   0   0   0 | syscall    | Jump to kernel                 |
-  | 0   0 | 0   0 | 0   0   0   1 | rets       | Return from kernel             |
-  | 0   0 | 0   0 | 0   0   1   0 | beqz       | Branch if equal zero           |
-  | 0   0 | 0   0 | 0   0   1   1 | bnez       | Branch if not equal zero       |
+  | 0   0 | 0   0 | 0   0   0   0 | halt       | Halt the processor             |
+  | 0   0 | 0   0 | 0   0   0   1 |            | reserved (maybe nop?)          |
+  | 0   0 | 0   0 | 0   0   1   0 | syscall    | Jump to kernel                 |
+  | 0   0 | 0   0 | 0   0   1   1 | rets       | Return from kernel             |
+  | 0   0 | 0   0 | 0   1   0   0 | beqz       | Branch if equal zero           |
+  | 0   0 | 0   0 | 0   1   0   1 | bnez       | Branch if not equal zero       |
   +-------+-------+---------------+------------+--------------------------------+
-  | 0   0 | 0   0 | 0   1   0   0 | dup        | Duplicate top of stack         |
-  | 0   0 | 0   0 | 0   1   0   1 | drop       | Drop top of stack              |
-  | 0   0 | 0   0 | 0   1   1   0 | over       | Duplicate next on stack        |
-  | 0   0 | 0   0 | 0   1   1   1 | swap       | Swap top and next on stack     |
+  | 0   0 | 0   0 | 0   1   1   0 | swap       | Swap top and next on stack     |
+  | 0   0 | 0   0 | 0   1   1   1 | over       | Duplicate next on stack        |
+  | 0   0 | 0   0 | 1   0   0   0 | drop       | Drop top of stack              |
+  | 0   0 | 0   0 | 1   0   0   1 | dup        | Duplicate top of stack         |
   +-------+-------+---------------+------------+--------------------------------+
-  | 0   0 | 0   0 | 1   0   0   0 | add        | Addition                       |
-  | 0   0 | 0   0 | 1   0   0   1 | sub        | Subtraction                    |
   | 0   0 | 0   0 | 1   0   1   0 | ltu        | Set unsigned less than         |
   | 0   0 | 0   0 | 1   0   1   1 | lt         | Set signed less than           |
-  | 0   0 | 0   0 | 1   1   0   0 | and        | Bitwise AND                    |
-  | 0   0 | 0   0 | 1   1   0   1 | or         | Bitwise OR                     |
+  | 0   0 | 0   0 | 1   1   0   0 | add        | Addition                       |
+  | 0   0 | 0   0 | 1   1   0   1 | and        | Bitwise AND                    |
   | 0   0 | 0   0 | 1   1   1   0 | xor        | Bitwise XOR                    |
   | 0   0 | 0   0 | 1   1   1   1 | fsl        | Double word funnel shift left  |
   +-------+-------+-------+-------+------------+--------------------------------+
@@ -343,8 +344,8 @@ All instructions are 8 bits wide. There are three instruction formats:
   | 0   0 | 1   0 | 1   0   0   0 | srl        | Shift right logical            |
   | 0   0 | 1   0 | 1   0   0   1 | sra        | Shift right arithmetic         |
   | 0   0 | 1   0 | 1   0   1   0 | sll        | Shift left logical             |
-  | 0   0 | 1   0 | 1   0   1   1 |            |                                |
-  | 0   0 | 1   0 | 1   1   0   0 |            |                                |
+  | 0   0 | 1   0 | 1   0   1   1 | or         | Bitwise OR                     |
+  | 0   0 | 1   0 | 1   1   0   0 | sub        | Subtraction                    |
   | 0   0 | 1   0 | 1   1   0   1 |            |                                |
   | 0   0 | 1   0 | 1   1   1   0 |            |                                |
   | 0   0 | 1   0 | 1   1   1   1 |            |                                |
@@ -409,12 +410,41 @@ Pushes the sign-extended 6-bit `imm` value onto the data stack.
 
 Implementations may choose to optimise `push` (or `push` + `shi` chains) by fusing it with the following instruction. A very good candidate would be to fuse `push` with the following `llw` or `slw` to create a single instruction that loads or stores a local variable onto or from the stack.
 
-##### 3.4.3. `syscall` - System Call
+##### 3.4.3. `halt` - Halt Processor
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
   +---+-------+-------+---------------+
   | O | 0   0 | 0   0 | 0   0   0   0 |
+  +---+-------+-------+---------------+
+
+  if (th == 1) then
+      if (km == 0) then fp, afp = afp, fp; epc = pc; estatus = status; ecause = 0x12; ie = 0; km = 1; pc = evec
+  else
+      halt the processor
+```
+
+Halt the processor, or raise a halt exception if the `th` bit in the `status` register is set.
+
+
+##### 3.4.4. `?` - Reserved Instruciton
+
+```text
+   Fmt  7   6   5   4   3   2   1   0
+  +---+-------+-------+---------------+
+  | O | 0   0 | 0   0 | 0   0   0   1 |
+  +---+-------+-------+---------------+
+
+```
+
+Instruction reserved for later use. Raises an illegal instruction exception for now.
+
+##### 3.4.5. `syscall` - System Call
+
+```text
+   Fmt  7   6   5   4   3   2   1   0
+  +---+-------+-------+---------------+
+  | O | 0   0 | 0   0 | 0   0   1   0 |
   +---+-------+-------+---------------+
 
   if (km == 0) then fp, afp = afp, fp; epc = pc; estatus = status; ecause = 0x00; ie = 0; km = 1; pc = evec
@@ -432,12 +462,12 @@ Causes a system call exception. The following procedure happens:
 
 Care should be taken to avoid this instruction (or anything that may cause an exception) until the `epc` and `estatus` registers have been saved, or they will be clobbered.
 
-##### 3.4.4. `rets` - Return from Kernel
+##### 3.4.6. `rets` - Return from Kernel
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
   +---+-------+-------+---------------+
-  | O | 0   0 | 0   0 | 0   0   0   1 |
+  | O | 0   0 | 0   0 | 0   0   1   1 |
   +---+-------+-------+---------------+
 
   pc = epc; status = estatus; if (km == 0) then fp, afp = afp, fp
@@ -449,33 +479,7 @@ Returns from a kernel exception (interrupt, exception, breakpoint or syscall). T
 2. Restore the `status` register from the `estatus` register.
 3. If now in user mode (`km == 0`), swap the `fp` and `afp` registers.
 
-##### 3.4.5. `beqz` - Branch if Equal to Zero
-
-```text
-   Fmt  7   6   5   4   3   2   1   0
-  +---+-------+-------+---------------+
-  | O | 0   0 | 0   0 | 0   0   1   0 |
-  +---+-------+-------+---------------+
-
-  next_pc = pc + tos!; if (nos! == 0) then pc = next_pc
-```
-
-Branches to a target address if the popped next on stack value is equal to zero. The target address is calculated by adding the address of the next instruction to execute to the top of stack value which is always popped whether the branch is taken or not.
-
-##### 3.4.6. `bnez` - Branch if Not Equal Zero
-
-```text
-   Fmt  7   6   5   4   3   2   1   0
-  +---+-------+-------+---------------+
-  | O | 0   0 | 0   0 | 0   0   1   1 |
-  +---+-------+-------+---------------+
-
-  next_pc = pc + tos!; if (nos! != 0) then pc = next_pc
-```
-
-Branches to a target address if the popped next on stack value is not equal to zero. The target address is calculated by adding the address of the next instruction to execute to the top of stack value which is always popped whether the branch is taken or not.
-
-##### 3.4.7. `dup` - Duplicate
+##### 3.4.7. `beqz` - Branch if Equal to Zero
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -483,14 +487,12 @@ Branches to a target address if the popped next on stack value is not equal to z
   | O | 0   0 | 0   0 | 0   1   0   0 |
   +---+-------+-------+---------------+
 
-  push(tos)
+  next_pc = pc + tos!; if (nos! == 0) then pc = next_pc
 ```
 
-Duplicates the top of stack value and pushes it onto the data stack. The new top of stack value is a copy of the previous top of stack value.
+Branches to a target address if the popped next on stack value is equal to zero. The target address is calculated by adding the address of the next instruction to execute to the top of stack value which is always popped whether the branch is taken or not.
 
-Implementations may choose to fuse this instruction with the following instruction for efficiency.
-
-##### 3.4.8. `drop` - Drop
+##### 3.4.8. `bnez` - Branch if Not Equal Zero
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -498,34 +500,17 @@ Implementations may choose to fuse this instruction with the following instructi
   | O | 0   0 | 0   0 | 0   1   0   1 |
   +---+-------+-------+---------------+
 
-  tos!
+  next_pc = pc + tos!; if (nos! != 0) then pc = next_pc
 ```
 
-Pops the top value off the data stack, discarding it. The next on stack value becomes the new top of stack value.
+Branches to a target address if the popped next on stack value is not equal to zero. The target address is calculated by adding the address of the next instruction to execute to the top of stack value which is always popped whether the branch is taken or not.
 
-Implementations may choose to fuse this instruction with the following instruction for efficiency.
-
-##### 3.4.9. `over` - Over
+##### 3.4.9. `swap` - Swap
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
   +---+-------+-------+---------------+
   | O | 0   0 | 0   0 | 0   1   1   0 |
-  +---+-------+-------+---------------+
-
-  push(nos)
-```
-
-Duplicates the next on stack value and pushes it onto the data stack. The new top of stack value is a copy of the previous next on stack value. In other words, it pulls the next on stack over the top of stack.
-
-Implementations may choose to fuse this instruction with the following instruction for efficiency.
-
-##### 3.4.10. `swap` - Swap
-
-```text
-   Fmt  7   6   5   4   3   2   1   0
-  +---+-------+-------+---------------+
-  | O | 0   0 | 0   0 | 0   1   1   1 |
   +---+-------+-------+---------------+
 
   tos, nos = nos, tos
@@ -535,7 +520,22 @@ Swaps the top two values on the data stack such that the top of stack value beco
 
 Implementations may choose to fuse this instruction with the following instruction for efficiency.
 
-##### 3.4.11. `add` - Add
+##### 3.4.10. `over` - Over
+
+```text
+   Fmt  7   6   5   4   3   2   1   0
+  +---+-------+-------+---------------+
+  | O | 0   0 | 0   0 | 0   1   1   1 |
+  +---+-------+-------+---------------+
+
+  push(nos)
+```
+
+Duplicates the next on stack value and pushes it onto the data stack. The new top of stack value is a copy of the previous next on stack value. In other words, it pulls the next on stack over the top of stack.
+
+Implementations may choose to fuse this instruction with the following instruction for efficiency.
+
+##### 3.4.11. `drop` - Drop
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -543,14 +543,14 @@ Implementations may choose to fuse this instruction with the following instructi
   | O | 0   0 | 0   0 | 1   0   0   0 |
   +---+-------+-------+---------------+
 
-  push(nos! + tos!)
+  tos!
 ```
 
-Adds the top two values on the data stack which are popped and the result pushed on the top of the stack.
+Pops the top value off the data stack, discarding it. The next on stack value becomes the new top of stack value.
 
-If wanting to add double-words with carry, use the `ltu` instruction to read the carry flag and add to the upper half.
+Implementations may choose to fuse this instruction with the following instruction for efficiency.
 
-##### 3.4.12. `sub` - Subtract
+##### 3.4.12. `dup` - Duplicate
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -558,14 +558,12 @@ If wanting to add double-words with carry, use the `ltu` instruction to read the
   | O | 0   0 | 0   0 | 1   0   0   1 |
   +---+-------+-------+---------------+
 
-  push(nos! - tos!)
+  push(tos)
 ```
 
-Subtracts the top two values on the data stack which are popped and the result pushed on the top of the stack.
+Duplicates the top of stack value and pushes it onto the data stack. The new top of stack value is a copy of the previous top of stack value.
 
-If wanting to subtract double-words with borrow, use the `ltu` instruction to read the borrow flag and subtract from the upper half.
-
-If wanting to negate a value, push zero onto the stack first then subtract. Reverse subtract can be done by `swap` followed by `sub`.
+Implementations may choose to fuse this instruction with the following instruction for efficiency.
 
 ##### 3.4.13. `ltu` - Less Than Unsigned
 
@@ -599,8 +597,7 @@ Compares the top two values on the data stack as signed integers, popping both o
 
 The `bnot` pseudo-instruction may be implemented as `push 1` followed by `ltu`. The `gt` pseudo-instruction may be implemented as `swap` followed by `lt`. `le` is `gt` followed by `bnot`. `ge` is `lt` followed by `bnot`.
 
-
-##### 3.4.15. `and` - Bitwise AND
+##### 3.4.15. `add` - Add
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -608,13 +605,14 @@ The `bnot` pseudo-instruction may be implemented as `push 1` followed by `ltu`. 
   | O | 0   0 | 0   0 | 1   1   0   0 |
   +---+-------+-------+---------------+
 
-  push(nos! & tos!)
+  push(nos! + tos!)
 ```
 
-Performs a bitwise AND operation on the top two values on the data stack which are popped and the result pushed on the top of the stack.
+Adds the top two values on the data stack which are popped and the result pushed on the top of the stack.
 
+If wanting to add double-words with carry, use the `ltu` instruction to read the carry flag and add to the upper half.
 
-##### 3.4.16. `or` - Bitwise OR
+##### 3.4.16. `and` - Bitwise AND
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -622,10 +620,10 @@ Performs a bitwise AND operation on the top two values on the data stack which a
   | O | 0   0 | 0   0 | 1   1   0   1 |
   +---+-------+-------+---------------+
 
-  push(nos! | tos!)
+  push(nos! & tos!)
 ```
 
-Performs a bitwise OR operation on the top two values on the data stack which are popped and the result pushed on the top of the stack.
+Performs a bitwise AND operation on the top two values on the data stack which are popped and the result pushed on the top of the stack.
 
 ##### 3.4.17. `xor` - Bitwise XOR
 
@@ -641,7 +639,6 @@ Performs a bitwise OR operation on the top two values on the data stack which ar
 Performs a bitwise XOR operation on the top two values on the data stack which are popped and the result pushed on the top of the stack.
 
 The `not` pseudo-instruction may be implemented as `push -1` followed by `xor`. The `eq` pseudo-instruction may be implemented as `xor` followed by `bnot`. The `ne` pseudo-instruction may be implemented as `xor` followed by `bnot`, `bnot`.
-
 
 ##### 3.4.18. `fsl` - Funnel Shift Left
 
@@ -927,6 +924,36 @@ Shifts the next on stack value right arithmetically by the number of bits specif
 ```
 
 Shifts the next on stack value left logically by the number of bits specified in the top of stack value which are popped and the result pushed on the top of the stack. Only the least significant `WORDSIZE` bits of the result are kept; the rest are discarded. The shift amount is masked to be within 0 to `WORDSIZE - 1`.
+
+##### 3.5.12. `or` - Bitwise OR
+
+```text
+   Fmt  7   6   5   4   3   2   1   0
+  +---+-------+-------+---------------+
+  | O | 0   0 | 0   0 | 1   0   1   1 |
+  +---+-------+-------+---------------+
+
+  push(nos! | tos!)
+```
+
+Performs a bitwise OR operation on the top two values on the data stack which are popped and the result pushed on the top of the stack.
+
+##### 3.5.13. `sub` - Subtract
+
+```text
+   Fmt  7   6   5   4   3   2   1   0
+  +---+-------+-------+---------------+
+  | O | 0   0 | 1   0 | 1   1   0   0 |
+  +---+-------+-------+---------------+
+
+  push(nos! - tos!)
+```
+
+Subtracts the top two values on the data stack which are popped and the result pushed on the top of the stack.
+
+If wanting to subtract double-words with borrow, use the `ltu` instruction to read the borrow flag and subtract from the upper half.
+
+If wanting to negate a value, push zero onto the stack first then subtract. Reverse subtract can be done by `swap` followed by `sub`.
 
 #### 3.6. Extended Memory Instructions
 

@@ -16,6 +16,6 @@ forward:
     jump backward
     push 6     ; Should NOT execute
 end:
-    sub
-    sub ; TOS should be -1 (1-(5-3)), depth = 1
+    add        ; 5 + 3 = 8
+    add        ; 8 + 1 = 9
     halt

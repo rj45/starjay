@@ -6,8 +6,8 @@
     pop fp      ; set fp to 0x1234
     push fp     ; read it back
     push 0x1234
-    sub
-    bnez _fail
+    xor
+    failnez
     pop fp      ; restore original fp
 
     ; Test push ra / pop ra
@@ -15,24 +15,24 @@
     pop ra
     push ra
     push 0x5678
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test push ar / pop ar
     push 0xABCD
     pop ar
     push ar
     push 0xABCD
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test push pc (should push current pc value)
     push pc
     drop        ; just verify it doesn't crash
 
     push 1
-    syscall
+    halt
 
 _fail:
     push 0
-    syscall
+    halt

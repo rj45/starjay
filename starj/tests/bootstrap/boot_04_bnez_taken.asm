@@ -1,5 +1,5 @@
 ; Bootstrap test 04: Branch taken (value is non-zero)
-; Validates: push imm, sub, bnez (taken path), jump (push_pcrel + add pc)
+; Validates: push imm, xor, bnez (taken path), jump (push_pcrel + add pc)
 ; Emulator checks: TOS = 99, depth = 1
 
 #bank vector

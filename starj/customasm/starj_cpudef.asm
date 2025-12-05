@@ -8,20 +8,20 @@
   ; Basic instruction set
   ; shi       => 0b1_???????
   ; push imm  => 0b01_??????
-  syscall     => 0b00_00_0000
-  rets        => 0b00_00_0001
-  beqz        => 0b00_00_0010
-  bnez        => 0b00_00_0011
-  dup         => 0b00_00_0100
-  drop        => 0b00_00_0101
-  over        => 0b00_00_0110
-  swap        => 0b00_00_0111
-  add         => 0b00_00_1000
-  sub         => 0b00_00_1001
+  halt        => 0b00_00_0000
+  illegal     => 0b00_00_0001
+  syscall     => 0b00_00_0010
+  rets        => 0b00_00_0011
+  beqz        => 0b00_00_0100
+  bnez        => 0b00_00_0101
+  swap        => 0b00_00_0110
+  over        => 0b00_00_0111
+  drop        => 0b00_00_1000
+  dup         => 0b00_00_1001
   ltu         => 0b00_00_1010
   lt          => 0b00_00_1011
-  and         => 0b00_00_1100
-  or          => 0b00_00_1101
+  add         => 0b00_00_1100
+  and         => 0b00_00_1101
   xor         => 0b00_00_1110
   fsl         => 0b00_00_1111
   ; push reg  => 0b00_01_00??
@@ -44,11 +44,11 @@
   srl         => 0b00_10_1000
   sra         => 0b00_10_1001
   sll         => 0b00_10_1010
-  res0        => 0b00_10_1011
-  res1        => 0b00_10_1100
-  res2        => 0b00_10_1101
-  res3        => 0b00_10_1110
-  res4        => 0b00_10_1111
+  or          => 0b00_10_1011
+  sub         => 0b00_10_1100
+  res0        => 0b00_10_1101
+  res1        => 0b00_10_1110
+  res2        => 0b00_10_1111
   lb          => 0b00_110_000
   sb          => 0b00_110_001
   lh          => 0b00_110_010
@@ -373,10 +373,16 @@
     sll
   }
 
-  halt => asm {
-    push status
-    or 0b100
-    pop status
+  failnez => asm {
+    beqz 2
+    push 0
+    halt
+  }
+
+  faileqz => asm {
+    bnez 2
+    push 0
+    halt
   }
 
   li {reg:reg}, {imm} => asm {

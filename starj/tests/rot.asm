@@ -11,16 +11,16 @@
     ; Stack should be: B(tos), C(nos), A(ros)
 
     push 0xBBBB ; expect tos = B
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 0xCCCC ; expect nos = C
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 0xAAAA ; expect ros = A
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 2: Rotation with different values
     push 0x1111 ; ros
@@ -29,16 +29,16 @@
     rot
 
     push 0x2222 ; expect tos
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 0x1111 ; expect nos
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 0x3333 ; expect ros
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 3: Three rotations should return to original
     push 0x0001 ; ros
@@ -49,16 +49,16 @@
     rot         ; -> 3, 2, 1 (back to original)
 
     push 0x0003 ; expect tos
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 0x0002 ; expect nos
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 0x0001 ; expect ros
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 4: Rotation with zeros
     push 0      ; ros
@@ -67,20 +67,20 @@
     rot
 
     push 0      ; expect tos (was nos)
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 0      ; expect nos (was ros)
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 0x1234 ; expect ros (was tos)
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 1
-    syscall
+    halt
 
 _fail:
     push 0
-    syscall
+    halt

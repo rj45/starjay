@@ -1,7 +1,7 @@
 ; Bootstrap test 03: Branch not taken (value is zero)
-; Validates: push imm, sub, bnez (not taken path)
+; Validates: push imm, xor, bnez (not taken path)
 ; Emulator checks: TOS = 99, depth = 1
-; The branch should NOT be taken because sub result is 0
+; The branch should NOT be taken because xor result is 0
 
 #bank vector
 _start:

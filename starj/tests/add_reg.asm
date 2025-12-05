@@ -8,8 +8,8 @@
     swap        ; original, new_fp
     push 100
     add         ; original + 100
-    sub         ; should be 0
-    bnez _fail
+    xor         ; should be 0
+    failnez
     push -100
     add fp      ; restore fp
 
@@ -20,8 +20,8 @@
     add ra      ; ra += 50
     push ra
     push 50
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test add ar
     push 0
@@ -30,12 +30,12 @@
     add ar
     push ar
     push 200
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 1
-    syscall
+    halt
 
 _fail:
     push 0
-    syscall
+    halt

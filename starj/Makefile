@@ -19,7 +19,7 @@ BOOT_BINS := $(BOOT_SRCS:.asm=.bin)
 BOOT_HEXS := $(BOOT_SRCS:.asm=.hex)
 BOOT_LISTINGS := $(BOOT_SRCS:.asm=_listing.txt)
 
-.PHONY: all generate clean bootstrap tests
+.PHONY: all clean bootstrap tests
 
 all: bootstrap tests
 
@@ -27,10 +27,10 @@ all: bootstrap tests
 bootstrap: $(BOOT_BINS) $(BOOT_HEXS) $(BOOT_LISTINGS)
 
 # Build regular tests (requires generate first)
-tests: generate $(TEST_BINS) $(TEST_HEXS) $(TEST_LISTINGS)
+tests: $(TEST_SRCS) $(TEST_BINS) $(TEST_HEXS) $(TEST_LISTINGS)
 
 # Generate test .asm files from Python script
-generate:
+$(TEST_SRCS): tests/generate_tests.py
 	$(PYTHON) tests/generate_tests.py
 
 # Build .bin from .asm (regular tests - use full kernel)

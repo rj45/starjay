@@ -26,8 +26,8 @@
     ; Verify ar has been incremented correctly (should be fp now)
     push ar
     push fp
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Now read them back using lnw
     ; Reset ar to fp-8
@@ -39,29 +39,29 @@
     ; Load 4 words sequentially using lnw
     lnw             ; push(mem[fp-8]) = 0x1111, ar = fp-6
     push 0x1111
-    sub
-    bnez _fail
+    xor
+    failnez
 
     lnw             ; push(mem[fp-6]) = 0x2222, ar = fp-4
     push 0x2222
-    sub
-    bnez _fail
+    xor
+    failnez
 
     lnw             ; push(mem[fp-4]) = 0x3333, ar = fp-2
     push 0x3333
-    sub
-    bnez _fail
+    xor
+    failnez
 
     lnw             ; push(mem[fp-2]) = 0x4444, ar = fp
     push 0x4444
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Verify ar has been incremented correctly again
     push ar
     push fp
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test with different values to ensure no aliasing
     push fp
@@ -82,17 +82,17 @@
 
     lnw
     push 0xAAAA
-    sub
-    bnez _fail
+    xor
+    failnez
 
     lnw
     push 0xBBBB
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 1
-    syscall
+    halt
 
 _fail:
     push 0
-    syscall
+    halt

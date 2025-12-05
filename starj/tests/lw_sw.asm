@@ -19,8 +19,8 @@
 
     ; Check result
     push 0x1234
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 2: Store and load 0xABCD at different offset
     push 0xABCD
@@ -35,8 +35,8 @@
     lw
 
     push 0xABCD
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 3: Verify first location still has 0x1234
     push fp
@@ -45,12 +45,12 @@
     lw
 
     push 0x1234
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 1
-    syscall
+    halt
 
 _fail:
     push 0
-    syscall
+    halt

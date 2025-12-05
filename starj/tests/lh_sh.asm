@@ -17,8 +17,8 @@
     lh
 
     push 0x5678
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 2: Store and load negative value
     push -1234
@@ -33,12 +33,12 @@
     lh
 
     push -1234
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 1
-    syscall
+    halt
 
 _fail:
     push 0
-    syscall
+    halt

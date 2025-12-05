@@ -17,8 +17,8 @@
     lb
 
     push 0x42
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 2: Sign extension - 0xFF should load as -1
     push 0xFF
@@ -33,8 +33,8 @@
     lb
 
     push -1         ; 0xFF sign-extended = -1
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 3: Sign extension boundary - 0x7F should stay positive (127)
     push 0x7F
@@ -49,8 +49,8 @@
     lb
 
     push 0x7F
-    sub
-    bnez _fail
+    xor
+    failnez
 
     ; Test 4: Sign extension boundary - 0x80 should become -128
     push 0x80
@@ -65,12 +65,12 @@
     lb
 
     push -128
-    sub
-    bnez _fail
+    xor
+    failnez
 
     push 1
-    syscall
+    halt
 
 _fail:
     push 0
-    syscall
+    halt

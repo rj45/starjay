@@ -25,7 +25,7 @@ pub const Registers = struct {
 pub const StatusFlags = struct {
     pub const KM: Word = 0x1;
     pub const IE: Word = 0x2;
-    pub const HALT: Word = 0x4;
+    pub const TH: Word = 0x4;
 };
 
 pub const Csrs = struct {
@@ -43,6 +43,7 @@ pub const Cpu = struct {
     csr: Csrs = .{},
     stack: [STACK_SIZE]Word = undefined,
     memory: []u16 = undefined,
+    haltOnSyscall: bool = false,
 
     pub const Error = error{
         StackOverflow,
@@ -68,7 +69,31 @@ pub const Cpu = struct {
     }
 
     pub inline fn inKernel(self: *Cpu) bool {
-        return (self.csr.status & 1) == 0;
+        return (self.csr.status & StatusFlags.KM) != 0;
+    }
+
+    pub inline fn framePointer(self: *Cpu) Word {
+        return if (self.inKernel()) self.csr.afp else self.reg.fp;
+    }
+
+    pub inline fn setFramePointer(self: *Cpu, value: u16) void {
+        if (self.inKernel()) {
+            self.csr.afp = value;
+        } else {
+            self.reg.fp = value;
+        }
+    }
+
+    pub inline fn alternateFramePointer(self: *Cpu) Word {
+        return if (self.inKernel()) self.reg.fp else self.csr.afp;
+    }
+
+    pub inline fn setAlternateFramePointer(self: *Cpu, value: u16) void {
+        if (self.inKernel()) {
+            self.reg.fp = value;
+        } else {
+            self.csr.afp = value;
+        }
     }
 
     inline fn push(self: *Cpu, value: Word) !void {
@@ -119,10 +144,18 @@ pub const Cpu = struct {
                 try self.push(value);
             } else {
                 switch (ir & 0x3f) {
-                    0x00 => { // syscall
-                        return; // TODO: implement syscall handling
+                    0x00 => { // HALT
+                        if (self.csr.status & StatusFlags.TH == 0) {
+                            std.log.info("{x} HALT - halting execution as requested", .{ir});
+                            return;
+                        }
                     },
-                    0x02 => { // BEQZ
+                    0x03 => { // RETS
+                        std.log.info("{x} RETS", .{ir});
+                        self.csr.status = self.csr.estatus;
+                        self.reg.pc = self.csr.epc;
+                    },
+                    0x04 => { // BEQZ
                         const offset = try self.pop();
                         const t = try self.pop();
                         if (t == 0) {
@@ -132,7 +165,7 @@ pub const Cpu = struct {
                             std.log.info("{x} BEQZ {}, {} not taken", .{ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
                         }
                     },
-                    0x03 => { // BNEZ
+                    0x05 => { // BNEZ
                         const offset = try self.pop();
                         const t = try self.pop();
                         if (t != 0) {
@@ -142,24 +175,24 @@ pub const Cpu = struct {
                             std.log.info("{x} BNEZ {}, {} not taken", .{ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
                         }
                     },
-                    0x09 => { // SUB
+                    0x0c => { // ADD
                         const b = try self.pop();
                         const a = try self.pop();
-                        std.log.info("{x} SUB {} - {}", .{ir, a, b});
-                        try self.push(@subWithOverflow(a, b)[0]);
+                        std.log.info("{x} ADD {} + {}", .{ir, a, b});
+                        try self.push(@addWithOverflow(a, b)[0]);
                     },
-                    0x0d => { // OR
+                    0x0e => { // XOR
                         const b = try self.pop();
                         const a = try self.pop();
-                        std.log.info("{x} OR {} | {}", .{ir, a, b});
-                        try self.push(a | b);
+                        std.log.info("{x} XOR {} ^ {}", .{ir, a, b});
+                        try self.push(a ^ b);
                     },
                     0x10, 0x11, 0x12, 0x13 => { // PUSH <reg>
                         const reg = ir & 0x03;
                         var value: Word = 0;
                         switch (reg) {
                             // 0 => value = self.reg.pc,
-                            1 => value = self.reg.fp,
+                            1 => value = self.framePointer(),
                             // 2 => value = self.reg.ra,
                             // 3 => value = self.reg.ar,
                             else => return Error.IllegalInstruction,
@@ -173,7 +206,11 @@ pub const Cpu = struct {
                         std.log.info("{x} POP REG[{}] = {}", .{ir, reg, value});
                         switch (reg) {
                             // 0 => npc = value,
-                            1 => self.reg.fp = value,
+                            1 => if (self.inKernel()) {
+                                self.csr.afp = value;
+                            } else {
+                                self.reg.fp = value;
+                            },
                             // 2 => self.reg.ra = value,
                             // 3 => self.reg.ar = value,
                             else => return Error.IllegalInstruction,
@@ -196,7 +233,9 @@ pub const Cpu = struct {
                         var csr_value: Word = 0;
                         switch (csr) {
                             0 => csr_value = self.csr.status,
-                            3 => csr_value = self.csr.afp,
+                            1 => csr_value = self.csr.estatus,
+                            2 => csr_value = self.csr.epc,
+                            3 => csr_value = self.alternateFramePointer(),
                             6 => csr_value = self.csr.evec,
                             else => {
                                 std.log.err("Illegal CSR: {x}", .{csr});
@@ -213,15 +252,16 @@ pub const Cpu = struct {
                         switch (csr) {
                             0 => {
                                 self.csr.status = value;
-                                if ((value & StatusFlags.HALT) != 0) {
-                                    std.log.info("HALT encountered, stopping execution", .{});
-                                    return;
-                                }
                             },
-                            3 => self.csr.afp = value,
+                            1 => self.csr.estatus = value,
+                            2 => self.csr.epc = value,
+                            3 => self.setAlternateFramePointer(value),
                             6 => self.csr.evec = value,
+                            9 => std.log.info("Ignoring set of udset", .{}),
+                            13 => std.log.info("Ignoring set of kdset", .{}),
+
                             else => {
-                                std.log.err("Illegal CSR: {x}", .{csr});
+                                std.log.err("Illegal CSR: {}", .{csr});
                                 return Error.IllegalInstruction;
                             }
                         }
@@ -268,6 +308,7 @@ pub fn runTest(rom_file: []const u8, max_cycles: usize, gpa: std.mem.Allocator) 
 
     var cpu = Cpu.init(memory);
     try cpu.loadRom(rom_file);
+    cpu.haltOnSyscall = true;
     try cpu.run(max_cycles);
 
     if (cpu.csr.depth != 1) {
@@ -288,8 +329,8 @@ test "shi instruction" {
     try std.testing.expect(value == 0xABCD);
 }
 
-test "sub instruction" {
-    const value = try runTest("starj/tests/bootstrap/boot_02_sub.bin", 10, std.testing.allocator);
+test "xor instruction" {
+    const value = try runTest("starj/tests/bootstrap/boot_02_xor.bin", 10, std.testing.allocator);
     try std.testing.expect(value == 2);
 }
 
@@ -303,8 +344,8 @@ test "bnez taken instruction" {
     try std.testing.expect(value == 99);
 }
 
-test "or instruction" {
-    const value = try runTest("starj/tests/bootstrap/boot_05_or.bin", 20, std.testing.allocator);
+test "add instruction" {
+    const value = try runTest("starj/tests/bootstrap/boot_05_add.bin", 20, std.testing.allocator);
     try std.testing.expect(value == 0xFF);
 }
 
@@ -325,25 +366,57 @@ test "pop status and halt instruction" {
 
 test "jump instruction" {
     const value = try runTest("starj/tests/bootstrap/boot_09_jump.bin", 40, std.testing.allocator);
-    try std.testing.expect(value == 0xffff); // AKA -1
+    try std.testing.expect(value == 9);
 }
-
 
 test "push/pop fp instruction" {
     const value = try runTest("starj/tests/bootstrap/boot_10_push_pop_fp.bin", 40, std.testing.allocator);
-    try std.testing.expect(value == 3);
+    try std.testing.expect(value == 5);
 }
 
 test "push/pop afp instruction" {
     const value = try runTest("starj/tests/bootstrap/boot_11_push_pop_afp.bin", 40, std.testing.allocator);
-    try std.testing.expect(value == 3);
+    try std.testing.expect(value == 5);
 }
 
 test "push/pop evec instruction" {
-    std.testing.log_level = .debug;
     const value = try runTest("starj/tests/bootstrap/boot_12_push_pop_evec.bin", 40, std.testing.allocator);
-    try std.testing.expect(value == 3);
+    try std.testing.expect(value == 5);
 }
+
+test "push/pop estatus instruction" {
+    const value = try runTest("starj/tests/bootstrap/boot_13_push_pop_estatus.bin", 40, std.testing.allocator);
+    try std.testing.expect(value == 5);
+}
+
+test "push/pop epc instruction" {
+    // std.testing.log_level = .debug;
+    const value = try runTest("starj/tests/bootstrap/boot_14_push_pop_epc.bin", 40, std.testing.allocator);
+    try std.testing.expect(value == 5);
+}
+
+test "rets instruction" {
+    const gpa = std.testing.allocator;
+    const memory = try gpa.alloc(u16, 128 * 1024);
+    defer gpa.free(memory);
+
+    var cpu = Cpu.init(memory);
+    try cpu.loadRom("starj/tests/bootstrap/boot_15_rets.bin");
+    cpu.haltOnSyscall = true;
+    try cpu.run(40);
+
+    if (cpu.csr.depth != 1) {
+        std.log.err("Expected exactly one value on stack after execution, found {}", .{cpu.csr.depth});
+        return Cpu.Error.StackUnderflow;
+    }
+
+    try std.testing.expect(!cpu.inKernel());
+    try std.testing.expect(cpu.framePointer() == 20);
+
+    const value = try cpu.pop();
+    try std.testing.expect(value == 13);
+}
+
 
 // test "syscall" {
 //     std.testing.log_level = .debug;
