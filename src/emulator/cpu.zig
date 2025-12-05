@@ -362,6 +362,27 @@ pub const Cpu = struct {
                             try self.push(@divFloor(dividend, divisor));
                         }
                     },
+                    0x22 => { // MOD
+                        const divisor: i16 = @bitCast(try self.pop());
+                        const dividend: i16 = @bitCast(try self.pop());
+                        std.log.info("{x}: {x} MOD {} % {}", .{self.reg.pc-1, ir, dividend, divisor});
+                        if (divisor == 0) {
+                            return Error.DivideByZero;
+                        } else {
+                            const signed_result = @rem(dividend, divisor);
+                            try self.push(@bitCast(signed_result));
+                        }
+                    },
+                    0x23 => { // MODU
+                        const divisor = try self.pop();
+                        const dividend = try self.pop();
+                        std.log.info("{x}: {x} MODU {} % {}", .{self.reg.pc-1, ir, dividend, divisor});
+                        if (divisor == 0) {
+                            return Error.DivideByZero;
+                        } else {
+                            try self.push(@rem(dividend, divisor));
+                        }
+                    },
                     0x30 => { // LB
                         const addr = try self.pop();
                         std.log.info("{x}: {x} LB from {x}", .{self.reg.pc-1, ir, addr});
@@ -653,7 +674,17 @@ test "lt instruction" {
 }
 
 test "ltu instruction" {
-    // std.testing.log_level = .debug;
     const value = try runTest("starj/tests/ltu.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "mod instruction" {
+    const value = try runTest("starj/tests/mod.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "modu instruction" {
+    // std.testing.log_level = .debug;
+    const value = try runTest("starj/tests/modu.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
