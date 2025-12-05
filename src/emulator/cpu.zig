@@ -213,7 +213,7 @@ pub const Cpu = struct {
                         const value = try self.pop();
                         std.log.info("{x}: {x} POP REG[{}] = {}", .{self.reg.pc-1, ir, reg, value});
                         switch (reg) {
-                            // 0 => npc = value,
+                            0 => self.reg.pc = value,
                             1 => if (self.inKernel()) {
                                 self.csr.afp = value;
                             } else {
@@ -283,6 +283,13 @@ pub const Cpu = struct {
                                 return Error.IllegalInstruction;
                             }
                         }
+                    },
+                    // -------- extended instructions --------
+                    0x38 => { // CALL
+                        const pcrel = try self.pop();
+                        std.log.info("{x}: {x} CALL to {x}, return address {x}", .{self.reg.pc-1, ir, self.reg.pc+pcrel, self.reg.pc});
+                        self.reg.ra = self.reg.pc;
+                        self.reg.pc += pcrel;
                     },
                     else => {
                         std.log.err("Illegal instruction: {x}", .{ir});
@@ -436,7 +443,12 @@ test "beqz instruction" {
 }
 
 test "bnez instruction" {
-    // std.testing.log_level = .debug;
     const value = try runTest("starj/tests/bnez.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "call/ret instructions" {
+    // std.testing.log_level = .debug;
+    const value = try runTest("starj/tests/call_ret.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }

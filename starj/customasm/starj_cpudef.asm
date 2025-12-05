@@ -394,6 +394,15 @@
     push {imm}
     pop {csr}
   }
+
+  ret ra => asm {
+    push ra
+    pop pc
+  }
+
+  ret => asm {
+    pop pc
+  }
 }
 
 ; ==========================================
