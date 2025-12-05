@@ -426,7 +426,17 @@ test "add <reg> instruction" {
 }
 
 test "and instruction" {
-    // std.testing.log_level = .debug;
     const value = try runTest("starj/tests/and.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "beqz instruction" {
+    const value = try runTest("starj/tests/beqz.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "bnez instruction" {
+    // std.testing.log_level = .debug;
+    const value = try runTest("starj/tests/bnez.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
