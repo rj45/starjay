@@ -49,6 +49,8 @@ pub const Cpu = struct {
         StackOverflow,
         StackUnderflow,
         IllegalInstruction,
+        DivideByZero,
+        UnalignedAccess,
     };
 
     pub fn init(memory: []u16) Cpu {
@@ -308,12 +310,20 @@ pub const Cpu = struct {
                         const fprel = try self.pop();
                         const value = @as(Word, self.memory[self.reg.fp + fprel]);
                         std.log.info("{x}: {x} LLW from fp+{} = {}", .{self.reg.pc-1, ir, fprel, value});
+                        if ((fprel + self.reg.fp) & 1 == 1) {
+                            std.log.err("Unaligned LLW from fp+{} = {x}", .{fprel, self.reg.fp + fprel});
+                            return Error.UnalignedAccess;
+                        }
                         try self.push(value);
                     },
                     0x1f => { // SLW
                         const fprel = try self.pop();
                         const value = try self.pop();
                         std.log.info("{x}: {x} SLW to fp+{} = {}", .{self.reg.pc-1, ir, fprel, value});
+                        if ((fprel + self.reg.fp) & 1 == 1) {
+                            std.log.err("Unaligned SLW from fp+{} = {x}", .{fprel, self.reg.fp + fprel});
+                            return Error.UnalignedAccess;
+                        }
                         self.memory[self.reg.fp + fprel] = value;
                     },
                     // -------- extended instructions --------
@@ -322,8 +332,7 @@ pub const Cpu = struct {
                         const dividend: i16 = @bitCast(try self.pop());
                         std.log.info("{x}: {x} DIV {} / {}", .{self.reg.pc-1, ir, dividend, divisor});
                         if (divisor == 0) {
-                            // TODO: throw exception instead
-                            try self.push(0);
+                            return Error.DivideByZero;
                         } else {
                             const signed_result = @divTrunc(dividend, divisor);
                             try self.push(@bitCast(signed_result));
@@ -334,8 +343,7 @@ pub const Cpu = struct {
                         const dividend = try self.pop();
                         std.log.info("{x}: {x} DIVU {} / {}", .{self.reg.pc-1, ir, dividend, divisor});
                         if (divisor == 0) {
-                            // TODO: throw exception instead
-                            try self.push(0);
+                            return Error.DivideByZero;
                         } else {
                             try self.push(@divFloor(dividend, divisor));
                         }

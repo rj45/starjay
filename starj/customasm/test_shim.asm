@@ -4,8 +4,8 @@
 
 ; Reset vector at 0x0000
 _reset_handler:
-  li fp, 0xffff        ; initialize kernel frame pointer
-  li afp, 0xdfff       ; initialize alternate (user) frame pointer
+  li fp, 0x0000        ; initialize kernel frame pointer
+  li afp, 0xe000       ; initialize alternate (user) frame pointer
 
   ; Set up exception vector to point to our handler
   li evec, _exception_handler
