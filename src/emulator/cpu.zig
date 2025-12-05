@@ -306,16 +306,14 @@ pub const Cpu = struct {
                     },
                     // -------- extended instructions --------
                     0x20 => { // DIV
-                        const divisor = try self.pop();
-                        const dividend = try self.pop();
+                        const divisor: i16 = @bitCast(try self.pop());
+                        const dividend: i16 = @bitCast(try self.pop());
                         std.log.info("{x}: {x} DIV {} / {}", .{self.reg.pc-1, ir, dividend, divisor});
                         if (divisor == 0) {
                             // TODO: throw exception instead
                             try self.push(0);
                         } else {
-                            const signed_divisor = @as(i16, @bitCast(divisor));
-                            const signed_dividend = @as(i16, @bitCast(dividend));
-                            const signed_result = @divFloor(signed_dividend, signed_divisor);
+                            const signed_result = @divTrunc(dividend, divisor);
                             try self.push(@bitCast(signed_result));
                         }
                     },

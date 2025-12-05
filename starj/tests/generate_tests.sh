@@ -1458,7 +1458,10 @@ main() {
         20 10 2 \
         20 -10 -2 \
         -20 10 -2 \
-        -20 -10 2
+        -20 -10 2 \
+        11 3 3 \
+        -11 3 -3 \
+        11 -3 -3
 
     # divu (unsigned)
     generate_binary_op_test divu \
