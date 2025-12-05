@@ -383,6 +383,21 @@ pub const Cpu = struct {
                             try self.push(@rem(dividend, divisor));
                         }
                     },
+                    0x24 => { // MUL
+                        const b: i16 = @bitCast(try self.pop());
+                        const a: i16 = @bitCast(try self.pop());
+                        const result: i16 = @mulWithOverflow(a, b)[0];
+                        std.log.info("{x}: {x} MUL {} * {} = {}", .{self.reg.pc-1, ir, a, b, result});
+                        try self.push(@bitCast(result));
+                    },
+                    0x25 => { // MULH
+                        const b: i32 = @intCast(try self.pop());
+                        const a: i32 = @intCast(try self.pop());
+                        const full_result: i32 = @mulWithOverflow(a, b)[0];
+                        const result: i16 = @truncate(full_result >> 16);
+                        std.log.info("{x}: {x} MULH {} * {} = {}", .{self.reg.pc-1, ir, a, b, result});
+                        try self.push(@bitCast(result));
+                    },
                     0x30 => { // LB
                         const addr = try self.pop();
                         std.log.info("{x}: {x} LB from {x}", .{self.reg.pc-1, ir, addr});
@@ -686,5 +701,16 @@ test "mod instruction" {
 test "modu instruction" {
     // std.testing.log_level = .debug;
     const value = try runTest("starj/tests/modu.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "mul instruction" {
+    const value = try runTest("starj/tests/mul.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "mulh instruction" {
+    // std.testing.log_level = .debug;
+    const value = try runTest("starj/tests/mulh.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
