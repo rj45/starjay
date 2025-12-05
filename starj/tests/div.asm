@@ -31,6 +31,14 @@
     xor
     failnez
 
+    ; Case 4: 10 div 3 -> 3
+    push 10
+    push 3
+    div
+    push 3
+    xor
+    failnez
+
     ; All passed
     push 1
     halt

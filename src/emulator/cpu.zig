@@ -295,8 +295,19 @@ pub const Cpu = struct {
                         } else {
                             const signed_divisor = @as(i16, @bitCast(divisor));
                             const signed_dividend = @as(i16, @bitCast(dividend));
-                            const signed_result = @divExact(signed_dividend, signed_divisor);
+                            const signed_result = @divFloor(signed_dividend, signed_divisor);
                             try self.push(@bitCast(signed_result));
+                        }
+                    },
+                    0x21 => { // DIVU
+                        const divisor = try self.pop();
+                        const dividend = try self.pop();
+                        std.log.info("{x}: {x} DIVU {} / {}", .{self.reg.pc-1, ir, dividend, divisor});
+                        if (divisor == 0) {
+                            // TODO: throw exception instead
+                            try self.push(0);
+                        } else {
+                            try self.push(@divFloor(dividend, divisor));
                         }
                     },
                     0x38 => { // CALL
@@ -478,7 +489,12 @@ test "callp instructions" {
 }
 
 test "div instructions" {
-    // std.testing.log_level = .debug;
     const value = try runTest("starj/tests/div.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "divu instructions" {
+    // std.testing.log_level = .debug;
+    const value = try runTest("starj/tests/divu.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
