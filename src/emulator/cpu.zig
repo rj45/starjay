@@ -426,6 +426,25 @@ pub const Cpu = struct {
                         try self.push(a);
                         try self.push(b);
                     },
+                    0x28 => { // SRL
+                        const shift = try self.pop();
+                        const value = try self.pop();
+                        std.log.info("{x}: {x} SRL {} >> {}", .{self.reg.pc-1, ir, value, shift});
+                        try self.push(value >> @truncate(shift & 0x0f));
+                    },
+                    0x29 => { // SRA
+                        const shift = try self.pop();
+                        const value: i16 = @bitCast(try self.pop());
+                        std.log.info("{x}: {x} SRA {} >> {}", .{self.reg.pc-1, ir, value, shift});
+                        const shifted: i16 = value >> @truncate(shift & 0x0f);
+                        try self.push(@bitCast(shifted));
+                    },
+                    0x2a => { // SLL
+                        const shift = try self.pop();
+                        const value = try self.pop();
+                        std.log.info("{x}: {x} SLL {} << {}", .{self.reg.pc-1, ir, value, shift});
+                        try self.push(value << @truncate(shift & 0x0f));
+                    },
                     0x2b => { // OR
                         const b = try self.pop();
                         const a = try self.pop();
@@ -769,7 +788,27 @@ test "rot instruction" {
 }
 
 test "select instruction" {
-    // std.testing.log_level = .debug;
     const value = try runTest("starj/tests/select.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "shi instruction" {
+    const value = try runTest("starj/tests/shi.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "sll instruction" {
+    const value = try runTest("starj/tests/sll.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "srl instruction" {
+    const value = try runTest("starj/tests/srl.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "sra instruction" {
+    // std.testing.log_level = .debug;
+    const value = try runTest("starj/tests/sra.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
