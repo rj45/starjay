@@ -285,6 +285,20 @@ pub const Cpu = struct {
                         }
                     },
                     // -------- extended instructions --------
+                    0x20 => { // DIV
+                        const divisor = try self.pop();
+                        const dividend = try self.pop();
+                        std.log.info("{x}: {x} DIV {} / {}", .{self.reg.pc-1, ir, dividend, divisor});
+                        if (divisor == 0) {
+                            // TODO: throw exception instead
+                            try self.push(0);
+                        } else {
+                            const signed_divisor = @as(i16, @bitCast(divisor));
+                            const signed_dividend = @as(i16, @bitCast(dividend));
+                            const signed_result = @divExact(signed_dividend, signed_divisor);
+                            try self.push(@bitCast(signed_result));
+                        }
+                    },
                     0x38 => { // CALL
                         const pcrel = try self.pop();
                         std.log.info("{x}: {x} CALL to {x}, return address {x}", .{self.reg.pc-1, ir, self.reg.pc+pcrel, self.reg.pc});
@@ -459,7 +473,12 @@ test "call/ret instructions" {
 }
 
 test "callp instructions" {
-    // std.testing.log_level = .debug;
     const value = try runTest("starj/tests/callp.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "div instructions" {
+    // std.testing.log_level = .debug;
+    const value = try runTest("starj/tests/div.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
