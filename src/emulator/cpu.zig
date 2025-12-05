@@ -189,6 +189,13 @@ pub const Cpu = struct {
                         try self.push(a);
                         std.log.info("{x}: {x} DUP {}", .{self.reg.pc-1, ir, a});
                     },
+                    0x0a => { // LTU
+                        const b = try self.pop();
+                        const a = try self.pop();
+                        const result: Word = if (a < b) 1 else 0;
+                        std.log.info("{x}: {x} LTU {} < {} = {}", .{self.reg.pc-1, ir, a, b, result});
+                        try self.push(result);
+                    },
                     0x0b => { // LT
                         const b: i16 = @bitCast(try self.pop());
                         const a: i16 = @bitCast(try self.pop());
@@ -641,7 +648,12 @@ test "lnw snw instructions" {
 }
 
 test "lt instruction" {
-    // std.testing.log_level = .debug;
     const value = try runTest("starj/tests/lt.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "ltu instruction" {
+    // std.testing.log_level = .debug;
+    const value = try runTest("starj/tests/ltu.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
