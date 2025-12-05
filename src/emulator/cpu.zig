@@ -406,6 +406,17 @@ pub const Cpu = struct {
                         std.log.info("{x}: {x} MULH {} * {} = {}", .{self.reg.pc-1, ir, a, b, result});
                         try self.push(@bitCast(result));
                     },
+                    0x26 => { // SELECT
+                        const cond = try self.pop();
+                        const a = try self.pop();
+                        const b = try self.pop();
+                        std.log.info("{x}: {x} SELECT {} ? {} : {}", .{self.reg.pc-1, ir, cond, a, b});
+                        if (cond != 0) {
+                            try self.push(a);
+                        } else {
+                            try self.push(b);
+                        }
+                    },
                     0x27 => { // ROT
                         const c = try self.pop();
                         const b = try self.pop();
@@ -753,7 +764,12 @@ test "push/pop <reg> instructions" {
 }
 
 test "rot instruction" {
-    // std.testing.log_level = .debug;
     const value = try runTest("starj/tests/rot.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "select instruction" {
+    // std.testing.log_level = .debug;
+    const value = try runTest("starj/tests/select.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
