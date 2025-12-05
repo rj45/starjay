@@ -243,7 +243,7 @@ pub const Cpu = struct {
                         const reg = ir & 0x03;
                         var value: Word = 0;
                         switch (reg) {
-                            // 0 => value = self.reg.pc,
+                            0 => value = self.reg.pc,
                             1 => value = self.framePointer(),
                             2 => value = self.reg.ra,
                             3 => value = self.reg.ar,
@@ -734,7 +734,12 @@ test "or instruction" {
 }
 
 test "over instruction" {
-    // std.testing.log_level = .debug;
     const value = try runTest("starj/tests/over.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "push/pop <reg> instructions" {
+    // std.testing.log_level = .debug;
+    const value = try runTest("starj/tests/push_pop_reg.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }

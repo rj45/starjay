@@ -997,9 +997,11 @@ def generate_register_tests():
     xor
     failnez
 
-    ; Test push pc (should push current pc value)
+    ; Test push pc (should push the pc of the next instruction)
     push pc
-    drop        ; just verify it doesn't crash
+    push $
+    xor
+    failnez
 
     push 1
     halt
