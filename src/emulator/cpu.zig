@@ -291,6 +291,12 @@ pub const Cpu = struct {
                         self.reg.ra = self.reg.pc;
                         self.reg.pc += pcrel;
                     },
+                    0x39 => { // CALLP
+                        const addr = try self.pop();
+                        std.log.info("{x}: {x} CALLP to {x}, return address {x}", .{self.reg.pc-1, ir, addr, self.reg.pc});
+                        self.reg.ra = self.reg.pc;
+                        self.reg.pc = addr;
+                    },
                     else => {
                         std.log.err("Illegal instruction: {x}", .{ir});
                         return Error.IllegalInstruction;
@@ -448,7 +454,12 @@ test "bnez instruction" {
 }
 
 test "call/ret instructions" {
-    // std.testing.log_level = .debug;
     const value = try runTest("starj/tests/call_ret.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "callp instructions" {
+    // std.testing.log_level = .debug;
+    const value = try runTest("starj/tests/callp.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
