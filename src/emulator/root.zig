@@ -1,9 +1,8 @@
 const std = @import("std");
 
-const types = @import("types.zig");
 const cpu = @import("cpu.zig");
 
-pub const Word = types.Word;
+pub const Word = cpu.Word;
 
 pub const run = cpu.run;
 

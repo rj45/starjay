@@ -1,11 +1,10 @@
-
 const std = @import("std");
-const types = @import("types.zig");
 
-const Word = types.Word;
-const WORDSIZE = types.WORDSIZE;
-const WORDBYTES = types.WORDBYTES;
-const WORDMASK = types.WORDMASK;
+pub const Word = u16;
+
+pub const WORDSIZE: comptime_int = 16;
+pub const WORDBYTES: comptime_int = WORDSIZE / 2;
+pub const WORDMASK: Word = (1<<WORDSIZE) - 1;
 
 const STACK_SIZE: comptime_int = (1 << WORDSIZE) - 1;
 const USER_HIGH_WATER: comptime_int = STACK_SIZE - 8;
@@ -138,17 +137,17 @@ pub const Cpu = struct {
             // decode & execute
             if ((ir & 0x80) == 0x80) {
                 const value = ir & 0x7f;
-                std.log.info("{x}: {x} SHI {}", .{self.reg.pc-1, ir, value});
+                std.log.info("{x:0>4}: {x:0>2} SHI {}", .{self.reg.pc-1, ir, value});
                 try self.push((try self.pop() << 7) | value);
             } else if ((ir & 0xc0) == 0x40) {
                 const value = signExtend(ir & 0x3f, 6);
-                std.log.info("{x}: {x} PUSH {}", .{self.reg.pc-1, ir, @as(i16, @bitCast(value))});
+                std.log.info("{x:0>4}: {x:0>2} PUSH {}", .{self.reg.pc-1, ir, @as(i16, @bitCast(value))});
                 try self.push(value);
             } else {
                 switch (ir & 0x3f) {
                     0x00 => { // HALT
                         if (self.csr.status & StatusFlags.TH == 0) {
-                            std.log.info("{x}: {x} HALT - halting execution as requested", .{self.reg.pc-1, ir});
+                            std.log.info("{x:0>4}: {x:0>2} HALT - halting execution as requested", .{self.reg.pc-1, ir});
                             return;
                         }
                     },
@@ -156,84 +155,84 @@ pub const Cpu = struct {
                         const offset = try self.pop();
                         const t = try self.pop();
                         if (t == 0) {
-                            std.log.info("{x}: {x} BEQZ {}, {} taken", .{self.reg.pc-1, ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
+                            std.log.info("{x:0>4}: {x:0>2} BEQZ {}, {} taken", .{self.reg.pc-1, ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
                             self.reg.pc = @addWithOverflow(self.reg.pc, @as(Word, @bitCast(offset)))[0];
                         } else {
-                            std.log.info("{x}: {x} BEQZ {}, {} not taken", .{self.reg.pc-1, ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
+                            std.log.info("{x:0>4}: {x:0>2} BEQZ {}, {} not taken", .{self.reg.pc-1, ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
                         }
                     },
                     0x05 => { // BNEZ
                         const offset = try self.pop();
                         const t = try self.pop();
                         if (t != 0) {
-                            std.log.info("{x}: {x} BNEZ {}, {} taken", .{self.reg.pc-1, ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
+                            std.log.info("{x:0>4}: {x:0>2} BNEZ {}, {} taken", .{self.reg.pc-1, ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
                             self.reg.pc = @addWithOverflow(self.reg.pc, @as(Word, @bitCast(offset)))[0];
                         } else {
-                            std.log.info("{x}: {x} BNEZ {}, {} not taken", .{self.reg.pc-1, ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
+                            std.log.info("{x:0>4}: {x:0>2} BNEZ {}, {} not taken", .{self.reg.pc-1, ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
                         }
                     },
                     0x06 => { // SWAP
                         const b = try self.pop();
                         const a = try self.pop();
-                        std.log.info("{x}: {x} SWAP {} <-> {}", .{self.reg.pc-1, ir, a, b});
+                        std.log.info("{x:0>4}: {x:0>2} SWAP {} <-> {}", .{self.reg.pc-1, ir, a, b});
                         try self.push(b);
                         try self.push(a);
                     },
                     0x07 => { // OVER
                         const b = try self.pop();
                         const a = try self.pop();
-                        std.log.info("{x}: {x} OVER {}", .{self.reg.pc-1, ir, a});
+                        std.log.info("{x:0>4}: {x:0>2} OVER {}", .{self.reg.pc-1, ir, a});
                         try self.push(a);
                         try self.push(b);
                         try self.push(a);
                     },
                     0x08 => { // DROP
                         const a = try self.pop();
-                        std.log.info("{x}: {x} DROP {}", .{self.reg.pc-1, ir, a});
+                        std.log.info("{x:0>4}: {x:0>2} DROP {}", .{self.reg.pc-1, ir, a});
                     },
                     0x09 => { // DUP
                         const a = try self.pop();
                         try self.push(a);
                         try self.push(a);
-                        std.log.info("{x}: {x} DUP {}", .{self.reg.pc-1, ir, a});
+                        std.log.info("{x:0>4}: {x:0>2} DUP {}", .{self.reg.pc-1, ir, a});
                     },
                     0x0a => { // LTU
                         const b = try self.pop();
                         const a = try self.pop();
                         const result: Word = if (a < b) 1 else 0;
-                        std.log.info("{x}: {x} LTU {} < {} = {}", .{self.reg.pc-1, ir, a, b, result});
+                        std.log.info("{x:0>4}: {x:0>2} LTU {} < {} = {}", .{self.reg.pc-1, ir, a, b, result});
                         try self.push(result);
                     },
                     0x0b => { // LT
                         const b: i16 = @bitCast(try self.pop());
                         const a: i16 = @bitCast(try self.pop());
                         const result: Word = if (a < b) 1 else 0;
-                        std.log.info("{x}: {x} LT {} < {} = {}", .{self.reg.pc-1, ir, a, b, result});
+                        std.log.info("{x:0>4}: {x:0>2} LT {} < {} = {}", .{self.reg.pc-1, ir, a, b, result});
                         try self.push(result);
                     },
                     0x0c => { // ADD
                         const b = try self.pop();
                         const a = try self.pop();
-                        std.log.info("{x}: {x} ADD {} + {}", .{self.reg.pc-1, ir, a, b});
+                        std.log.info("{x:0>4}: {x:0>2} ADD {} + {}", .{self.reg.pc-1, ir, a, b});
                         try self.push(@addWithOverflow(a, b)[0]);
                     },
                     0x0d => { // AND
                         const b = try self.pop();
                         const a = try self.pop();
-                        std.log.info("{x}: {x} AND {} & {}", .{self.reg.pc-1, ir, a, b});
+                        std.log.info("{x:0>4}: {x:0>2} AND {} & {}", .{self.reg.pc-1, ir, a, b});
                         try self.push(a & b);
                     },
                     0x0e => { // XOR
                         const b = try self.pop();
                         const a = try self.pop();
-                        std.log.info("{x}: {x} XOR {} ^ {}", .{self.reg.pc-1, ir, a, b});
+                        std.log.info("{x:0>4}: {x:0>2} XOR {} ^ {}", .{self.reg.pc-1, ir, a, b});
                         try self.push(a ^ b);
                     },
                     0x0f => { // FSL
                         const shift = try self.pop();
                         const lower = try self.pop();
                         const upper = try self.pop();
-                        std.log.info("{x}: {x} FSL ({x} @ {x} << {}) >> 16", .{self.reg.pc-1, ir, upper, lower, shift});
+                        std.log.info("{x:0>4}: {x:0>2} FSL ({x} @ {x} << {}) >> 16", .{self.reg.pc-1, ir, upper, lower, shift});
                         const value: u32 = (@as(u32, upper) << 16) | @as(u32, lower);
                         const shifted = value << @truncate(shift & 0x1f);
                         const result = @as(Word, @truncate(shifted >> 16));
@@ -249,13 +248,13 @@ pub const Cpu = struct {
                             3 => value = self.reg.ar,
                             else => return Error.IllegalInstruction,
                         }
-                        std.log.info("{x}: {x} PUSH REG[{}] = {}", .{self.reg.pc-1, ir, reg, value});
+                        std.log.info("{x:0>4}: {x:0>2} PUSH REG[{}] = {}", .{self.reg.pc-1, ir, reg, value});
                         try self.push(value);
                     },
                     0x14, 0x15, 0x16, 0x17 => { // POP <reg>
                         const reg = ir & 0x03;
                         const value = try self.pop();
-                        std.log.info("{x}: {x} POP REG[{}] = {}", .{self.reg.pc-1, ir, reg, value});
+                        std.log.info("{x:0>4}: {x:0>2} POP REG[{}] = {}", .{self.reg.pc-1, ir, reg, value});
                         switch (reg) {
                             0 => self.reg.pc = value,
                             1 => if (self.inKernel()) {
@@ -274,25 +273,25 @@ pub const Cpu = struct {
                         switch (reg) {
                             0 => { // ADD PC aka JUMP
                                 self.reg.pc = @addWithOverflow(self.reg.pc, addend)[0];
-                                std.log.info("{x}: {x} JUMP {} to {x}", .{self.reg.pc-1, ir, addend, self.reg.pc});
+                                std.log.info("{x:0>4}: {x:0>2} JUMP {} to {x}", .{self.reg.pc-1, ir, addend, self.reg.pc});
                             },
                             1 => { // ADD FP
                                 const fp = self.framePointer();
                                 const new_fp = @addWithOverflow(fp, addend)[0];
                                 self.setFramePointer(new_fp);
-                                std.log.info("{x}: {x} ADD FP {} + {} = {}", .{self.reg.pc-1, ir, fp, addend, new_fp});
+                                std.log.info("{x:0>4}: {x:0>2} ADD FP {} + {} = {}", .{self.reg.pc-1, ir, fp, addend, new_fp});
                             },
                             2 => { // ADD RA
                                 const ra = self.reg.ra;
                                 const new_ra = @addWithOverflow(ra, addend)[0];
                                 self.reg.ra = new_ra;
-                                std.log.info("{x}: {x} ADD RA {} + {} = {}", .{self.reg.pc-1, ir, ra, addend, new_ra});
+                                std.log.info("{x:0>4}: {x:0>2} ADD RA {} + {} = {}", .{self.reg.pc-1, ir, ra, addend, new_ra});
                             },
                             3 => { // ADD AR
                                 const ar = self.reg.ar;
                                 const new_ar = @addWithOverflow(ar, addend)[0];
                                 self.reg.ar = new_ar;
-                                std.log.info("{x}: {x} ADD AR {} + {} = {}", .{self.reg.pc-1, ir, ar, addend, new_ar});
+                                std.log.info("{x:0>4}: {x:0>2} ADD AR {} + {} = {}", .{self.reg.pc-1, ir, ar, addend, new_ar});
                             },
 
                             else => return Error.IllegalInstruction,
@@ -310,13 +309,13 @@ pub const Cpu = struct {
                                 return Error.IllegalInstruction;
                             },
                         }
-                        std.log.info("{x}: {x} PUSH CSR[{}] = {}", .{self.reg.pc-1, ir, csr, csr_value});
+                        std.log.info("{x:0>4}: {x:0>2} PUSH CSR[{}] = {}", .{self.reg.pc-1, ir, csr, csr_value});
                         try self.push(csr_value);
                     },
                     0x1d => { // POP <csr>
                         const csr = try self.pop();
                         const value = try self.pop();
-                        std.log.info("{x}: {x} POP CSR[{}] = {}", .{self.reg.pc-1, ir, csr, value});
+                        std.log.info("{x:0>4}: {x:0>2} POP CSR[{}] = {}", .{self.reg.pc-1, ir, csr, value});
                         switch (csr) {
                             3 => self.setAlternateFramePointer(value),
                             5 => self.csr.ecause = value,
@@ -331,7 +330,7 @@ pub const Cpu = struct {
                     0x1e => { // LLW
                         const fprel = try self.pop();
                         const value = self.memory[(self.reg.fp + fprel) >> 1];
-                        std.log.info("{x}: {x} LLW from fp+{} = {}", .{self.reg.pc-1, ir, fprel, value});
+                        std.log.info("{x:0>4}: {x:0>2} LLW from fp+{} = {}", .{self.reg.pc-1, ir, fprel, value});
                         if ((fprel + self.reg.fp) & 1 == 1) {
                             std.log.err("Unaligned LLW from fp+{} = {x}", .{fprel, self.reg.fp + fprel});
                             return Error.UnalignedAccess;
@@ -341,7 +340,7 @@ pub const Cpu = struct {
                     0x1f => { // SLW
                         const fprel = try self.pop();
                         const value = try self.pop();
-                        std.log.info("{x}: {x} SLW to fp+{} = {}", .{self.reg.pc-1, ir, fprel, value});
+                        std.log.info("{x:0>4}: {x:0>2} SLW to fp+{} = {}", .{self.reg.pc-1, ir, fprel, value});
                         if ((fprel + self.reg.fp) & 1 == 1) {
                             std.log.err("Unaligned SLW from fp+{} = {x}", .{fprel, self.reg.fp + fprel});
                             return Error.UnalignedAccess;
@@ -352,7 +351,7 @@ pub const Cpu = struct {
                     0x20 => { // DIV
                         const divisor: i16 = @bitCast(try self.pop());
                         const dividend: i16 = @bitCast(try self.pop());
-                        std.log.info("{x}: {x} DIV {} / {}", .{self.reg.pc-1, ir, dividend, divisor});
+                        std.log.info("{x:0>4}: {x:0>2} DIV {} / {}", .{self.reg.pc-1, ir, dividend, divisor});
                         if (divisor == 0) {
                             return Error.DivideByZero;
                         } else {
@@ -363,7 +362,7 @@ pub const Cpu = struct {
                     0x21 => { // DIVU
                         const divisor = try self.pop();
                         const dividend = try self.pop();
-                        std.log.info("{x}: {x} DIVU {} / {}", .{self.reg.pc-1, ir, dividend, divisor});
+                        std.log.info("{x:0>4}: {x:0>2} DIVU {} / {}", .{self.reg.pc-1, ir, dividend, divisor});
                         if (divisor == 0) {
                             return Error.DivideByZero;
                         } else {
@@ -373,7 +372,7 @@ pub const Cpu = struct {
                     0x22 => { // MOD
                         const divisor: i16 = @bitCast(try self.pop());
                         const dividend: i16 = @bitCast(try self.pop());
-                        std.log.info("{x}: {x} MOD {} % {}", .{self.reg.pc-1, ir, dividend, divisor});
+                        std.log.info("{x:0>4}: {x:0>2} MOD {} % {}", .{self.reg.pc-1, ir, dividend, divisor});
                         if (divisor == 0) {
                             return Error.DivideByZero;
                         } else {
@@ -384,7 +383,7 @@ pub const Cpu = struct {
                     0x23 => { // MODU
                         const divisor = try self.pop();
                         const dividend = try self.pop();
-                        std.log.info("{x}: {x} MODU {} % {}", .{self.reg.pc-1, ir, dividend, divisor});
+                        std.log.info("{x:0>4}: {x:0>2} MODU {} % {}", .{self.reg.pc-1, ir, dividend, divisor});
                         if (divisor == 0) {
                             return Error.DivideByZero;
                         } else {
@@ -395,7 +394,7 @@ pub const Cpu = struct {
                         const b: i16 = @bitCast(try self.pop());
                         const a: i16 = @bitCast(try self.pop());
                         const result: i16 = @mulWithOverflow(a, b)[0];
-                        std.log.info("{x}: {x} MUL {} * {} = {}", .{self.reg.pc-1, ir, a, b, result});
+                        std.log.info("{x:0>4}: {x:0>2} MUL {} * {} = {}", .{self.reg.pc-1, ir, a, b, result});
                         try self.push(@bitCast(result));
                     },
                     0x25 => { // MULH
@@ -403,14 +402,14 @@ pub const Cpu = struct {
                         const a: i32 = @intCast(try self.pop());
                         const full_result: i32 = @mulWithOverflow(a, b)[0];
                         const result: i16 = @truncate(full_result >> 16);
-                        std.log.info("{x}: {x} MULH {} * {} = {}", .{self.reg.pc-1, ir, a, b, result});
+                        std.log.info("{x:0>4}: {x:0>2} MULH {} * {} = {}", .{self.reg.pc-1, ir, a, b, result});
                         try self.push(@bitCast(result));
                     },
                     0x26 => { // SELECT
                         const cond = try self.pop();
                         const a = try self.pop();
                         const b = try self.pop();
-                        std.log.info("{x}: {x} SELECT {} ? {} : {}", .{self.reg.pc-1, ir, cond, a, b});
+                        std.log.info("{x:0>4}: {x:0>2} SELECT {} ? {} : {}", .{self.reg.pc-1, ir, cond, a, b});
                         if (cond != 0) {
                             try self.push(a);
                         } else {
@@ -421,7 +420,7 @@ pub const Cpu = struct {
                         const c = try self.pop();
                         const b = try self.pop();
                         const a = try self.pop();
-                        std.log.info("{x}: {x} ROT {} {} {}", .{self.reg.pc-1, ir, a, b, c});
+                        std.log.info("{x:0>4}: {x:0>2} ROT {} {} {}", .{self.reg.pc-1, ir, a, b, c});
                         try self.push(c);
                         try self.push(a);
                         try self.push(b);
@@ -429,37 +428,37 @@ pub const Cpu = struct {
                     0x28 => { // SRL
                         const shift = try self.pop();
                         const value = try self.pop();
-                        std.log.info("{x}: {x} SRL {} >> {}", .{self.reg.pc-1, ir, value, shift});
+                        std.log.info("{x:0>4}: {x:0>2} SRL {} >> {}", .{self.reg.pc-1, ir, value, shift});
                         try self.push(value >> @truncate(shift & 0x0f));
                     },
                     0x29 => { // SRA
                         const shift = try self.pop();
                         const value: i16 = @bitCast(try self.pop());
-                        std.log.info("{x}: {x} SRA {} >> {}", .{self.reg.pc-1, ir, value, shift});
+                        std.log.info("{x:0>4}: {x:0>2} SRA {} >> {}", .{self.reg.pc-1, ir, value, shift});
                         const shifted: i16 = value >> @truncate(shift & 0x0f);
                         try self.push(@bitCast(shifted));
                     },
                     0x2a => { // SLL
                         const shift = try self.pop();
                         const value = try self.pop();
-                        std.log.info("{x}: {x} SLL {} << {}", .{self.reg.pc-1, ir, value, shift});
+                        std.log.info("{x:0>4}: {x:0>2} SLL {} << {}", .{self.reg.pc-1, ir, value, shift});
                         try self.push(value << @truncate(shift & 0x0f));
                     },
                     0x2b => { // OR
                         const b = try self.pop();
                         const a = try self.pop();
-                        std.log.info("{x}: {x} OR {} | {}", .{self.reg.pc-1, ir, a, b});
+                        std.log.info("{x:0>4}: {x:0>2} OR {} | {}", .{self.reg.pc-1, ir, a, b});
                         try self.push(a | b);
                     },
                     0x2c => { // SUB
                         const b = try self.pop();
                         const a = try self.pop();
-                        std.log.info("{x}: {x} SUB {} - {}", .{self.reg.pc-1, ir, a, b});
+                        std.log.info("{x:0>4}: {x:0>2} SUB {} - {}", .{self.reg.pc-1, ir, a, b});
                         try self.push(@subWithOverflow(a, b)[0]);
                     },
                     0x30 => { // LB
                         const addr = try self.pop();
-                        std.log.info("{x}: {x} LB from {x}", .{self.reg.pc-1, ir, addr});
+                        std.log.info("{x:0>4}: {x:0>2} LB from {x}", .{self.reg.pc-1, ir, addr});
                         const mem_byte: []u8 = @ptrCast(self.memory);
                         const byte = mem_byte[addr];
                         const value = signExtend(byte, 8);
@@ -468,13 +467,13 @@ pub const Cpu = struct {
                     0x31 => { // SB
                         const addr = try self.pop();
                         const value:u8 = @truncate(try self.pop() & 0xff);
-                        std.log.info("{x}: {x} SB to {x} = {}", .{self.reg.pc-1, ir, addr, value});
+                        std.log.info("{x:0>4}: {x:0>2} SB to {x} = {}", .{self.reg.pc-1, ir, addr, value});
                         const mem_byte: []u8 = @ptrCast(self.memory);
                         mem_byte[addr] = value;
                     },
                     0x32, 0x34 => { // LH, LW
                         const addr = try self.pop();
-                        std.log.info("{x}: {x} LW from {x}", .{self.reg.pc-1, ir, addr});
+                        std.log.info("{x:0>4}: {x:0>2} LW from {x}", .{self.reg.pc-1, ir, addr});
                         if ((addr & 1) == 1) {
                             std.log.err("Unaligned LW from {x}", .{addr});
                             return Error.UnalignedAccess;
@@ -485,7 +484,7 @@ pub const Cpu = struct {
                     0x33, 0x35 => { // SH, SW
                         const addr = try self.pop();
                         const value = try self.pop();
-                        std.log.info("{x}: {x} SW to {x} = {}", .{self.reg.pc-1, ir, addr, value});
+                        std.log.info("{x:0>4}: {x:0>2} SW to {x} = {}", .{self.reg.pc-1, ir, addr, value});
                         if ((addr & 1) == 1) {
                             std.log.err("Unaligned SW to {x}", .{addr});
                             return Error.UnalignedAccess;
@@ -494,7 +493,7 @@ pub const Cpu = struct {
                     },
                     0x36 => { // LNW
                         const addr = self.reg.ar;
-                        std.log.info("{x}: {x} LNW from {x}", .{self.reg.pc-1, ir, addr});
+                        std.log.info("{x:0>4}: {x:0>2} LNW from {x}", .{self.reg.pc-1, ir, addr});
                         if ((addr & 1) == 1) {
                             std.log.err("Unaligned LNW from {x}", .{addr});
                             return Error.UnalignedAccess;
@@ -506,7 +505,7 @@ pub const Cpu = struct {
                     0x37 => { // SNW
                         const addr = self.reg.ar;
                         const value = try self.pop();
-                        std.log.info("{x}: {x} SNW to {x} = {}", .{self.reg.pc-1, ir, addr, value});
+                        std.log.info("{x:0>4}: {x:0>2} SNW to {x} = {}", .{self.reg.pc-1, ir, addr, value});
                         if ((addr & 1) == 1) {
                             std.log.err("Unaligned SNW to {x}", .{addr});
                             return Error.UnalignedAccess;
@@ -516,13 +515,13 @@ pub const Cpu = struct {
                     },
                     0x38 => { // CALL
                         const pcrel = try self.pop();
-                        std.log.info("{x}: {x} CALL to {x}, return address {x}", .{self.reg.pc-1, ir, self.reg.pc+pcrel, self.reg.pc});
+                        std.log.info("{x:0>4}: {x:0>2} CALL to {x}, return address {x}", .{self.reg.pc-1, ir, self.reg.pc+pcrel, self.reg.pc});
                         self.reg.ra = self.reg.pc;
                         self.reg.pc += pcrel;
                     },
                     0x39 => { // CALLP
                         const addr = try self.pop();
-                        std.log.info("{x}: {x} CALLP to {x}, return address {x}", .{self.reg.pc-1, ir, addr, self.reg.pc});
+                        std.log.info("{x:0>4}: {x:0>2} CALLP to {x}, return address {x}", .{self.reg.pc-1, ir, addr, self.reg.pc});
                         self.reg.ra = self.reg.pc;
                         self.reg.pc = addr;
                     },
