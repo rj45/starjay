@@ -6,7 +6,7 @@ pub const WORDSIZE: comptime_int = 16;
 pub const WORDBYTES: comptime_int = WORDSIZE / 2;
 pub const WORDMASK: Word = (1 << WORDSIZE) - 1;
 
-const STACK_SIZE: comptime_int = (1 << WORDSIZE) - 1;
+const STACK_SIZE: comptime_int = (1 << WORDSIZE);
 const USER_HIGH_WATER: comptime_int = STACK_SIZE - 8;
 const KERNEL_HIGH_WATER: comptime_int = STACK_SIZE - 4;
 
@@ -109,6 +109,16 @@ pub const CsrNum = enum(u3) {
     _,
 };
 
+pub const StackOp = enum {
+    NONE,
+    UNARY,
+    BINARY,
+    PUSH,
+    POP1,
+    POP2,
+    SWAP,
+};
+
 pub const Cpu = struct {
     reg: Registers = .{},
     csr: Csrs = .{},
@@ -201,7 +211,12 @@ pub const Cpu = struct {
     pub fn run(self: *Cpu, cycles: usize) !void {
         const progMem: [*]u8 = @ptrCast(self.memory);
         var cycle: usize = 0;
+
         while (cycle < cycles) : (cycle += 1) {
+            var tos = self.stack[@subWithOverflow(self.csr.depth, 1)[0]];
+            var nos = self.stack[@subWithOverflow(self.csr.depth, 2)[0]];
+            var ros = self.stack[@subWithOverflow(self.csr.depth, 3)[0]];
+
             // fetch
             const ir = progMem[self.reg.pc];
             self.reg.pc += 1;
@@ -214,82 +229,85 @@ pub const Cpu = struct {
             };
 
             // execute
+            var result: Word = 0;
+            var read: u2 = 0;
+            var stackop = StackOp.NONE;
             switch (opcode) {
                 .SHI => {
                     const value = ir & 0x7f;
-                    std.log.info("{x:0>4}: {x:0>2} SHI {}", .{ self.reg.pc - 1, ir, value });
-                    try self.push((try self.pop() << 7) | value);
+                    result = (tos << 7) | value;
+                    read = 1;
+                    stackop = .UNARY;
+
+                    std.log.info("{x:0>4}: {x:0>2} SHI {} -> {} ({x:0>4})", .{ self.reg.pc - 1, ir, value, @as(i16, @bitCast(result)), result });
                 },
                 .PUSH => {
-                    const value = signExtend(ir & 0x3f, 6);
-                    std.log.info("{x:0>4}: {x:0>2} PUSH {}", .{ self.reg.pc - 1, ir, @as(i16, @bitCast(value)) });
-                    try self.push(value);
+                    stackop = .PUSH;
+                    result = signExtend(ir & 0x3f, 6);
+                    std.log.info("{x:0>4}: {x:0>2} PUSH {}", .{ self.reg.pc - 1, ir, @as(i16, @bitCast(result)) });
                 },
                 .HALT => {
-                    std.log.info("{x:0>4}: {x:0>2} HALT", .{ self.reg.pc - 1, ir });
+                    std.log.info("{x:0>4}: {x:0>2} HALT {} ({x:0>4})", .{ self.reg.pc - 1, ir, @as(i16, @bitCast(self.stack[self.csr.depth])), self.stack[self.csr.depth] });
                     if (self.csr.status & StatusFlags.TH == 0) {
                         return;
                     }
                     return Error.Halt;
                 },
                 .BEQZ => {
-                    const offset = try self.pop();
-                    const t = try self.pop();
-                    if (t == 0) {
-                        std.log.info("{x:0>4}: {x:0>2} BEQZ {}, {} taken", .{ self.reg.pc - 1, ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset)) });
-                        self.reg.pc = @addWithOverflow(self.reg.pc, @as(Word, @bitCast(offset)))[0];
+                    read = 2;
+                    stackop = .POP2;
+                    if (nos == 0) {
+                        std.log.info("{x:0>4}: {x:0>2} BEQZ {}, {} taken", .{ self.reg.pc - 1, ir, @as(i16, @bitCast(nos)), @as(i16, @bitCast(tos)) });
+                        self.reg.pc = @addWithOverflow(self.reg.pc, tos)[0];
                     } else {
-                        std.log.info("{x:0>4}: {x:0>2} BEQZ {}, {} not taken", .{ self.reg.pc - 1, ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset)) });
+                        std.log.info("{x:0>4}: {x:0>2} BEQZ {}, {} not taken", .{ self.reg.pc - 1, ir, @as(i16, @bitCast(nos)), @as(i16, @bitCast(tos)) });
                     }
                 },
                 .BNEZ => {
-                    const offset = try self.pop();
-                    const t = try self.pop();
-                    if (t != 0) {
-                        std.log.info("{x:0>4}: {x:0>2} BNEZ {}, {} taken", .{ self.reg.pc - 1, ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset)) });
-                        self.reg.pc = @addWithOverflow(self.reg.pc, @as(Word, @bitCast(offset)))[0];
+                    read = 2;
+                    stackop = .POP2;
+                    if (nos != 0) {
+                        std.log.info("{x:0>4}: {x:0>2} BNEZ {}, {} taken", .{ self.reg.pc - 1, ir, @as(i16, @bitCast(nos)), @as(i16, @bitCast(tos)) });
+                        self.reg.pc = @addWithOverflow(self.reg.pc, tos)[0];
                     } else {
-                        std.log.info("{x:0>4}: {x:0>2} BNEZ {}, {} not taken", .{ self.reg.pc - 1, ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset)) });
+                        std.log.info("{x:0>4}: {x:0>2} BNEZ {}, {} not taken", .{ self.reg.pc - 1, ir, @as(i16, @bitCast(nos)), @as(i16, @bitCast(tos)) });
                     }
                 },
                 .SWAP => {
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    std.log.info("{x:0>4}: {x:0>2} SWAP {} <-> {}", .{ self.reg.pc - 1, ir, a, b });
-                    try self.push(b);
-                    try self.push(a);
+                    read = 2;
+                    stackop = .SWAP;
+                    std.log.info("{x:0>4}: {x:0>2} SWAP {} <-> {}", .{ self.reg.pc - 1, ir, tos, nos });
                 },
                 .OVER => {
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    std.log.info("{x:0>4}: {x:0>2} OVER {}", .{ self.reg.pc - 1, ir, a });
-                    try self.push(a);
-                    try self.push(b);
-                    try self.push(a);
+                    read = 2;
+                    result = nos;
+                    stackop = .PUSH;
+                    std.log.info("{x:0>4}: {x:0>2} OVER {}", .{ self.reg.pc - 1, ir, nos });
                 },
                 .DROP => {
-                    const a = try self.pop();
-                    std.log.info("{x:0>4}: {x:0>2} DROP {}", .{ self.reg.pc - 1, ir, a });
+                    read = 1;
+                    stackop = .POP1;
+                    std.log.info("{x:0>4}: {x:0>2} DROP {}", .{ self.reg.pc - 1, ir, tos });
                 },
                 .DUP => {
-                    const a = try self.pop();
-                    try self.push(a);
-                    try self.push(a);
-                    std.log.info("{x:0>4}: {x:0>2} DUP {}", .{ self.reg.pc - 1, ir, a });
+                    read = 1;
+                    result = tos;
+                    stackop = .PUSH;
+                    std.log.info("{x:0>4}: {x:0>2} DUP {}", .{ self.reg.pc - 1, ir, tos });
                 },
                 .LTU => {
-                    const b = try self.pop();
-                    const a = try self.pop();
-                    const result: Word = if (a < b) 1 else 0;
-                    std.log.info("{x:0>4}: {x:0>2} LTU {} < {} = {}", .{ self.reg.pc - 1, ir, a, b, result });
-                    try self.push(result);
+                    read = 2;
+                    stackop = .BINARY;
+                    result = if (nos < tos) 1 else 0;
+                    std.log.info("{x:0>4}: {x:0>2} LTU {} < {} = {}", .{ self.reg.pc - 1, ir, nos, tos, result });
                 },
                 .LT => {
-                    const b: i16 = @bitCast(try self.pop());
-                    const a: i16 = @bitCast(try self.pop());
-                    const result: Word = if (a < b) 1 else 0;
+                    read = 2;
+                    stackop = .BINARY;
+                    const b: i16 = @bitCast(tos);
+                    const a: i16 = @bitCast(nos);
+                    result = if (a < b) 1 else 0;
                     std.log.info("{x:0>4}: {x:0>2} LT {} < {} = {}", .{ self.reg.pc - 1, ir, a, b, result });
-                    try self.push(result);
                 },
                 .ADD => {
                     const b = try self.pop();
@@ -316,8 +334,8 @@ pub const Cpu = struct {
                     std.log.info("{x:0>4}: {x:0>2} FSL ({x} @ {x} << {}) >> 16", .{ self.reg.pc - 1, ir, upper, lower, shift });
                     const value: u32 = (@as(u32, upper) << 16) | @as(u32, lower);
                     const shifted = value << @truncate(shift & 0x1f);
-                    const result = @as(Word, @truncate(shifted >> 16));
-                    try self.push(result);
+                    const res = @as(Word, @truncate(shifted >> 16));
+                    try self.push(res);
                 },
                 .PUSH_PC, .PUSH_FP, .PUSH_RA, .PUSH_AR => {
                     const reg: RegNum = @enumFromInt(ir & 3);
@@ -469,17 +487,17 @@ pub const Cpu = struct {
                 .MUL => {
                     const b: i16 = @bitCast(try self.pop());
                     const a: i16 = @bitCast(try self.pop());
-                    const result: i16 = @mulWithOverflow(a, b)[0];
-                    std.log.info("{x:0>4}: {x:0>2} MUL {} * {} = {}", .{ self.reg.pc - 1, ir, a, b, result });
-                    try self.push(@bitCast(result));
+                    const res: i16 = @mulWithOverflow(a, b)[0];
+                    std.log.info("{x:0>4}: {x:0>2} MUL {} * {} = {}", .{ self.reg.pc - 1, ir, a, b, res });
+                    try self.push(@bitCast(res));
                 },
                 .MULH => {
                     const b: i32 = @intCast(try self.pop());
                     const a: i32 = @intCast(try self.pop());
                     const full_result: i32 = @mulWithOverflow(a, b)[0];
-                    const result: i16 = @truncate(full_result >> 16);
-                    std.log.info("{x:0>4}: {x:0>2} MULH {} * {} = {}", .{ self.reg.pc - 1, ir, a, b, result });
-                    try self.push(@bitCast(result));
+                    const res: i16 = @truncate(full_result >> 16);
+                    std.log.info("{x:0>4}: {x:0>2} MULH {} * {} = {}", .{ self.reg.pc - 1, ir, a, b, res });
+                    try self.push(@bitCast(res));
                 },
                 .SELECT => {
                     const cond = try self.pop();
@@ -605,6 +623,57 @@ pub const Cpu = struct {
                     std.log.err("Illegal instruction: {x}", .{ir});
                     return Error.IllegalInstruction;
                 },
+            }
+
+            // check stack underflow
+            if (@subWithOverflow(self.csr.depth, read)[1] == 1) {
+                return Error.StackUnderflow;
+            }
+
+            // update stack
+            switch (stackop) {
+                .UNARY => {
+                    tos = result;
+                    self.stack[@subWithOverflow(self.csr.depth, 1)[0]] = tos;
+                },
+                .BINARY => {
+                    self.csr.depth -= 1;
+                    tos = result;
+                    nos = ros;
+                    ros = self.stack[@subWithOverflow(self.csr.depth, 3)[0]];
+                    self.stack[@subWithOverflow(self.csr.depth, 1)[0]] = tos;
+                },
+                .PUSH => {
+                    if (self.inKernel()) {
+                        if ((self.csr.depth + 1) >= KERNEL_HIGH_WATER) {
+                            return Error.StackOverflow;
+                        }
+                    } else {
+                        if ((self.csr.depth + 1) >= USER_HIGH_WATER) {
+                            return Error.StackOverflow;
+                        }
+                    }
+
+                    ros = nos;
+                    nos = tos;
+                    tos = result;
+                    self.stack[self.csr.depth] = tos;
+                    self.csr.depth += 1;
+                },
+                .POP1 => {
+                    self.csr.depth -= 1;
+                },
+                .POP2 => {
+                    self.csr.depth -= 2;
+                },
+                .SWAP => {
+                    const temp = tos;
+                    tos = nos;
+                    nos = temp;
+                    self.stack[@subWithOverflow(self.csr.depth, 1)[0]] = tos;
+                    self.stack[@subWithOverflow(self.csr.depth, 2)[0]] = nos;
+                },
+                .NONE => {},
             }
         }
     }
