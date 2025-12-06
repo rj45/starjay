@@ -111,9 +111,7 @@ pub const CsrNum = enum(u3) {
 
 pub const StackOp = enum {
     NONE,
-    UNARY,
-    BINARY,
-    TERNARY,
+    REPLACE,
     PUSH,
     POP1,
     POP2,
@@ -218,7 +216,7 @@ pub const Cpu = struct {
         var nos = self.stack[@subWithOverflow(self.csr.depth, 2)[0]];
         var ros = self.stack[@subWithOverflow(self.csr.depth, 3)[0]];
 
-        while (cycle < cycles) : (cycle += 1) {
+        loop: while (cycle < cycles) : (cycle += 1) {
             // fetch
             const ir = progMem[self.reg.pc];
             self.reg.pc += 1;
@@ -239,7 +237,7 @@ pub const Cpu = struct {
                     const value = ir & 0x7f;
                     result = (tos << 7) | value;
                     read = 1;
-                    stackop = .UNARY;
+                    stackop = .REPLACE;
 
                     std.log.info("{x:0>4}: {x:0>2} SHI {} -> {} ({x:0>4})", .{ self.reg.pc - 1, ir, value, @as(i16, @bitCast(result)), result });
                 },
@@ -249,15 +247,16 @@ pub const Cpu = struct {
                     std.log.info("{x:0>4}: {x:0>2} PUSH {}", .{ self.reg.pc - 1, ir, @as(i16, @bitCast(result)) });
                 },
                 .HALT => {
-                    std.log.info("{x:0>4}: {x:0>2} HALT {} ({x:0>4})", .{ self.reg.pc - 1, ir, @as(i16, @bitCast(self.stack[self.csr.depth])), self.stack[self.csr.depth] });
+                    std.log.info("{x:0>4}: {x:0>2} HALT {} ({x:0>4})", .{ self.reg.pc - 1, ir, @as(i16, @bitCast(tos)), tos });
                     if (self.csr.status & StatusFlags.TH == 0) {
-                        return;
+                        break :loop;
                     }
                     return Error.Halt;
                 },
                 .BEQZ => {
                     read = 2;
                     stackop = .POP2;
+                    result = ros;
                     if (nos == 0) {
                         std.log.info("{x:0>4}: {x:0>2} BEQZ {}, {} taken", .{ self.reg.pc - 1, ir, @as(i16, @bitCast(nos)), @as(i16, @bitCast(tos)) });
                         self.reg.pc = @addWithOverflow(self.reg.pc, tos)[0];
@@ -268,6 +267,7 @@ pub const Cpu = struct {
                 .BNEZ => {
                     read = 2;
                     stackop = .POP2;
+                    result = ros;
                     if (nos != 0) {
                         std.log.info("{x:0>4}: {x:0>2} BNEZ {}, {} taken", .{ self.reg.pc - 1, ir, @as(i16, @bitCast(nos)), @as(i16, @bitCast(tos)) });
                         self.reg.pc = @addWithOverflow(self.reg.pc, tos)[0];
@@ -289,6 +289,7 @@ pub const Cpu = struct {
                 .DROP => {
                     read = 1;
                     stackop = .POP1;
+                    result = nos;
                     std.log.info("{x:0>4}: {x:0>2} DROP {}", .{ self.reg.pc - 1, ir, tos });
                 },
                 .DUP => {
@@ -299,13 +300,13 @@ pub const Cpu = struct {
                 },
                 .LTU => {
                     read = 2;
-                    stackop = .BINARY;
+                    stackop = .POP1;
                     result = if (nos < tos) 1 else 0;
                     std.log.info("{x:0>4}: {x:0>2} LTU {} < {} = {}", .{ self.reg.pc - 1, ir, nos, tos, result });
                 },
                 .LT => {
                     read = 2;
-                    stackop = .BINARY;
+                    stackop = .POP1;
                     const b: i16 = @bitCast(tos);
                     const a: i16 = @bitCast(nos);
                     result = if (a < b) 1 else 0;
@@ -313,25 +314,25 @@ pub const Cpu = struct {
                 },
                 .ADD => {
                     read = 2;
-                    stackop = .BINARY;
+                    stackop = .POP1;
                     result = @addWithOverflow(nos, tos)[0];
                     std.log.info("{x:0>4}: {x:0>2} ADD {} + {} = {}", .{ self.reg.pc - 1, ir, nos, tos, result });
                 },
                 .AND => {
                     read = 2;
-                    stackop = .BINARY;
+                    stackop = .POP1;
                     result = nos & tos;
                     std.log.info("{x:0>4}: {x:0>2} AND {} & {} = {}", .{ self.reg.pc - 1, ir, nos, tos, result });
                 },
                 .XOR => {
                     read = 2;
-                    stackop = .BINARY;
+                    stackop = .POP1;
                     result = nos ^ tos;
                     std.log.info("{x:0>4}: {x:0>2} XOR {} ^ {} = {}", .{ self.reg.pc - 1, ir, nos, tos, result });
                 },
                 .FSL => {
                     read = 3;
-                    stackop = .TERNARY;
+                    stackop = .POP2;
                     // stack: ros=upper, nos=lower, tos=shift
                     std.log.info("{x:0>4}: {x:0>2} FSL ({x} @ {x} << {}) >> 16", .{ self.reg.pc - 1, ir, ros, nos, tos });
                     const value: u32 = (@as(u32, ros) << 16) | @as(u32, nos);
@@ -352,6 +353,7 @@ pub const Cpu = struct {
                 .POP_PC, .POP_FP, .POP_RA, .POP_AR => {
                     read = 1;
                     stackop = .POP1;
+                    result = nos;
                     const reg: RegNum = @enumFromInt(ir & 3);
                     std.log.info("{x:0>4}: {x:0>2} POP {s} = {}", .{ self.reg.pc - 1, ir, @tagName(reg), tos });
                     switch (reg) {
@@ -364,11 +366,13 @@ pub const Cpu = struct {
                 .ADD_PC, .ADD_FP, .ADD_RA, .ADD_AR => { // ADD <reg>
                     read = 1;
                     stackop = .POP1;
+                    result = nos;
                     const reg: RegNum = @enumFromInt(ir & 3);
                     switch (reg) {
                         .PC => { // ADD PC aka JUMP
-                            self.reg.pc = @addWithOverflow(self.reg.pc, tos)[0];
-                            std.log.info("{x:0>4}: {x:0>2} JUMP {} to {x}", .{ self.reg.pc - 1, ir, tos, self.reg.pc });
+                            const dest = @addWithOverflow(self.reg.pc, tos)[0];
+                            std.log.info("{x:0>4}: {x:0>2} JUMP {} to {x:0>4}", .{ self.reg.pc - 1, ir, @as(i16, @bitCast(tos)), dest });
+                            self.reg.pc = dest;
                         },
                         .FP => { // ADD FP
                             const fp = self.framePointer();
@@ -392,7 +396,7 @@ pub const Cpu = struct {
                 },
                 .PUSH_CSR => {
                     read = 1;
-                    stackop = .UNARY;
+                    stackop = .REPLACE;
                     const csr: CsrNum = @enumFromInt(tos);
                     switch (csr) {
                         .AFP => result = self.alternateFramePointer(),
@@ -408,6 +412,7 @@ pub const Cpu = struct {
                 .POP_CSR => {
                     read = 2;
                     stackop = .POP2;
+                    result = ros;
                     const csr: CsrNum = @enumFromInt(tos);
                     std.log.info("{x:0>4}: {x:0>2} POP {s} = {}", .{ self.reg.pc - 1, ir, @tagName(csr), nos });
                     switch (csr) {
@@ -422,7 +427,7 @@ pub const Cpu = struct {
                 },
                 .LLW => {
                     read = 1;
-                    stackop = .UNARY;
+                    stackop = .REPLACE;
                     const addr = @addWithOverflow(self.reg.fp, tos)[0];
                     if ((addr) & 1 == 1) {
                         std.log.err("Unaligned LLW from fp+{} = {x}", .{ tos, addr });
@@ -434,6 +439,7 @@ pub const Cpu = struct {
                 .SLW => {
                     read = 2;
                     stackop = .POP2;
+                    result = ros;
                     const addr = @addWithOverflow(self.reg.fp, tos)[0];
                     std.log.info("{x:0>4}: {x:0>2} SLW to fp+{} = {}", .{ self.reg.pc - 1, ir, tos, nos });
                     if ((addr) & 1 == 1) {
@@ -444,7 +450,7 @@ pub const Cpu = struct {
                 },
                 .DIV => {
                     read = 2;
-                    stackop = .BINARY;
+                    stackop = .POP1;
                     const divisor: i16 = @bitCast(tos);
                     const dividend: i16 = @bitCast(nos);
                     std.log.info("{x:0>4}: {x:0>2} DIV {} / {}", .{ self.reg.pc - 1, ir, dividend, divisor });
@@ -455,7 +461,7 @@ pub const Cpu = struct {
                 },
                 .DIVU => {
                     read = 2;
-                    stackop = .BINARY;
+                    stackop = .POP1;
                     std.log.info("{x:0>4}: {x:0>2} DIVU {} / {}", .{ self.reg.pc - 1, ir, nos, tos });
                     if (tos == 0) {
                         return Error.DivideByZero;
@@ -464,7 +470,7 @@ pub const Cpu = struct {
                 },
                 .MOD => {
                     read = 2;
-                    stackop = .BINARY;
+                    stackop = .POP1;
                     const divisor: i16 = @bitCast(tos);
                     const dividend: i16 = @bitCast(nos);
                     std.log.info("{x:0>4}: {x:0>2} MOD {} % {}", .{ self.reg.pc - 1, ir, dividend, divisor });
@@ -475,7 +481,7 @@ pub const Cpu = struct {
                 },
                 .MODU => {
                     read = 2;
-                    stackop = .BINARY;
+                    stackop = .POP1;
                     std.log.info("{x:0>4}: {x:0>2} MODU {} % {}", .{ self.reg.pc - 1, ir, nos, tos });
                     if (tos == 0) {
                         return Error.DivideByZero;
@@ -484,7 +490,7 @@ pub const Cpu = struct {
                 },
                 .MUL => {
                     read = 2;
-                    stackop = .BINARY;
+                    stackop = .POP1;
                     const b: i16 = @bitCast(tos);
                     const a: i16 = @bitCast(nos);
                     const res: i16 = @mulWithOverflow(a, b)[0];
@@ -493,7 +499,7 @@ pub const Cpu = struct {
                 },
                 .MULH => {
                     read = 2;
-                    stackop = .BINARY;
+                    stackop = .POP1;
                     const b: i32 = @intCast(tos);
                     const a: i32 = @intCast(nos);
                     const full_result: i32 = @mulWithOverflow(a, b)[0];
@@ -503,7 +509,7 @@ pub const Cpu = struct {
                 },
                 .SELECT => {
                     read = 3;
-                    stackop = .TERNARY;
+                    stackop = .POP2;
                     // stack: ros=false_val, nos=true_val, tos=cond
                     std.log.info("{x:0>4}: {x:0>2} SELECT {} ? {} : {}", .{ self.reg.pc - 1, ir, tos, nos, ros });
                     result = if (tos != 0) nos else ros;
@@ -516,13 +522,13 @@ pub const Cpu = struct {
                 },
                 .SRL => {
                     read = 2;
-                    stackop = .BINARY;
+                    stackop = .POP1;
                     result = nos >> @truncate(tos & 0x0f);
                     std.log.info("{x:0>4}: {x:0>2} SRL {} >> {} = {}", .{ self.reg.pc - 1, ir, nos, tos, result });
                 },
                 .SRA => {
                     read = 2;
-                    stackop = .BINARY;
+                    stackop = .POP1;
                     const value: i16 = @bitCast(nos);
                     const shifted: i16 = value >> @truncate(tos & 0x0f);
                     result = @bitCast(shifted);
@@ -530,25 +536,25 @@ pub const Cpu = struct {
                 },
                 .SLL => {
                     read = 2;
-                    stackop = .BINARY;
+                    stackop = .POP1;
                     result = nos << @truncate(tos & 0x0f);
                     std.log.info("{x:0>4}: {x:0>2} SLL {} << {} = {}", .{ self.reg.pc - 1, ir, nos, tos, result });
                 },
                 .OR => {
                     read = 2;
-                    stackop = .BINARY;
+                    stackop = .POP1;
                     result = nos | tos;
                     std.log.info("{x:0>4}: {x:0>2} OR {} | {} = {}", .{ self.reg.pc - 1, ir, nos, tos, result });
                 },
                 .SUB => {
                     read = 2;
-                    stackop = .BINARY;
+                    stackop = .POP1;
                     result = @subWithOverflow(nos, tos)[0];
                     std.log.info("{x:0>4}: {x:0>2} SUB {} - {} = {}", .{ self.reg.pc - 1, ir, nos, tos, result });
                 },
                 .LB => {
                     read = 1;
-                    stackop = .UNARY;
+                    stackop = .REPLACE;
                     std.log.info("{x:0>4}: {x:0>2} LB from {x}", .{ self.reg.pc - 1, ir, tos });
                     const mem_byte: [*]u8 = @ptrCast(self.memory);
                     const byte = mem_byte[tos];
@@ -557,13 +563,14 @@ pub const Cpu = struct {
                 .SB => {
                     read = 2;
                     stackop = .POP2;
+                    result = ros;
                     std.log.info("{x:0>4}: {x:0>2} SB to {x} = {}", .{ self.reg.pc - 1, ir, tos, nos });
                     const mem_byte: [*]u8 = @ptrCast(self.memory);
                     mem_byte[tos] = @truncate(nos & 0xff);
                 },
                 .LH, .LW => {
                     read = 1;
-                    stackop = .UNARY;
+                    stackop = .REPLACE;
                     std.log.info("{x:0>4}: {x:0>2} LW from {x}", .{ self.reg.pc - 1, ir, tos });
                     if ((tos & 1) == 1) {
                         std.log.err("Unaligned LW from {x}", .{tos});
@@ -574,6 +581,7 @@ pub const Cpu = struct {
                 .SH, .SW => {
                     read = 2;
                     stackop = .POP2;
+                    result = ros;
                     std.log.info("{x:0>4}: {x:0>2} SW to {x} = {}", .{ self.reg.pc - 1, ir, tos, nos });
                     if ((tos & 1) == 1) {
                         std.log.err("Unaligned SW to {x}", .{tos});
@@ -595,6 +603,7 @@ pub const Cpu = struct {
                 .SNW => {
                     read = 1;
                     stackop = .POP1;
+                    result = nos;
                     const addr = self.reg.ar;
                     std.log.info("{x:0>4}: {x:0>2} SNW to {x} = {}", .{ self.reg.pc - 1, ir, addr, tos });
                     if ((addr & 1) == 1) {
@@ -607,6 +616,7 @@ pub const Cpu = struct {
                 .CALL => {
                     read = 1;
                     stackop = .POP1;
+                    result = nos;
                     std.log.info("{x:0>4}: {x:0>2} CALL to {x}, return address {x}", .{ self.reg.pc - 1, ir, self.reg.pc + tos, self.reg.pc });
                     self.reg.ra = self.reg.pc;
                     self.reg.pc = @addWithOverflow(self.reg.pc, tos)[0];
@@ -614,6 +624,7 @@ pub const Cpu = struct {
                 .CALLP => {
                     read = 1;
                     stackop = .POP1;
+                    result = nos;
                     std.log.info("{x:0>4}: {x:0>2} CALLP to {x}, return address {x}", .{ self.reg.pc - 1, ir, tos, self.reg.pc });
                     self.reg.ra = self.reg.pc;
                     self.reg.pc = tos;
@@ -631,16 +642,8 @@ pub const Cpu = struct {
 
             // update stack
             switch (stackop) {
-                .UNARY => {
+                .REPLACE => {
                     tos = result;
-                    self.stack[@subWithOverflow(self.csr.depth, 1)[0]] = tos;
-                },
-                .BINARY => {
-                    self.csr.depth -= 1;
-                    tos = result;
-                    nos = ros;
-                    ros = self.stack[@subWithOverflow(self.csr.depth, 3)[0]];
-                    self.stack[@subWithOverflow(self.csr.depth, 1)[0]] = tos;
                 },
                 .PUSH => {
                     if (self.inKernel()) {
@@ -653,21 +656,22 @@ pub const Cpu = struct {
                         }
                     }
 
+                    self.stack[@subWithOverflow(self.csr.depth, 3)[0]] = ros;
+                    self.csr.depth += 1;
+
                     ros = nos;
                     nos = tos;
                     tos = result;
-                    self.stack[self.csr.depth] = tos;
-                    self.csr.depth += 1;
                 },
                 .POP1 => {
-                    tos = nos;
-                    nos = ros;
                     self.csr.depth -= 1;
+                    tos = result;
+                    nos = ros;
                     ros = self.stack[@subWithOverflow(self.csr.depth, 3)[0]];
                 },
                 .POP2 => {
-                    tos = ros;
                     self.csr.depth -= 2;
+                    tos = result;
                     nos = self.stack[@subWithOverflow(self.csr.depth, 2)[0]];
                     ros = self.stack[@subWithOverflow(self.csr.depth, 3)[0]];
                 },
@@ -675,21 +679,9 @@ pub const Cpu = struct {
                     const temp = tos;
                     tos = nos;
                     nos = temp;
-                    self.stack[@subWithOverflow(self.csr.depth, 1)[0]] = tos;
-                    self.stack[@subWithOverflow(self.csr.depth, 2)[0]] = nos;
-                },
-                .TERNARY => {
-                    self.csr.depth -= 2;
-                    tos = result;
-                    nos = self.stack[@subWithOverflow(self.csr.depth, 2)[0]];
-                    ros = self.stack[@subWithOverflow(self.csr.depth, 3)[0]];
-                    self.stack[@subWithOverflow(self.csr.depth, 1)[0]] = tos;
                 },
                 .ROT => {
                     // a b c -> c a b (ros tos nos -> tos ros nos)
-                    self.stack[@subWithOverflow(self.csr.depth, 1)[0]] = nos;
-                    self.stack[@subWithOverflow(self.csr.depth, 2)[0]] = ros;
-                    self.stack[@subWithOverflow(self.csr.depth, 3)[0]] = tos;
                     const temp = tos;
                     tos = nos;
                     nos = ros;
