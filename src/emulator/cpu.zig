@@ -37,12 +37,81 @@ pub const Csrs = struct {
    ecause: Word = 0,
 };
 
+pub const Opcode = enum(u8) {
+    HALT = 0x00,
+    BEQZ = 0x04,
+    BNEZ = 0x05,
+    SWAP = 0x06,
+    OVER = 0x07,
+    DROP = 0x08,
+    DUP = 0x09,
+    LTU = 0x0a,
+    LT = 0x0b,
+    ADD = 0x0c,
+    AND = 0x0d,
+    XOR = 0x0e,
+    FSL = 0x0f,
+    PUSH_PC = 0x10,
+    PUSH_FP = 0x11,
+    PUSH_RA = 0x12,
+    PUSH_AR = 0x13,
+    POP_PC = 0x14,
+    POP_FP = 0x15,
+    POP_RA = 0x16,
+    POP_AR = 0x17,
+    ADD_PC = 0x18,
+    ADD_FP = 0x19,
+    ADD_RA = 0x1a,
+    ADD_AR = 0x1b,
+    PUSH_CSR = 0x1c,
+    POP_CSR = 0x1d,
+    LLW = 0x1e,
+    SLW = 0x1f,
+    DIV = 0x20,
+    DIVU = 0x21,
+    MOD = 0x22,
+    MODU = 0x23,
+    MUL = 0x24,
+    MULH = 0x25,
+    SELECT = 0x26,
+    ROT = 0x27,
+    SRL = 0x28,
+    SRA = 0x29,
+    SLL = 0x2a,
+    OR = 0x2b,
+    SUB = 0x2c,
+    LB = 0x30,
+    SB = 0x31,
+    LH = 0x32,
+    SH = 0x33,
+    LW = 0x34,
+    SW = 0x35,
+    LNW = 0x36,
+    SNW = 0x37,
+    CALL = 0x38,
+    CALLP = 0x39,
+    _,
+};
+
+pub const RegNum = enum (u2) {
+    PC = 0,
+    FP = 1,
+    RA = 2,
+    AR = 3,
+};
+
+pub const CsrNum = enum (u3) {
+    AFP = 3,
+    ECAUSE = 5,
+    EVEC = 6,
+    _,
+};
+
 pub const Cpu = struct {
     reg: Registers = .{},
     csr: Csrs = .{},
     stack: [STACK_SIZE]Word = undefined,
     memory: []u16 = undefined,
-    haltOnSyscall: bool = false,
 
     pub const Error = error{
         StackOverflow,
@@ -144,14 +213,15 @@ pub const Cpu = struct {
                 std.log.info("{x:0>4}: {x:0>2} PUSH {}", .{self.reg.pc-1, ir, @as(i16, @bitCast(value))});
                 try self.push(value);
             } else {
-                switch (ir & 0x3f) {
-                    0x00 => { // HALT
+                const opcode: Opcode = @enumFromInt(ir & 0x3f);
+                switch (opcode) {
+                    .HALT => {
                         if (self.csr.status & StatusFlags.TH == 0) {
                             std.log.info("{x:0>4}: {x:0>2} HALT - halting execution as requested", .{self.reg.pc-1, ir});
                             return;
                         }
                     },
-                    0x04 => { // BEQZ
+                    .BEQZ => {
                         const offset = try self.pop();
                         const t = try self.pop();
                         if (t == 0) {
@@ -161,7 +231,7 @@ pub const Cpu = struct {
                             std.log.info("{x:0>4}: {x:0>2} BEQZ {}, {} not taken", .{self.reg.pc-1, ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
                         }
                     },
-                    0x05 => { // BNEZ
+                    .BNEZ => {
                         const offset = try self.pop();
                         const t = try self.pop();
                         if (t != 0) {
@@ -171,14 +241,14 @@ pub const Cpu = struct {
                             std.log.info("{x:0>4}: {x:0>2} BNEZ {}, {} not taken", .{self.reg.pc-1, ir, @as(i16, @bitCast(t)), @as(i16, @bitCast(offset))});
                         }
                     },
-                    0x06 => { // SWAP
+                    .SWAP => {
                         const b = try self.pop();
                         const a = try self.pop();
                         std.log.info("{x:0>4}: {x:0>2} SWAP {} <-> {}", .{self.reg.pc-1, ir, a, b});
                         try self.push(b);
                         try self.push(a);
                     },
-                    0x07 => { // OVER
+                    .OVER => {
                         const b = try self.pop();
                         const a = try self.pop();
                         std.log.info("{x:0>4}: {x:0>2} OVER {}", .{self.reg.pc-1, ir, a});
@@ -186,49 +256,49 @@ pub const Cpu = struct {
                         try self.push(b);
                         try self.push(a);
                     },
-                    0x08 => { // DROP
+                    .DROP => {
                         const a = try self.pop();
                         std.log.info("{x:0>4}: {x:0>2} DROP {}", .{self.reg.pc-1, ir, a});
                     },
-                    0x09 => { // DUP
+                    .DUP => {
                         const a = try self.pop();
                         try self.push(a);
                         try self.push(a);
                         std.log.info("{x:0>4}: {x:0>2} DUP {}", .{self.reg.pc-1, ir, a});
                     },
-                    0x0a => { // LTU
+                    .LTU => {
                         const b = try self.pop();
                         const a = try self.pop();
                         const result: Word = if (a < b) 1 else 0;
                         std.log.info("{x:0>4}: {x:0>2} LTU {} < {} = {}", .{self.reg.pc-1, ir, a, b, result});
                         try self.push(result);
                     },
-                    0x0b => { // LT
+                    .LT => {
                         const b: i16 = @bitCast(try self.pop());
                         const a: i16 = @bitCast(try self.pop());
                         const result: Word = if (a < b) 1 else 0;
                         std.log.info("{x:0>4}: {x:0>2} LT {} < {} = {}", .{self.reg.pc-1, ir, a, b, result});
                         try self.push(result);
                     },
-                    0x0c => { // ADD
+                    .ADD => {
                         const b = try self.pop();
                         const a = try self.pop();
                         std.log.info("{x:0>4}: {x:0>2} ADD {} + {}", .{self.reg.pc-1, ir, a, b});
                         try self.push(@addWithOverflow(a, b)[0]);
                     },
-                    0x0d => { // AND
+                    .AND => {
                         const b = try self.pop();
                         const a = try self.pop();
                         std.log.info("{x:0>4}: {x:0>2} AND {} & {}", .{self.reg.pc-1, ir, a, b});
                         try self.push(a & b);
                     },
-                    0x0e => { // XOR
+                    .XOR => {
                         const b = try self.pop();
                         const a = try self.pop();
                         std.log.info("{x:0>4}: {x:0>2} XOR {} ^ {}", .{self.reg.pc-1, ir, a, b});
                         try self.push(a ^ b);
                     },
-                    0x0f => { // FSL
+                    .FSL => {
                         const shift = try self.pop();
                         const lower = try self.pop();
                         const upper = try self.pop();
@@ -238,96 +308,92 @@ pub const Cpu = struct {
                         const result = @as(Word, @truncate(shifted >> 16));
                         try self.push(result);
                     },
-                    0x10, 0x11, 0x12, 0x13 => { // PUSH <reg>
-                        const reg = ir & 0x03;
+                    .PUSH_PC, .PUSH_FP, .PUSH_RA, .PUSH_AR => {
+                        const reg: RegNum = @enumFromInt(ir & 3);
                         var value: Word = 0;
                         switch (reg) {
-                            0 => value = self.reg.pc,
-                            1 => value = self.framePointer(),
-                            2 => value = self.reg.ra,
-                            3 => value = self.reg.ar,
-                            else => return Error.IllegalInstruction,
+                            .PC => value = self.reg.pc,
+                            .FP => value = self.framePointer(),
+                            .RA => value = self.reg.ra,
+                            .AR => value = self.reg.ar,
                         }
-                        std.log.info("{x:0>4}: {x:0>2} PUSH REG[{}] = {}", .{self.reg.pc-1, ir, reg, value});
+                        std.log.info("{x:0>4}: {x:0>2} PUSH {s} = {}", .{self.reg.pc-1, ir, @tagName(reg), value});
                         try self.push(value);
                     },
-                    0x14, 0x15, 0x16, 0x17 => { // POP <reg>
-                        const reg = ir & 0x03;
+                   .POP_PC, .POP_FP, .POP_RA, .POP_AR => {
+                        const reg: RegNum = @enumFromInt(ir & 3);
                         const value = try self.pop();
-                        std.log.info("{x:0>4}: {x:0>2} POP REG[{}] = {}", .{self.reg.pc-1, ir, reg, value});
+                        std.log.info("{x:0>4}: {x:0>2} POP {s} = {}", .{self.reg.pc-1, ir, @tagName(reg), value});
                         switch (reg) {
-                            0 => self.reg.pc = value,
-                            1 => if (self.inKernel()) {
+                            .PC => self.reg.pc = value,
+                            .FP => if (self.inKernel()) {
                                 self.csr.afp = value;
                             } else {
                                 self.reg.fp = value;
                             },
-                            2 => self.reg.ra = value,
-                            3 => self.reg.ar = value,
-                            else => return Error.IllegalInstruction,
+                            .RA => self.reg.ra = value,
+                            .AR => self.reg.ar = value,
                         }
                     },
-                    0x18, 0x19, 0x1a, 0x1b => { // ADD <reg>
+                    .ADD_PC, .ADD_FP, .ADD_RA, .ADD_AR => { // ADD <reg>
                         const addend = try self.pop();
-                        const reg = ir & 0x03;
+                        const reg: RegNum = @enumFromInt(ir & 3);
                         switch (reg) {
-                            0 => { // ADD PC aka JUMP
+                            .PC => { // ADD PC aka JUMP
                                 self.reg.pc = @addWithOverflow(self.reg.pc, addend)[0];
                                 std.log.info("{x:0>4}: {x:0>2} JUMP {} to {x}", .{self.reg.pc-1, ir, addend, self.reg.pc});
                             },
-                            1 => { // ADD FP
+                            .FP => { // ADD FP
                                 const fp = self.framePointer();
                                 const new_fp = @addWithOverflow(fp, addend)[0];
                                 self.setFramePointer(new_fp);
                                 std.log.info("{x:0>4}: {x:0>2} ADD FP {} + {} = {}", .{self.reg.pc-1, ir, fp, addend, new_fp});
                             },
-                            2 => { // ADD RA
+                            .RA => { // ADD RA
                                 const ra = self.reg.ra;
                                 const new_ra = @addWithOverflow(ra, addend)[0];
                                 self.reg.ra = new_ra;
                                 std.log.info("{x:0>4}: {x:0>2} ADD RA {} + {} = {}", .{self.reg.pc-1, ir, ra, addend, new_ra});
                             },
-                            3 => { // ADD AR
+                            .AR => { // ADD AR
                                 const ar = self.reg.ar;
                                 const new_ar = @addWithOverflow(ar, addend)[0];
                                 self.reg.ar = new_ar;
                                 std.log.info("{x:0>4}: {x:0>2} ADD AR {} + {} = {}", .{self.reg.pc-1, ir, ar, addend, new_ar});
                             },
-
-                            else => return Error.IllegalInstruction,
                         }
                     },
-                    0x1c => { // PUSH <csr>
-                        const csr = try self.pop();
+                    .PUSH_CSR => {
+                        const csr: CsrNum = @enumFromInt(try self.pop());
                         var csr_value: Word = 0;
                         switch (csr) {
-                            3 => csr_value = self.alternateFramePointer(),
-                            5 => csr_value = self.csr.ecause,
-                            6 => csr_value = self.csr.evec,
-                            else => {
+                            .AFP => csr_value = self.alternateFramePointer(),
+                            .ECAUSE => csr_value = self.csr.ecause,
+                            .EVEC => csr_value = self.csr.evec,
+                            _ => {
                                 std.log.err("Illegal CSR: {x}", .{csr});
                                 return Error.IllegalInstruction;
                             },
                         }
-                        std.log.info("{x:0>4}: {x:0>2} PUSH CSR[{}] = {}", .{self.reg.pc-1, ir, csr, csr_value});
+                        std.log.info("{x:0>4}: {x:0>2} PUSH {s} = {}", .{self.reg.pc-1, ir, @tagName(csr), csr_value});
                         try self.push(csr_value);
                     },
-                    0x1d => { // POP <csr>
-                        const csr = try self.pop();
+                    .POP_CSR => {
+                        const csr: CsrNum = @enumFromInt(try self.pop());
                         const value = try self.pop();
-                        std.log.info("{x:0>4}: {x:0>2} POP CSR[{}] = {}", .{self.reg.pc-1, ir, csr, value});
+                        std.log.info("{x:0>4}: {x:0>2} POP {s} = {}", .{self.reg.pc-1, ir, @tagName(csr), value});
                         switch (csr) {
-                            3 => self.setAlternateFramePointer(value),
-                            5 => self.csr.ecause = value,
-                            6 => self.csr.evec = value,
+                            .AFP => self.setAlternateFramePointer(value),
+                            .ECAUSE => self.csr.ecause = value,
+                            .EVEC => self.csr.evec = value,
 
-                            else => {
+                            _ => {
                                 std.log.err("Illegal CSR: {}", .{csr});
                                 return Error.IllegalInstruction;
                             }
                         }
                     },
-                    0x1e => { // LLW
+                    .LLW => {
                         const fprel = try self.pop();
                         const value = self.memory[(self.reg.fp + fprel) >> 1];
                         std.log.info("{x:0>4}: {x:0>2} LLW from fp+{} = {}", .{self.reg.pc-1, ir, fprel, value});
@@ -337,7 +403,7 @@ pub const Cpu = struct {
                         }
                         try self.push(value);
                     },
-                    0x1f => { // SLW
+                    .SLW => {
                         const fprel = try self.pop();
                         const value = try self.pop();
                         std.log.info("{x:0>4}: {x:0>2} SLW to fp+{} = {}", .{self.reg.pc-1, ir, fprel, value});
@@ -347,8 +413,7 @@ pub const Cpu = struct {
                         }
                         self.memory[(self.reg.fp + fprel) >> 1] = value;
                     },
-                    // -------- extended instructions --------
-                    0x20 => { // DIV
+                    .DIV => {
                         const divisor: i16 = @bitCast(try self.pop());
                         const dividend: i16 = @bitCast(try self.pop());
                         std.log.info("{x:0>4}: {x:0>2} DIV {} / {}", .{self.reg.pc-1, ir, dividend, divisor});
@@ -359,7 +424,7 @@ pub const Cpu = struct {
                             try self.push(@bitCast(signed_result));
                         }
                     },
-                    0x21 => { // DIVU
+                    .DIVU => {
                         const divisor = try self.pop();
                         const dividend = try self.pop();
                         std.log.info("{x:0>4}: {x:0>2} DIVU {} / {}", .{self.reg.pc-1, ir, dividend, divisor});
@@ -369,7 +434,7 @@ pub const Cpu = struct {
                             try self.push(@divFloor(dividend, divisor));
                         }
                     },
-                    0x22 => { // MOD
+                    .MOD => {
                         const divisor: i16 = @bitCast(try self.pop());
                         const dividend: i16 = @bitCast(try self.pop());
                         std.log.info("{x:0>4}: {x:0>2} MOD {} % {}", .{self.reg.pc-1, ir, dividend, divisor});
@@ -380,7 +445,7 @@ pub const Cpu = struct {
                             try self.push(@bitCast(signed_result));
                         }
                     },
-                    0x23 => { // MODU
+                    .MODU => {
                         const divisor = try self.pop();
                         const dividend = try self.pop();
                         std.log.info("{x:0>4}: {x:0>2} MODU {} % {}", .{self.reg.pc-1, ir, dividend, divisor});
@@ -390,14 +455,14 @@ pub const Cpu = struct {
                             try self.push(@rem(dividend, divisor));
                         }
                     },
-                    0x24 => { // MUL
+                    .MUL => {
                         const b: i16 = @bitCast(try self.pop());
                         const a: i16 = @bitCast(try self.pop());
                         const result: i16 = @mulWithOverflow(a, b)[0];
                         std.log.info("{x:0>4}: {x:0>2} MUL {} * {} = {}", .{self.reg.pc-1, ir, a, b, result});
                         try self.push(@bitCast(result));
                     },
-                    0x25 => { // MULH
+                    .MULH => {
                         const b: i32 = @intCast(try self.pop());
                         const a: i32 = @intCast(try self.pop());
                         const full_result: i32 = @mulWithOverflow(a, b)[0];
@@ -405,7 +470,7 @@ pub const Cpu = struct {
                         std.log.info("{x:0>4}: {x:0>2} MULH {} * {} = {}", .{self.reg.pc-1, ir, a, b, result});
                         try self.push(@bitCast(result));
                     },
-                    0x26 => { // SELECT
+                    .SELECT => {
                         const cond = try self.pop();
                         const a = try self.pop();
                         const b = try self.pop();
@@ -416,7 +481,7 @@ pub const Cpu = struct {
                             try self.push(b);
                         }
                     },
-                    0x27 => { // ROT
+                    .ROT => {
                         const c = try self.pop();
                         const b = try self.pop();
                         const a = try self.pop();
@@ -425,38 +490,38 @@ pub const Cpu = struct {
                         try self.push(a);
                         try self.push(b);
                     },
-                    0x28 => { // SRL
+                    .SRL => {
                         const shift = try self.pop();
                         const value = try self.pop();
                         std.log.info("{x:0>4}: {x:0>2} SRL {} >> {}", .{self.reg.pc-1, ir, value, shift});
                         try self.push(value >> @truncate(shift & 0x0f));
                     },
-                    0x29 => { // SRA
+                    .SRA => {
                         const shift = try self.pop();
                         const value: i16 = @bitCast(try self.pop());
                         std.log.info("{x:0>4}: {x:0>2} SRA {} >> {}", .{self.reg.pc-1, ir, value, shift});
                         const shifted: i16 = value >> @truncate(shift & 0x0f);
                         try self.push(@bitCast(shifted));
                     },
-                    0x2a => { // SLL
+                    .SLL => {
                         const shift = try self.pop();
                         const value = try self.pop();
                         std.log.info("{x:0>4}: {x:0>2} SLL {} << {}", .{self.reg.pc-1, ir, value, shift});
                         try self.push(value << @truncate(shift & 0x0f));
                     },
-                    0x2b => { // OR
+                    .OR => {
                         const b = try self.pop();
                         const a = try self.pop();
                         std.log.info("{x:0>4}: {x:0>2} OR {} | {}", .{self.reg.pc-1, ir, a, b});
                         try self.push(a | b);
                     },
-                    0x2c => { // SUB
+                    .SUB => {
                         const b = try self.pop();
                         const a = try self.pop();
                         std.log.info("{x:0>4}: {x:0>2} SUB {} - {}", .{self.reg.pc-1, ir, a, b});
                         try self.push(@subWithOverflow(a, b)[0]);
                     },
-                    0x30 => { // LB
+                    .LB => {
                         const addr = try self.pop();
                         std.log.info("{x:0>4}: {x:0>2} LB from {x}", .{self.reg.pc-1, ir, addr});
                         const mem_byte: []u8 = @ptrCast(self.memory);
@@ -464,14 +529,14 @@ pub const Cpu = struct {
                         const value = signExtend(byte, 8);
                         try self.push(value);
                     },
-                    0x31 => { // SB
+                    .SB => {
                         const addr = try self.pop();
                         const value:u8 = @truncate(try self.pop() & 0xff);
                         std.log.info("{x:0>4}: {x:0>2} SB to {x} = {}", .{self.reg.pc-1, ir, addr, value});
                         const mem_byte: []u8 = @ptrCast(self.memory);
                         mem_byte[addr] = value;
                     },
-                    0x32, 0x34 => { // LH, LW
+                    .LH, .LW => {
                         const addr = try self.pop();
                         std.log.info("{x:0>4}: {x:0>2} LW from {x}", .{self.reg.pc-1, ir, addr});
                         if ((addr & 1) == 1) {
@@ -481,7 +546,7 @@ pub const Cpu = struct {
                         const value = self.memory[addr >> 1];
                         try self.push(value);
                     },
-                    0x33, 0x35 => { // SH, SW
+                    .SH, .SW => {
                         const addr = try self.pop();
                         const value = try self.pop();
                         std.log.info("{x:0>4}: {x:0>2} SW to {x} = {}", .{self.reg.pc-1, ir, addr, value});
@@ -491,7 +556,7 @@ pub const Cpu = struct {
                         }
                         self.memory[addr >> 1] = value;
                     },
-                    0x36 => { // LNW
+                    .LNW => {
                         const addr = self.reg.ar;
                         std.log.info("{x:0>4}: {x:0>2} LNW from {x}", .{self.reg.pc-1, ir, addr});
                         if ((addr & 1) == 1) {
@@ -502,7 +567,7 @@ pub const Cpu = struct {
                         const value = self.memory[addr >> 1];
                         try self.push(value);
                     },
-                    0x37 => { // SNW
+                    .SNW => {
                         const addr = self.reg.ar;
                         const value = try self.pop();
                         std.log.info("{x:0>4}: {x:0>2} SNW to {x} = {}", .{self.reg.pc-1, ir, addr, value});
@@ -513,19 +578,19 @@ pub const Cpu = struct {
                         self.reg.ar = @addWithOverflow(self.reg.ar, 2)[0];
                         self.memory[addr >> 1] = value;
                     },
-                    0x38 => { // CALL
+                    .CALL => {
                         const pcrel = try self.pop();
                         std.log.info("{x:0>4}: {x:0>2} CALL to {x}, return address {x}", .{self.reg.pc-1, ir, self.reg.pc+pcrel, self.reg.pc});
                         self.reg.ra = self.reg.pc;
                         self.reg.pc += pcrel;
                     },
-                    0x39 => { // CALLP
+                    .CALLP => {
                         const addr = try self.pop();
                         std.log.info("{x:0>4}: {x:0>2} CALLP to {x}, return address {x}", .{self.reg.pc-1, ir, addr, self.reg.pc});
                         self.reg.ra = self.reg.pc;
                         self.reg.pc = addr;
                     },
-                    else => {
+                    _ => {
                         std.log.err("Illegal instruction: {x}", .{ir});
                         return Error.IllegalInstruction;
                     },
@@ -567,7 +632,6 @@ pub fn runTest(rom_file: []const u8, max_cycles: usize, gpa: std.mem.Allocator) 
 
     var cpu = Cpu.init(memory);
     try cpu.loadRom(rom_file);
-    cpu.haltOnSyscall = true;
     try cpu.run(max_cycles);
 
     if (cpu.csr.depth != 1) {
