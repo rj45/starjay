@@ -1508,6 +1508,7 @@ def main():
             (0x1234, 0, 0x1234),
             (0xFFFF, 15, 1),
             (0x1234, 16, 0x1234),  # Shift by 16 = shift by 0 (masked)
+            (0x1234, 20, 0x0123),  # Shift by 20 = shift by 4 (masked)
         ],
     )
 
@@ -1521,6 +1522,8 @@ def main():
             (0x4000, 1, 0x2000),
             (-32768, 1, -16384),
             (100, 0, 100),
+            (0x1234, 16, 0x1234),  # Shift by 16 = shift by 0 (masked)
+            (0x1234, 20, 0x0123),  # Shift by 20 = shift by 4 (masked)
         ],
     )
 
@@ -1533,6 +1536,8 @@ def main():
             (0x0001, 15, 0x8000),
             (0xFFFF, 1, 0xFFFE),
             (0x1234, 0, 0x1234),
+            (0x1234, 16, 0x1234),  # Shift by 16 = shift by 0 (masked)
+            (0x1234, 20, 0x2340),  # Shift by 20 = shift by 4 (masked)
         ],
     )
 

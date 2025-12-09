@@ -47,6 +47,14 @@
     xor
     failnez
 
+    ; Case 6: 4660 srl 20 -> 291
+    push 4660
+    push 20
+    srl
+    push 291
+    xor
+    failnez
+
     ; All passed
     push 1
     halt
