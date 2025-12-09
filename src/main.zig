@@ -2,7 +2,8 @@ const std = @import("std");
 
 const clap = @import("clap");
 
-const emulator = @import("emulator/root.zig");
+const hl_emu = @import("emulator/highlevel/root.zig");
+const ll_emu = @import("emulator/microcoded/root.zig");
 const debugger = @import("debugger/root.zig");
 
 var gpa_instance = std.heap.GeneralPurposeAllocator(.{}){};
@@ -15,6 +16,7 @@ pub fn main() !void {
         \\-h, --help             Display this help and exit.
         \\-d, --debugger         Show debugger GUI window.
         \\-r, --rom <str>        Load ROM file.
+        \\-l, --llemu           Use low-level emulator (default is high-level).
         \\
     );
 
@@ -40,9 +42,12 @@ pub fn main() !void {
     }
 
     if (res.args.rom) |rom| {
-        try emulator.main(rom, 10000000, gpa);
+        if (res.args.llemu != 0) {
+            try ll_emu.main(rom, 10000000, gpa);
+        } else {
+            try hl_emu.main(rom, 10000000, gpa);
+        }
     }
-
 }
 
 test {

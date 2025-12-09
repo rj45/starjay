@@ -1,12 +1,15 @@
 const std = @import("std");
 
-pub const Word = u16;
-
 pub const WORDSIZE: comptime_int = 16;
-pub const WORDBYTES: comptime_int = WORDSIZE / 2;
-pub const WORDMASK: Word = (1 << WORDSIZE) - 1;
 
-const STACK_SIZE: comptime_int = (1 << WORDSIZE);
+pub const Word = if (WORDSIZE == 16) u16 else u32;
+pub const SWord = if (WORDSIZE == 16) i16 else i32;
+
+pub const WORDBYTES: comptime_int = WORDSIZE / 2;
+pub const WORDMASK: comptime_int = (1 << WORDSIZE) - 1;
+
+const STACK_SIZE: comptime_int = 1024;
+const STACK_MASK: comptime_int = STACK_SIZE - 1;
 const USER_HIGH_WATER: comptime_int = STACK_SIZE - 8;
 const KERNEL_HIGH_WATER: comptime_int = STACK_SIZE - 4;
 
@@ -212,9 +215,9 @@ pub const Cpu = struct {
         const progMem: [*]u8 = @ptrCast(self.memory);
         var cycle: usize = 0;
 
-        var tos = self.stack[@subWithOverflow(self.csr.depth, 1)[0]];
-        var nos = self.stack[@subWithOverflow(self.csr.depth, 2)[0]];
-        var ros = self.stack[@subWithOverflow(self.csr.depth, 3)[0]];
+        var tos = self.stack[@subWithOverflow(self.csr.depth, 1)[0] & STACK_MASK];
+        var nos = self.stack[@subWithOverflow(self.csr.depth, 2)[0] & STACK_MASK];
+        var ros = self.stack[@subWithOverflow(self.csr.depth, 3)[0] & STACK_MASK];
 
         loop: while (cycle < cycles) : (cycle += 1) {
             // fetch
@@ -239,15 +242,15 @@ pub const Cpu = struct {
                     read = 1;
                     stackop = .REPLACE;
 
-                    std.log.info("{x:0>4}: {x:0>2} SHI {} -> {} ({x:0>4})", .{ self.reg.pc - 1, ir, value, @as(i16, @bitCast(result)), result });
+                    std.log.info("{x:0>4}: {x:0>2} SHI {} -> {} ({x:0>4})", .{ self.reg.pc - 1, ir, value, @as(SWord, @bitCast(result)), result });
                 },
                 .PUSH => {
                     stackop = .PUSH;
                     result = signExtend(ir & 0x3f, 6);
-                    std.log.info("{x:0>4}: {x:0>2} PUSH {}", .{ self.reg.pc - 1, ir, @as(i16, @bitCast(result)) });
+                    std.log.info("{x:0>4}: {x:0>2} PUSH {}", .{ self.reg.pc - 1, ir, @as(SWord, @bitCast(result)) });
                 },
                 .HALT => {
-                    std.log.info("{x:0>4}: {x:0>2} HALT {} ({x:0>4})", .{ self.reg.pc - 1, ir, @as(i16, @bitCast(tos)), tos });
+                    std.log.info("{x:0>4}: {x:0>2} HALT {} ({x:0>4})", .{ self.reg.pc - 1, ir, @as(SWord, @bitCast(tos)), tos });
                     if (self.csr.status & StatusFlags.TH == 0) {
                         break :loop;
                     }
@@ -258,10 +261,10 @@ pub const Cpu = struct {
                     stackop = .POP2;
                     result = ros;
                     if (nos == 0) {
-                        std.log.info("{x:0>4}: {x:0>2} BEQZ {}, {} taken", .{ self.reg.pc - 1, ir, @as(i16, @bitCast(nos)), @as(i16, @bitCast(tos)) });
+                        std.log.info("{x:0>4}: {x:0>2} BEQZ {}, {} taken", .{ self.reg.pc - 1, ir, @as(SWord, @bitCast(nos)), @as(SWord, @bitCast(tos)) });
                         self.reg.pc = @addWithOverflow(self.reg.pc, tos)[0];
                     } else {
-                        std.log.info("{x:0>4}: {x:0>2} BEQZ {}, {} not taken", .{ self.reg.pc - 1, ir, @as(i16, @bitCast(nos)), @as(i16, @bitCast(tos)) });
+                        std.log.info("{x:0>4}: {x:0>2} BEQZ {}, {} not taken", .{ self.reg.pc - 1, ir, @as(SWord, @bitCast(nos)), @as(SWord, @bitCast(tos)) });
                     }
                 },
                 .BNEZ => {
@@ -269,10 +272,10 @@ pub const Cpu = struct {
                     stackop = .POP2;
                     result = ros;
                     if (nos != 0) {
-                        std.log.info("{x:0>4}: {x:0>2} BNEZ {}, {} taken", .{ self.reg.pc - 1, ir, @as(i16, @bitCast(nos)), @as(i16, @bitCast(tos)) });
+                        std.log.info("{x:0>4}: {x:0>2} BNEZ {}, {} taken", .{ self.reg.pc - 1, ir, @as(SWord, @bitCast(nos)), @as(SWord, @bitCast(tos)) });
                         self.reg.pc = @addWithOverflow(self.reg.pc, tos)[0];
                     } else {
-                        std.log.info("{x:0>4}: {x:0>2} BNEZ {}, {} not taken", .{ self.reg.pc - 1, ir, @as(i16, @bitCast(nos)), @as(i16, @bitCast(tos)) });
+                        std.log.info("{x:0>4}: {x:0>2} BNEZ {}, {} not taken", .{ self.reg.pc - 1, ir, @as(SWord, @bitCast(nos)), @as(SWord, @bitCast(tos)) });
                     }
                 },
                 .SWAP => {
@@ -307,8 +310,8 @@ pub const Cpu = struct {
                 .LT => {
                     read = 2;
                     stackop = .POP1;
-                    const b: i16 = @bitCast(tos);
-                    const a: i16 = @bitCast(nos);
+                    const b: SWord = @bitCast(tos);
+                    const a: SWord = @bitCast(nos);
                     result = if (a < b) 1 else 0;
                     std.log.info("{x:0>4}: {x:0>2} LT {} < {} = {}", .{ self.reg.pc - 1, ir, a, b, result });
                 },
@@ -371,7 +374,7 @@ pub const Cpu = struct {
                     switch (reg) {
                         .PC => { // ADD PC aka JUMP
                             const dest = @addWithOverflow(self.reg.pc, tos)[0];
-                            std.log.info("{x:0>4}: {x:0>2} JUMP {} to {x:0>4}", .{ self.reg.pc - 1, ir, @as(i16, @bitCast(tos)), dest });
+                            std.log.info("{x:0>4}: {x:0>2} JUMP {} to {x:0>4}", .{ self.reg.pc - 1, ir, @as(SWord, @bitCast(tos)), dest });
                             self.reg.pc = dest;
                         },
                         .FP => { // ADD FP
@@ -451,8 +454,8 @@ pub const Cpu = struct {
                 .DIV => {
                     read = 2;
                     stackop = .POP1;
-                    const divisor: i16 = @bitCast(tos);
-                    const dividend: i16 = @bitCast(nos);
+                    const divisor: SWord = @bitCast(tos);
+                    const dividend: SWord = @bitCast(nos);
                     std.log.info("{x:0>4}: {x:0>2} DIV {} / {}", .{ self.reg.pc - 1, ir, dividend, divisor });
                     if (divisor == 0) {
                         return Error.DivideByZero;
@@ -471,8 +474,8 @@ pub const Cpu = struct {
                 .MOD => {
                     read = 2;
                     stackop = .POP1;
-                    const divisor: i16 = @bitCast(tos);
-                    const dividend: i16 = @bitCast(nos);
+                    const divisor: SWord = @bitCast(tos);
+                    const dividend: SWord = @bitCast(nos);
                     std.log.info("{x:0>4}: {x:0>2} MOD {} % {}", .{ self.reg.pc - 1, ir, dividend, divisor });
                     if (divisor == 0) {
                         return Error.DivideByZero;
@@ -491,9 +494,9 @@ pub const Cpu = struct {
                 .MUL => {
                     read = 2;
                     stackop = .POP1;
-                    const b: i16 = @bitCast(tos);
-                    const a: i16 = @bitCast(nos);
-                    const res: i16 = @mulWithOverflow(a, b)[0];
+                    const b: SWord = @bitCast(tos);
+                    const a: SWord = @bitCast(nos);
+                    const res: SWord = @mulWithOverflow(a, b)[0];
                     result = @bitCast(res);
                     std.log.info("{x:0>4}: {x:0>2} MUL {} * {} = {}", .{ self.reg.pc - 1, ir, a, b, res });
                 },
@@ -503,7 +506,7 @@ pub const Cpu = struct {
                     const b: i32 = @intCast(tos);
                     const a: i32 = @intCast(nos);
                     const full_result: i32 = @mulWithOverflow(a, b)[0];
-                    const res: i16 = @truncate(full_result >> 16);
+                    const res: SWord = @truncate(full_result >> 16);
                     result = @bitCast(res);
                     std.log.info("{x:0>4}: {x:0>2} MULH {} * {} = {}", .{ self.reg.pc - 1, ir, a, b, res });
                 },
@@ -529,8 +532,8 @@ pub const Cpu = struct {
                 .SRA => {
                     read = 2;
                     stackop = .POP1;
-                    const value: i16 = @bitCast(nos);
-                    const shifted: i16 = value >> @truncate(tos & 0x0f);
+                    const value: SWord = @bitCast(nos);
+                    const shifted: SWord = value >> @truncate(tos & 0x0f);
                     result = @bitCast(shifted);
                     std.log.info("{x:0>4}: {x:0>2} SRA {} >> {} = {}", .{ self.reg.pc - 1, ir, value, tos, result });
                 },
@@ -656,7 +659,7 @@ pub const Cpu = struct {
                         }
                     }
 
-                    self.stack[@subWithOverflow(self.csr.depth, 3)[0]] = ros;
+                    self.stack[@subWithOverflow(self.csr.depth, 3)[0] & STACK_MASK] = ros;
                     self.csr.depth += 1;
 
                     ros = nos;
@@ -667,13 +670,13 @@ pub const Cpu = struct {
                     self.csr.depth -= 1;
                     tos = result;
                     nos = ros;
-                    ros = self.stack[@subWithOverflow(self.csr.depth, 3)[0]];
+                    ros = self.stack[@subWithOverflow(self.csr.depth, 3)[0] & STACK_MASK];
                 },
                 .POP2 => {
                     self.csr.depth -= 2;
                     tos = result;
-                    nos = self.stack[@subWithOverflow(self.csr.depth, 2)[0]];
-                    ros = self.stack[@subWithOverflow(self.csr.depth, 3)[0]];
+                    nos = self.stack[@subWithOverflow(self.csr.depth, 2)[0] & STACK_MASK];
+                    ros = self.stack[@subWithOverflow(self.csr.depth, 3)[0] & STACK_MASK];
                 },
                 .SWAP => {
                     const temp = tos;
@@ -691,9 +694,9 @@ pub const Cpu = struct {
             }
         }
 
-        self.stack[@subWithOverflow(self.csr.depth, 1)[0]] = tos;
-        self.stack[@subWithOverflow(self.csr.depth, 2)[0]] = nos;
-        self.stack[@subWithOverflow(self.csr.depth, 3)[0]] = ros;
+        self.stack[@subWithOverflow(self.csr.depth, 1)[0] & STACK_MASK] = tos;
+        self.stack[@subWithOverflow(self.csr.depth, 2)[0] & STACK_MASK] = nos;
+        self.stack[@subWithOverflow(self.csr.depth, 3)[0] & STACK_MASK] = ros;
     }
 
     pub fn loadRom(self: *Cpu, rom_file: []const u8) !void {
