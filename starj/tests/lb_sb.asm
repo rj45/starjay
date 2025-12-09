@@ -5,6 +5,8 @@
     ; lb: push(sign_extend(mem:byte[tos])), pops addr, pushes value
 
     ; Test 1: Store and load 0x42 (positive byte)
+    push 9          ; sentinel to check no corruption
+
     push 0x42       ; value (nos)
     push fp
     push -4
@@ -17,6 +19,10 @@
     lb
 
     push 0x42
+    xor
+    failnez
+
+    push 9          ; check sentinel intact
     xor
     failnez
 

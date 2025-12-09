@@ -107,6 +107,7 @@ pub const RegNum = enum(u2) {
 
 pub const CsrNum = enum(u3) {
     AFP = 3,
+    DEPTH = 4,
     ECAUSE = 5,
     EVEC = 6,
     _,
@@ -405,6 +406,7 @@ pub const Cpu = struct {
                         .AFP => result = self.alternateFramePointer(),
                         .ECAUSE => result = self.csr.ecause,
                         .EVEC => result = self.csr.evec,
+                        .DEPTH => result = self.csr.depth,
                         _ => {
                             std.log.err("Illegal CSR: {x}", .{csr});
                             return Error.IllegalInstruction;
@@ -422,6 +424,7 @@ pub const Cpu = struct {
                         .AFP => self.setAlternateFramePointer(nos),
                         .ECAUSE => self.csr.ecause = nos,
                         .EVEC => self.csr.evec = nos,
+                        .DEPTH => self.csr.depth = 0, // depth can only be reset
                         _ => {
                             std.log.err("Illegal CSR: {}", .{csr});
                             return Error.IllegalInstruction;

@@ -432,7 +432,7 @@ pub const Opcode = enum(u6) {
     pop_fp = 0x15,
     pop_ra = 0x16,
     pop_ar = 0x17,
-    add_pc = 0x18, // aka jump
+    jump = 0x18, // aka add_pc
     add_fp = 0x19,
     add_ra = 0x1A,
     add_ar = 0x1B,
@@ -760,7 +760,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .min_depth_required = 1, // Reads TOS
         },
 
-        .add_pc => .{
+        .jump => .{
             // jump - relative: PC = PC + TOS
             .pc_src = .rel_tos,
             .tos_src = .nos,
@@ -1929,6 +1929,90 @@ fn signExtend8(val: u8) Word {
     return @bitCast(extended);
 }
 
+/// Get mnemonic string for an instruction byte
+fn getInstrMnemonic(instr: u8) []const u8 {
+    if (instr & 0x80 != 0) {
+        return "shi";
+    } else if (instr & 0xC0 == 0x40) {
+        return "push";
+    } else {
+        const opcode: Opcode = @enumFromInt(instr & 0x3F);
+        return @tagName(opcode);
+    }
+}
+
+/// Format immediate value for display
+fn formatImmediate(instr: u8, buf: *[32]u8) []const u8 {
+    if (instr & 0x80 != 0) {
+        // shi: 7-bit immediate
+        const imm7 = instr & 0x7F;
+        return std.fmt.bufPrint(buf, " 0x{x:0>2}", .{imm7}) catch "???";
+    } else if (instr & 0xC0 == 0x40) {
+        // push: 6-bit sign-extended immediate
+        const imm6: i6 = @bitCast(@as(u6, @truncate(instr & 0x3F)));
+        const extended: i16 = imm6;
+        if (extended < 0) {
+            return std.fmt.bufPrint(buf, " {d}", .{extended}) catch "???";
+        } else {
+            return std.fmt.bufPrint(buf, " {d}", .{extended}) catch "???";
+        }
+    } else {
+        return "";
+    }
+}
+
+/// Log detailed instruction execution info
+fn logInstruction(cpu: *const CpuState, pc_before: Word, instr: u8, uop: MicroOp, trap: bool, trap_cause: u8) void {
+    var imm_buf: [32]u8 = undefined;
+    const mnemonic = getInstrMnemonic(instr);
+    const imm_str = formatImmediate(instr, &imm_buf);
+
+    // Build operation summary
+    var summary_buf: [128]u8 = undefined;
+    var summary_len: usize = 0;
+
+    // Stack state: TOS NOS ROS [depth]
+    const stack_info = std.fmt.bufPrint(summary_buf[summary_len..], "stk:[{x:0>4},{x:0>4},{x:0>4}]d={d}", .{
+        cpu.tos,
+        cpu.nos,
+        cpu.ros,
+        cpu.depth,
+    }) catch "";
+    summary_len += stack_info.len;
+
+    // Add trap info if applicable
+    if (trap) {
+        const trap_info = std.fmt.bufPrint(summary_buf[summary_len..], " TRAP:{x:0>2}", .{trap_cause}) catch "";
+        summary_len += trap_info.len;
+    }
+
+    // Add PC change info
+    if (uop.pc_src != .next and uop.pc_src != .hold) {
+        const pc_info = std.fmt.bufPrint(summary_buf[summary_len..], " pc:{s}", .{@tagName(uop.pc_src)}) catch "";
+        summary_len += pc_info.len;
+    }
+
+    // Add depth change
+    if (uop.depth_op != .none) {
+        const depth_info = std.fmt.bufPrint(summary_buf[summary_len..], " dep:{s}", .{@tagName(uop.depth_op)}) catch "";
+        summary_len += depth_info.len;
+    }
+
+    // Add memory operation
+    if (uop.mem_op != .none) {
+        const mem_info = std.fmt.bufPrint(summary_buf[summary_len..], " mem:{s}", .{@tagName(uop.mem_op)}) catch "";
+        summary_len += mem_info.len;
+    }
+
+    std.log.info("{x:0>4}: {x:0>2} {s:<7}{s:<8} {s}", .{
+        pc_before,
+        instr,
+        mnemonic,
+        imm_str,
+        summary_buf[0..summary_len],
+    });
+}
+
 /// Execute one instruction using microcode ROM
 ///
 /// This models the hardware behavior:
@@ -1954,6 +2038,7 @@ pub fn step(cpu: *CpuState, irq: bool, irq_num: u4) void {
     // ========================================
     // Fetch stage
     // ========================================
+    const pc_before = cpu.pc; // Save PC for debug logging
     const fetched_instr = cpu.readByte(cpu.pc);
     cpu.pc +%= 1; // Advance PC (now points to next instruction)
 
@@ -2018,6 +2103,11 @@ pub fn step(cpu: *CpuState, irq: bool, irq_num: u4) void {
     // the same exception entry sequence needed for all exceptions).
     const effective_instr: u8 = if (trap) @intFromEnum(Opcode.syscall) else fetched_instr;
     const uop = microcode_rom[effective_instr];
+
+    // ========================================
+    // Debug logging
+    // ========================================
+    logInstruction(cpu, pc_before, fetched_instr, uop, trap, trap_cause);
 
     // ========================================
     // Execute stage

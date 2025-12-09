@@ -9,6 +9,24 @@ const debugger = @import("debugger/root.zig");
 var gpa_instance = std.heap.GeneralPurposeAllocator(.{}){};
 const gpa = gpa_instance.allocator();
 
+pub const std_options: std.Options = .{
+    .logFn = logFn,
+    .log_level = .debug,
+};
+
+var log_level = std.log.default_level;
+
+fn logFn(
+    comptime message_level: std.log.Level,
+    comptime scope: @TypeOf(.enum_literal),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    if (@intFromEnum(message_level) <= @intFromEnum(log_level)) {
+        std.log.defaultLog(message_level, scope, format, args);
+    }
+}
+
 pub fn main() !void {
     defer _ = gpa_instance.deinit();
 
@@ -16,7 +34,8 @@ pub fn main() !void {
         \\-h, --help             Display this help and exit.
         \\-d, --debugger         Show debugger GUI window.
         \\-r, --rom <str>        Load ROM file.
-        \\-l, --llemu           Use low-level emulator (default is high-level).
+        \\-l, --llemu            Use low-level emulator (default is high-level).
+        \\-q, --quiet            Suppress non-error output.
         \\
     );
 
@@ -36,6 +55,10 @@ pub fn main() !void {
         return;
     }
 
+    if (res.args.quiet != 0) {
+        log_level = .err;
+    }
+
     if (res.args.debugger != 0) {
         try debugger.main(gpa);
         return;
@@ -43,9 +66,9 @@ pub fn main() !void {
 
     if (res.args.rom) |rom| {
         if (res.args.llemu != 0) {
-            try ll_emu.main(rom, 10000000, gpa);
+            try ll_emu.main(rom, 100000000, gpa);
         } else {
-            try hl_emu.main(rom, 10000000, gpa);
+            try hl_emu.main(rom, 100000000, gpa);
         }
     }
 }

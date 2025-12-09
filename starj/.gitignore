@@ -1,3 +1,6 @@
 tests/**/*.bin
 tests/**/*.hex
 tests/**/*_listing.txt
+examples/**/*.bin
+examples/**/*.hex
+examples/**/*_listing.txt
