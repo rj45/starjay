@@ -74,7 +74,7 @@ StarJette does not have a flags register or condition codes. Instead, comparison
 
 Both `ra` and `ar` may be used as temporary registers if they are not otherwise used. They are caller saved.
 
-See the calling convention below to understand better how `fp` and the frame stack work.
+See the calling convention below to understand better how `fp` and the frame stack work. In hardware, there is a `kfp` and `ufp` register for the kernel and user mode frame pointers respectively, and there is a mux to select between them based on the `km` bit in the `status` CSR to be the value of `fp`. There is also a mux on the input when `fp` is written to write to the appropriate register based on the `km` bit.
 
 ### 2.1. Computer Status Registers
 
@@ -146,7 +146,7 @@ Specified bits:
 
 This register may only be accessed in kernel mode, attempts to write it in user mode are ignored, and attempts to read it return zero.
 
-Clearing the `km` bit while in kernel mode will immediately drop to user mode without branching. Note that this will cause the `fp` and `afp` registers to be swapped.
+Clearing the `km` bit while in kernel mode will immediately drop to user mode without branching. Note that this will cause the `fp` and `afp` registers to be swapped because the `km` bit controls muxes on the inputs and outputs of `kfp` and `ufp` to the `fp` and `afp` registers.
 
 The `ie` bit controls whether interrupts are enabled or disabled. If an interrupt occurs while this bit is clear, the interrupt is deferred until the bit is set again. Interrupts are disabled on boot / reset. When an interrupt is taken, the `ie` bit is cleared, and then the exception sequence is followed as described in the exception section.
 
@@ -162,7 +162,11 @@ The `estatus` register holds a copy of the `status` register at the time an exce
 
 If re-entrance is wanted, the exception handler must save and restore these registers appropriately before re-enabling interrupts and returning from the exception. Use of extended instructions should be avoided until these are saved, since if they are implemented in software, they will clobber these registers.
 
-### 2.5. `depth` - Data Stack Depth
+### 2.5. `fp`, `afp` - Frame Pointer and Alternate Frame Pointer
+
+The `fp` and `afp` registers are virtual registers. The hardware actually has `ufp` and `kfp` registers for user mode and kernel mode frame pointers respectively, and muxes on the inputs and outputs of these registers to select between them based on the `km` bit in the `status` CSR.
+
+### 2.6. `depth` - Data Stack Depth
 
 The `depth` represents the data stack depth, including values in the `tos`, `nos` and `ros` registers, and can be used to save the stack to memory for a context switch. It is incremented for each push, and decremented for each pop. 
 
@@ -174,7 +178,7 @@ The `ar` register and `lnw` / `snw` instructions may be used to efficiently copy
 
 The `depth` register may be read in user mode, but writes cause an illegal instruction exception. In kernel mode, any writes to this register will write as zero, as the stack only supports being reset.
 
-### 2.6. `ecause` - Exception Cause Register
+### 2.7. `ecause` - Exception Cause Register
 
 The `ecause` register indicates the cause of the most recent exception, interrupt, or syscall. It is set by hardware when entering kernel mode and can be read by the exception handler to determine how to respond.
 
@@ -419,7 +423,7 @@ Implementations may choose to optimise `push` (or `push` + `shi` chains) by fusi
   +---+-------+-------+---------------+
 
   if (th == 1) then
-      if (km == 0) then fp, afp = afp, fp; epc = pc; estatus = status; ecause = 0x12; ie = 0; km = 1; pc = evec
+      epc = pc; estatus = status; ecause = 0x12; ie = 0; km = 1; pc = evec
   else
       halt the processor
 ```
@@ -447,18 +451,17 @@ Instruction reserved for later use. Raises an illegal instruction exception for 
   | O | 0   0 | 0   0 | 0   0   1   0 |
   +---+-------+-------+---------------+
 
-  if (km == 0) then fp, afp = afp, fp; epc = pc; estatus = status; ecause = 0x00; ie = 0; km = 1; pc = evec
+  epc = pc; estatus = status; ecause = 0x00; ie = 0; km = 1; pc = evec
 ```
 
 Causes a system call exception. The following procedure happens:
 
-1. If not already in kernel mode (`km == 0`), swap the `fp` and `afp` registers.
-2. Save the address of the next instruction (`pc`) into the `epc` register.
-3. Save the current `status` register into the `estatus` register.
-4. Set the `ecause` register to `0x00` (syscall).
-5. Clear the `ie` bit to disable interrupts.
-6. Set the `km` bit in the `status` register to enter kernel mode.
-7. Set the `pc` register to the value in the `evec` register.
+1. Save the address of the next instruction (`pc`) into the `epc` register.
+2. Save the current `status` register into the `estatus` register.
+3. Set the `ecause` register to `0x00` (syscall).
+4. Clear the `ie` bit to disable interrupts.
+5. Set the `km` bit in the `status` register to enter kernel mode.
+6. Set the `pc` register to the value in the `evec` register.
 
 Care should be taken to avoid this instruction (or anything that may cause an exception) until the `epc` and `estatus` registers have been saved, or they will be clobbered.
 
@@ -470,14 +473,13 @@ Care should be taken to avoid this instruction (or anything that may cause an ex
   | O | 0   0 | 0   0 | 0   0   1   1 |
   +---+-------+-------+---------------+
 
-  pc = epc; status = estatus; if (km == 0) then fp, afp = afp, fp
+  pc = epc; status = estatus
 ```
 
 Returns from a kernel exception (interrupt, exception, breakpoint or syscall). The following procedure is performed:
 
 1. Set the `pc` register to the value in the `epc` register.
 2. Restore the `status` register from the `estatus` register.
-3. If now in user mode (`km == 0`), swap the `fp` and `afp` registers.
 
 ##### 3.4.7. `beqz` - Branch if Equal to Zero
 
@@ -774,7 +776,7 @@ It is illegal to store a word to an unaligned address (that is, the lower 1 (16-
   | O | 0   0 | 1   0 | 0   0   0   0 |
   +---+-------+-------+---------------+
 
-  if (tos! == 0) then raise { if (km == 0) then fp, afp = afp, fp; epc = pc; estatus = status; ecause = 0x40; ie = 0; km = 1; pc = evec } else
+  if (tos! == 0) then raise { epc = pc; estatus = status; ecause = 0x40; ie = 0; km = 1; pc = evec } else
   push(signed(nos! / tos!))
 ```
 
@@ -790,7 +792,7 @@ If a division by zero is attempted, implementations are expected to raise an div
   | O | 0   0 | 1   0 | 0   0   0   1 |
   +---+-------+-------+---------------+
 
-  if (tos! == 0) then raise { if (km == 0) then fp, afp = afp, fp; epc = pc; estatus = status; ecause = 0x40; ie = 0; km = 1; pc = evec } else
+  if (tos! == 0) then raise { epc = pc; estatus = status; ecause = 0x40; ie = 0; km = 1; pc = evec } else
   push(unsigned(nos! / tos!))
 ```
 
@@ -806,7 +808,7 @@ If a division by zero is attempted, implementations are expected to raise an div
   | O | 0   0 | 1   0 | 0   0   1   0 |
   +---+-------+-------+---------------+
 
-  if (tos! == 0) then raise { if (km == 0) then fp, afp = afp, fp; epc = pc; estatus = status; ecause = 0x40; ie = 0; km = 1; pc = evec } else
+  if (tos! == 0) then raise { epc = pc; estatus = status; ecause = 0x40; ie = 0; km = 1; pc = evec } else
   push(signed(nos! % tos!))
 ```
 
@@ -822,7 +824,7 @@ If a modulus by zero is attempted, implementations are expected to raise an divi
   | O | 0   0 | 1   0 | 0   0   1   1 |
   +---+-------+-------+---------------+
 
-  if (tos! == 0) then raise { if (km == 0) then fp, afp = afp, fp; epc = pc; estatus = status; ecause = 0x40; ie = 0; km = 1; pc = evec } else
+  if (tos! == 0) then raise { epc = pc; estatus = status; ecause = 0x40; ie = 0; km = 1; pc = evec } else
   push(unsigned(nos! % tos!))
 ```
 
@@ -1181,14 +1183,12 @@ The `epc` CSR is always set to the address of the next instruction to execute (`
 
 When entering kernel mode via syscall, exception, or interrupt, the following steps occur:
 
-1. If `km` is not set, the `fp` and `afp` registers are swapped.
-   - Note: hardware implementations may simply use muxes to swap them based on the `km` flag rather than actually swapping the values.
-2. The current `status` CSR is stored in the `estatus` CSR.
-3. The `km` flag is set to `1`.
-4. The `ie` flag is cleared to `0`.
-5. The `pc` is stored in the `epc` CSR.
-6. The `ecause` CSR is set to the appropriate cause code (see section 2.6 for the cause table).
-7. `pc` is set to the value in the `evec` CSR.
+1. The current `status` CSR is stored in the `estatus` CSR.
+2. The `km` flag is set to `1`.
+3. The `ie` flag is cleared to `0`.
+4. The `pc` is stored in the `epc` CSR.
+5. The `ecause` CSR is set to the appropriate cause code (see section 2.6 for the cause table).
+6. `pc` is set to the value in the `evec` CSR.
 
 The exception handler can read `ecause` to determine the cause and dispatch accordingly. For example:
 
@@ -1226,7 +1226,7 @@ Macro instructions use a separate vector table mechanism from regular exceptions
   | O | 0   0 | 1 |       imm         |
   +---+-------+---+-------------------+
 
-  if (km == 0) then fp, afp = afp, fp; estatus = status; km = 1; ie = 0; epc = pc + 1; pc = imm * 8 + 0x100;
+  estatus = status; km = 1; ie = 0; epc = pc + 1; pc = imm * 8 + 0x100;
 ```
 
 Any or all of the 32 instructions with binary 0b001XXXXX may be implemented in terms of the 25 basic instructions, or an implementation may choose to implement them in hardware to speed up the processor.
@@ -1302,7 +1302,7 @@ The physical address is calculated as follows for 32-bit machines:
 ```text
 if (virtual_address & memory_mask) != 0 {
     // Memory Access Violation Exception (ecause = 0x22)
-    if (km == 0) then fp, afp = afp, fp; estatus = status; km = 1; ie = 0; epc = pc; ecause = 0x22; pc = evec;
+    estatus = status; km = 1; ie = 0; epc = pc; ecause = 0x22; pc = evec;
 } else {
     physical_address = (virtual_address & ~memory_mask) | memory_set
 }
@@ -1315,7 +1315,7 @@ And for 16-bit machines:
 ```text
 if (virtual_address & (memory_mask << 12) ) != 0 {
     // Memory Access Violation Exception (ecause = 0x22)
-    if (km == 0) then fp, afp = afp, fp; estatus = status; km = 1; ie = 0; epc = pc; ecause = 0x22; pc = evec;
+    estatus = status; km = 1; ie = 0; epc = pc; ecause = 0x22; pc = evec;
 } else {
     physical_address = (virtual_address & ~(memory_mask << 12)) | (memory_set << 12)
 }
