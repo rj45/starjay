@@ -58,6 +58,41 @@ _check_stack:
     push 0xBBBB
     xor
     failnez
+
+    ; === Deep Stack Preservation Test ===
+    push 0x1111     ; will be stack_mem[0] (deepest)
+    push 0x2222     ; will be stack_mem[1] - CRITICAL VALUE
+    push 0x3333     ; will be stack_mem[2]
+    push 0x4444     ; will be ROS
+    push 0          ; NOS - condition (zero = branch NOT taken for bnez)
+
+    bnez _deep_bnez_never    ; not taken since NOS=0
+
+    ; After depth=4
+    ; Expected: TOS=0x4444, NOS=0x3333, ROS=0x2222
+    push 0x4444
+    xor
+    failnez
+
+    push 0x3333
+    xor
+    failnez
+
+    push 0x2222     ; CRITICAL check
+    xor
+    failnez
+
+    push 0x1111
+    xor
+    failnez
+
+    jump _deep_bnez_done
+
+_deep_bnez_never:
+    push 0
+    halt
+
+_deep_bnez_done:
     ; All passed
     push 1
     halt

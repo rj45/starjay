@@ -116,12 +116,37 @@ fn dvui_frame() bool {
         }
     }
 
-    var scroll = dvui.scrollArea(@src(), .{}, .{
-        .expand = .both,
-        .color_fill = colors.bg_void,
-        .background = true,
-    });
-    defer scroll.deinit();
+    // toolbar
+    {
+        var toolbar = dvui.box(@src(), .{ .dir = .horizontal }, .{ .style = .control, .background = true, .expand = .horizontal });
+        defer toolbar.deinit();
+
+        if (dvui.button(@src(), "Run", .{}, .{ .style = .highlight })) {
+            // do something
+        }
+        if (dvui.button(@src(), "Step Into", .{}, .{})) {
+            // do something
+        }
+        if (dvui.button(@src(), "Step Over", .{}, .{})) {
+            // do something
+        }
+        if (dvui.button(@src(), "Snapshot", .{}, .{})) {
+            // do something
+        }
+        if (dvui.button(@src(), "Restore", .{}, .{})) {
+            // do something
+        }
+    }
+
+    {
+        var scroll = dvui.scrollArea(@src(), .{}, .{
+            .expand = .both,
+            .background = true,
+        });
+        defer scroll.deinit();
+
+
+    }
 
     dvui.Examples.demo();
 

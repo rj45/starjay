@@ -139,6 +139,35 @@
     xor
     failnez
 
+    ; === Deep Stack Preservation Test ===
+    ; Verify fsl correctly preserves stack_mem values when depth >= 5
+    push 0x1111     ; will be stack_mem[0] (deepest)
+    push 0x2222     ; will be stack_mem[1] - CRITICAL VALUE
+    push 0x3333     ; will be stack_mem[2]
+    push 0xAAAA     ; ROS - high word for fsl
+    push 0x5555     ; NOS - low word for fsl
+    push 0          ; TOS - shift amount (0 = return high word)
+
+    ; depth=6
+    fsl             ; result = 0xAAAA (shift by 0, high word)
+
+    ; Expected: TOS=result(0xAAAA), NOS=0x3333, ROS=0x2222
+    push 0xAAAA     ; verify result
+    xor
+    failnez
+
+    push 0x3333
+    xor
+    failnez
+
+    push 0x2222     ; CRITICAL check
+    xor
+    failnez
+
+    push 0x1111
+    xor
+    failnez
+
     push 1
     halt
 

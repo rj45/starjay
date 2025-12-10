@@ -58,6 +58,36 @@ _check_stack:
     push 0xAAAA
     xor
     failnez
+
+    ; === Deep Stack Preservation Test ===
+    push 0x1111     ; will be stack_mem[0] (deepest)
+    push 0x2222     ; will be stack_mem[1] - CRITICAL VALUE
+    push 0x3333     ; will be stack_mem[2]
+    push 0x4444     ; will be ROS
+    push 0          ; NOS - condition (zero = branch taken for beqz)
+
+    beqz _deep_beqz_skip
+    push 0xBAD      ; skipped
+_deep_beqz_skip:
+    ; After depth=4
+    ; Expected: TOS=0x4444, NOS=0x3333, ROS=0x2222
+    ; Bug gives: TOS=0x4444, NOS=0x3333, ROS=0x3333 (duplicate!)
+
+    push 0x4444
+    xor
+    failnez         ; verify TOS
+
+    push 0x3333
+    xor
+    failnez         ; verify NOS
+
+    push 0x2222
+    xor
+    failnez         ; CRITICAL: verify ROS came from stack_mem[1], not stack_mem[2]
+
+    push 0x1111
+    xor
+    failnez         ; verify bottom
     ; All passed
     push 1
     halt

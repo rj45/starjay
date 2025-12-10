@@ -212,7 +212,7 @@ pub const Cpu = struct {
         return @subWithOverflow(value ^ m, m)[0];
     }
 
-    pub fn run(self: *Cpu, cycles: usize) !void {
+    pub fn run(self: *Cpu, cycles: usize) !usize {
         const progMem: [*]u8 = @ptrCast(self.memory);
         var cycle: usize = 0;
 
@@ -700,6 +700,8 @@ pub const Cpu = struct {
         self.stack[@subWithOverflow(self.csr.depth, 1)[0] & STACK_MASK] = tos;
         self.stack[@subWithOverflow(self.csr.depth, 2)[0] & STACK_MASK] = nos;
         self.stack[@subWithOverflow(self.csr.depth, 3)[0] & STACK_MASK] = ros;
+
+        return cycle;
     }
 
     pub fn loadRom(self: *Cpu, rom_file: []const u8) !void {
@@ -723,7 +725,19 @@ pub fn run(rom_file: []const u8, max_cycles: usize, gpa: std.mem.Allocator) !Wor
 
     var cpu = Cpu.init(memory);
     try cpu.loadRom(rom_file);
-    try cpu.run(max_cycles);
+
+    const start = try std.time.Instant.now();
+    const cycles = try cpu.run(max_cycles);
+    const elapsed = (try std.time.Instant.now()).since(start);
+    const cycles_per_sec = if (elapsed > 0)
+        @as(f64, @floatFromInt(cycles)) / (@as(f64, @floatFromInt(elapsed)) / 1_000_000_000.0)
+    else
+        0.0;
+    std.debug.print("Execution completed in {d} cycles, elapsed time: {d} ms, {d:.2} cycles/sec\n", .{
+        cycles,
+        elapsed / 1_000_000,
+        cycles_per_sec,
+    });
 
     return try cpu.pop();
 }
@@ -991,5 +1005,10 @@ test "sub instruction" {
 
 test "xor instruction" {
     const value = try runTest("starj/tests/xor.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "call deep instruction" {
+    const value = try runTest("starj/tests/call_deep.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }

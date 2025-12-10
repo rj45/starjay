@@ -56,6 +56,36 @@
     xor
     failnez
 
+    ; === Deep Stack Preservation Test ===
+    ; Verify select correctly preserves stack_mem values when depth >= 5
+    push 0x1111     ; will be stack_mem[0] (deepest)
+    push 0x2222     ; will be stack_mem[1] - CRITICAL VALUE
+    push 0x3333     ; will be stack_mem[2]
+    push 0xFFFF     ; ROS - false value for select
+    push 0xEEEE     ; NOS - true value for select
+    push 1          ; TOS - condition (true)
+
+    ; depth=6
+    select          ; result = 0xEEEE (true branch)
+
+    ; After depth=4
+    ; Expected: TOS=result(0xEEEE), NOS=0x3333, ROS=0x2222
+    push 0xEEEE     ; verify result
+    xor
+    failnez
+
+    push 0x3333
+    xor
+    failnez
+
+    push 0x2222     ; CRITICAL check
+    xor
+    failnez
+
+    push 0x1111
+    xor
+    failnez
+
     push 1
     halt
 

@@ -23,12 +23,9 @@
 
 ; Number of iterations for benchmarking
 ; Each iteration re-runs the entire sieve algorithm
-#const ITERATIONS = 1
+#const ITERATIONS = 10
 
 main:
-
-    jump .iter_done
-
     ; Outer iteration loop - run sieve ITERATIONS times
     push ITERATIONS          ; iteration counter
 
@@ -39,31 +36,14 @@ main:
 
     sub 1                    ; [iter-1]
 
-    ; Check that the `depth` csr works as expected
-    ; Note: the CSR number is pushed on the stack when the depth register is read so there's
-    ; two items on the stack not the expected one.
-    ; push depth               ; [iter, depth]
-    ; sub 2                    ; [iter, depth-2]
-    ; failnez                  ; fail here if not 0
-
     ; Run one iteration of the sieve
     call sieve               ; [iter, count]
-
-    ; Check that the `sieve` function didn't leave garbage on the stack
-    ; push depth               ; [iter, count, depth]
-    ; sub 3                    ; [iter, count, depth-3]
-    ; failnez                  ; fail here if not 0
 
     drop                     ; [iter] - discard the count
     jump .iter_loop
 
 .iter_done:
     drop                     ; drop iter counter (which is 0)
-
-    ; Run one final time to get and return the result
-    call sieve               ; [count]
-
-    drop
 
     call sieve
 

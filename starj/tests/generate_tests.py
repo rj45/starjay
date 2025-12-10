@@ -123,6 +123,36 @@ _check_stack:
     push 0xAAAA
     xor
     failnez
+
+    ; === Deep Stack Preservation Test ===
+    push 0x1111     ; will be stack_mem[0] (deepest)
+    push 0x2222     ; will be stack_mem[1] - CRITICAL VALUE
+    push 0x3333     ; will be stack_mem[2]
+    push 0x4444     ; will be ROS
+    push 0          ; NOS - condition (zero = branch taken for beqz)
+
+    beqz _deep_beqz_skip
+    push 0xBAD      ; skipped
+_deep_beqz_skip:
+    ; After depth=4
+    ; Expected: TOS=0x4444, NOS=0x3333, ROS=0x2222
+    ; Bug gives: TOS=0x4444, NOS=0x3333, ROS=0x3333 (duplicate!)
+
+    push 0x4444
+    xor
+    failnez         ; verify TOS
+
+    push 0x3333
+    xor
+    failnez         ; verify NOS
+
+    push 0x2222
+    xor
+    failnez         ; CRITICAL: verify ROS came from stack_mem[1], not stack_mem[2]
+
+    push 0x1111
+    xor
+    failnez         ; verify bottom
 """ + test_epilogue())
 
     # bnez - comprehensive test
@@ -186,6 +216,41 @@ _check_stack:
     push 0xBBBB
     xor
     failnez
+
+    ; === Deep Stack Preservation Test ===
+    push 0x1111     ; will be stack_mem[0] (deepest)
+    push 0x2222     ; will be stack_mem[1] - CRITICAL VALUE
+    push 0x3333     ; will be stack_mem[2]
+    push 0x4444     ; will be ROS
+    push 0          ; NOS - condition (zero = branch NOT taken for bnez)
+
+    bnez _deep_bnez_never    ; not taken since NOS=0
+
+    ; After depth=4
+    ; Expected: TOS=0x4444, NOS=0x3333, ROS=0x2222
+    push 0x4444
+    xor
+    failnez
+
+    push 0x3333
+    xor
+    failnez
+
+    push 0x2222     ; CRITICAL check
+    xor
+    failnez
+
+    push 0x1111
+    xor
+    failnez
+
+    jump _deep_bnez_done
+
+_deep_bnez_never:
+    push 0
+    halt
+
+_deep_bnez_done:
 """ + test_epilogue())
 
 
@@ -611,6 +676,35 @@ def generate_fsl_test():
     xor
     failnez
 
+    ; === Deep Stack Preservation Test ===
+    ; Verify fsl correctly preserves stack_mem values when depth >= 5
+    push 0x1111     ; will be stack_mem[0] (deepest)
+    push 0x2222     ; will be stack_mem[1] - CRITICAL VALUE
+    push 0x3333     ; will be stack_mem[2]
+    push 0xAAAA     ; ROS - high word for fsl
+    push 0x5555     ; NOS - low word for fsl
+    push 0          ; TOS - shift amount (0 = return high word)
+
+    ; depth=6
+    fsl             ; result = 0xAAAA (shift by 0, high word)
+
+    ; Expected: TOS=result(0xAAAA), NOS=0x3333, ROS=0x2222
+    push 0xAAAA     ; verify result
+    xor
+    failnez
+
+    push 0x3333
+    xor
+    failnez
+
+    push 0x2222     ; CRITICAL check
+    xor
+    failnez
+
+    push 0x1111
+    xor
+    failnez
+
     push 1
     halt
 
@@ -676,6 +770,36 @@ def generate_select_test():
     push 0      ; tos (false) -> ros
     select
     push 0
+    xor
+    failnez
+
+    ; === Deep Stack Preservation Test ===
+    ; Verify select correctly preserves stack_mem values when depth >= 5
+    push 0x1111     ; will be stack_mem[0] (deepest)
+    push 0x2222     ; will be stack_mem[1] - CRITICAL VALUE
+    push 0x3333     ; will be stack_mem[2]
+    push 0xFFFF     ; ROS - false value for select
+    push 0xEEEE     ; NOS - true value for select
+    push 1          ; TOS - condition (true)
+
+    ; depth=6
+    select          ; result = 0xEEEE (true branch)
+
+    ; After depth=4
+    ; Expected: TOS=result(0xEEEE), NOS=0x3333, ROS=0x2222
+    push 0xEEEE     ; verify result
+    xor
+    failnez
+
+    push 0x3333
+    xor
+    failnez
+
+    push 0x2222     ; CRITICAL check
+    xor
+    failnez
+
+    push 0x1111
     xor
     failnez
 
@@ -831,6 +955,47 @@ def generate_memory_tests():
     xor
     failnez
 
+    ; === Deep Stack Preservation Test ===
+    ; Verify sw correctly preserves stack_mem values when depth >= 5
+    push 0x1111     ; will be stack_mem[0] (deepest)
+    push 0x2222     ; will be stack_mem[1] - CRITICAL VALUE
+    push 0x3333     ; will be stack_mem[2]
+    push 0x4444     ; will be ROS
+    push 0xABCD     ; NOS - value to store
+    push fp
+    push -8
+    add             ; TOS - address (fp-8)
+
+    ; depth=6: after all pushes and computing address
+    sw              ; mem[fp-8] = 0xABCD
+
+    ; After depth=4
+    ; Expected: TOS=0x4444, NOS=0x3333, ROS=0x2222
+    push 0x4444
+    xor
+    failnez
+
+    push 0x3333
+    xor
+    failnez
+
+    push 0x2222     ; CRITICAL check
+    xor
+    failnez
+
+    push 0x1111
+    xor
+    failnez
+
+    ; Verify the store actually worked
+    push fp
+    push -8
+    add
+    lw
+    push 0xABCD
+    xor
+    failnez
+
     push 1
     halt
 
@@ -916,6 +1081,47 @@ _fail:
     xor
     failnez
 
+    ; === Deep Stack Preservation Test ===
+    ; Verify sb correctly preserves stack_mem values when depth >= 5
+    push 0x1111     ; will be stack_mem[0] (deepest)
+    push 0x2222     ; will be stack_mem[1] - CRITICAL VALUE
+    push 0x3333     ; will be stack_mem[2]
+    push 0x4444     ; will be ROS
+    push 0x55       ; NOS - byte value to store
+    push fp
+    push -5
+    add             ; TOS - address (fp-5)
+
+    ; depth=6
+    sb              ; mem[fp-5] = 0x55, dec2
+
+    ; After depth=4
+    ; Expected: TOS=0x4444, NOS=0x3333, ROS=0x2222
+    push 0x4444
+    xor
+    failnez
+
+    push 0x3333
+    xor
+    failnez
+
+    push 0x2222     ; CRITICAL check
+    xor
+    failnez
+
+    push 0x1111
+    xor
+    failnez
+
+    ; Verify the store worked
+    push fp
+    push -5
+    add
+    lb
+    push 0x55
+    xor
+    failnez
+
     push 1
     halt
 
@@ -960,6 +1166,47 @@ _fail:
     lh
 
     push -1234
+    xor
+    failnez
+
+    ; === Deep Stack Preservation Test ===
+    ; Verify sh correctly preserves stack_mem values when depth >= 5
+    push 0x1111     ; will be stack_mem[0] (deepest)
+    push 0x2222     ; will be stack_mem[1] - CRITICAL VALUE
+    push 0x3333     ; will be stack_mem[2]
+    push 0x4444     ; will be ROS
+    push 0x5678     ; NOS - halfword value to store
+    push fp
+    push -6
+    add             ; TOS - address (fp-6)
+
+    ; depth=6
+    sh              ; mem[fp-6] = 0x5678, dec2
+
+    ; After depth=4
+    ; Expected: TOS=0x4444, NOS=0x3333, ROS=0x2222
+    push 0x4444
+    xor
+    failnez
+
+    push 0x3333
+    xor
+    failnez
+
+    push 0x2222     ; CRITICAL check
+    xor
+    failnez
+
+    push 0x1111
+    xor
+    failnez
+
+    ; Verify the store worked
+    push fp
+    push -6
+    add
+    lh
+    push 0x5678
     xor
     failnez
 
@@ -1081,6 +1328,47 @@ _test_func:
 _fail:
     push 0
     halt
+""")
+
+    # Test call/ret with deep stack preservation (mimics sieve pattern)
+    write_test("tests/call_deep.asm", """; Test call/ret with deep stack preservation
+    ; Mimics a corruption pattern where a value pushed before
+    ; a call gets corrupted by operations inside the function
+
+    push 0xDEAD     ; sentinel that should survive the call
+
+    call _work_func
+
+    drop            ; drop return value
+
+    push 0xDEAD     ; verify sentinel survived
+    xor
+    failnez
+
+    push 1
+    halt
+
+_work_func:
+    ; Do operations that exercise deep stack
+    push 0x1111
+    push 0x2222
+    push 0x3333
+    push 0x4444
+    push 1          ; condition for bnez (non-zero)
+
+    ; depth is now 6 relative to entry (sentinel + these 6 pushes)
+    bnez _wskip
+    push 0xBAD
+_wskip:
+
+    ; Clean up
+    drop
+    drop
+    drop
+    drop
+
+    push 42         ; return value
+    ret ra
 """)
 
     # Test callp (call function pointer)
@@ -1335,6 +1623,43 @@ def generate_local_tests():
     push 8
     add fp
     drop            ; drop saved fp (we restored manually)
+
+    ; === Deep Stack Preservation Test ===
+    ; Verify slw correctly preserves stack_mem values when depth >= 5
+    push 0x1111     ; will be stack_mem[0] (deepest)
+    push 0x2222     ; will be stack_mem[1] - CRITICAL VALUE
+    push 0x3333     ; will be stack_mem[2]
+    push 0x4444     ; will be ROS
+    push 0xBEEF     ; NOS - value to store
+    push -10        ; TOS - offset for slw (relative to fp)
+
+    ; depth=6
+    slw             ; mem[fp-10] = 0xBEEF, dec2
+
+    ; After depth=4
+    ; Expected: TOS=0x4444, NOS=0x3333, ROS=0x2222
+    push 0x4444
+    xor
+    failnez
+
+    push 0x3333
+    xor
+    failnez
+
+    push 0x2222     ; CRITICAL check
+    xor
+    failnez
+
+    push 0x1111
+    xor
+    failnez
+
+    ; Verify the store worked
+    push -10
+    llw
+    push 0xBEEF
+    xor
+    failnez
 """+test_epilogue())
 
 

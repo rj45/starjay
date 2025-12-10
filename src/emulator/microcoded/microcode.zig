@@ -1508,8 +1508,10 @@ pub const Busses = struct {
     // CSR read data
     csr_data: Word,
 
-    // Stack memory read (for depth > 3)
-    stack_mem_read: Word,
+    // Stack memory reads (for depth > 3)
+    // For dec2 operations, NOS and ROS need different stack_mem values
+    stack_mem_read_nos: Word, // For NOS: stack_mem[depth-4]
+    stack_mem_read_ros: Word, // For ROS: stack_mem[depth-5]
 
     // Branch condition evaluation
     branch_taken: bool,
@@ -1668,10 +1670,17 @@ pub fn computeBusses(cpu: *const CpuState, uop: MicroOp, instr: u8, trap: bool, 
     b.csr_data = cpu.readCsr(cpu.tos);
 
     // ========================================
-    // Stack memory read (for spills/fills when depth > 3)
+    // Stack memory reads (for spills/fills when depth > 3)
     // ========================================
-    b.stack_mem_read = if (cpu.depth >= 4)
+    // For dec operations, NOS gets stack_mem[depth-4]
+    // For dec2 operations, ROS needs stack_mem[depth-5] (one deeper)
+    b.stack_mem_read_nos = if (cpu.depth >= 4)
         cpu.readStackMem(@intCast(cpu.depth - 4))
+    else
+        0;
+
+    b.stack_mem_read_ros = if (cpu.depth >= 5)
+        cpu.readStackMem(@intCast(cpu.depth - 5))
     else
         0;
 
@@ -1707,29 +1716,36 @@ pub fn computeBusses(cpu: *const CpuState, uop: MicroOp, instr: u8, trap: bool, 
     // ========================================
 
     // TOS input mux
+    // TOS uses stack_mem_read_nos (same index as NOS would use)
     b.next_tos = switch (uop.tos_src) {
         .hold => cpu.tos,
         .result => b.result,
         .nos => cpu.nos,
         .ros => cpu.ros,
-        .stack_mem => b.stack_mem_read,
+        .stack_mem => b.stack_mem_read_nos,
         .mem_data => b.mem_read_data,
     };
 
     // NOS input mux
+    // NOS reads from stack_mem[depth-4]
     b.next_nos = switch (uop.nos_src) {
         .hold => cpu.nos,
         .tos => cpu.tos,
         .ros => cpu.ros,
-        .stack_mem => b.stack_mem_read,
+        .stack_mem => b.stack_mem_read_nos,
     };
 
     // ROS input mux
+    // For dec2 operations: ROS reads from stack_mem[depth-5]
+    // For dec operations: ROS reads from stack_mem[depth-4] (same index as NOS in dec2)
     b.next_ros = switch (uop.ros_src) {
         .hold => cpu.ros,
         .nos => cpu.nos,
         .tos => cpu.tos,
-        .stack_mem => b.stack_mem_read,
+        .stack_mem => switch (uop.depth_op) {
+            .dec2, .dec3 => b.stack_mem_read_ros,
+            else => b.stack_mem_read_nos,
+        },
     };
 
     // Depth calculation
@@ -2130,7 +2146,19 @@ pub fn run(rom_file: []const u8, max_cycles: usize, gpa: std.mem.Allocator) !Wor
     };
 
     try cpu.loadRom(rom_file);
-    _ = cpu.run(max_cycles);
+
+    const start = try std.time.Instant.now();
+    const cycles = cpu.run(max_cycles);
+    const elapsed = (try std.time.Instant.now()).since(start);
+    const cycles_per_sec = if (elapsed > 0)
+        @as(f64, @floatFromInt(cycles)) / (@as(f64, @floatFromInt(elapsed)) / 1_000_000_000.0)
+    else
+        0.0;
+    std.debug.print("Execution completed in {d} cycles, elapsed time: {d} ms, {d:.2} cycles/sec\n", .{
+        cycles,
+        elapsed / 1_000_000,
+        cycles_per_sec,
+    });
 
     return cpu.tos;
 }
@@ -2414,5 +2442,10 @@ test "sub instruction" {
 
 test "xor instruction" {
     const value = try runTest("starj/tests/xor.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "call deep instruction" {
+    const value = try runTest("starj/tests/call_deep.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
