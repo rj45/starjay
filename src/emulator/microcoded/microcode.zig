@@ -203,7 +203,8 @@ pub const ECause = enum(u3) {
     stack_overflow = 5,
     div_by_zero = 6,
 
-    /// Convert to full 8-bit ecause value
+    /// Convert to full 8-bit ecause value.
+    /// Upper nibble encodes exception class: 0x0=syscall, 0x1=illegal, 0x3=stack, 0x4=arith, 0x5=irq
     pub fn toU8(self: ECause) u8 {
         return switch (self) {
             .none => 0x00,
@@ -1158,6 +1159,7 @@ pub inline fn executeMicroOp(cpu: *CpuState, uop: MicroOp, instr: u8, trap: bool
                 .double_word => 2 * WORDSIZE - 1,
             };
             const masked_tos = r.tos & shift_mask;
+            // neg_tos implements right-shift via left-shift of complementary amount
             const fsl_shift: Word = switch (uop.fsl_shift) {
                 .tos => masked_tos,
                 .neg_tos => (WORDSIZE -% masked_tos) & (2 * WORDSIZE - 1),
@@ -1191,6 +1193,7 @@ pub inline fn executeMicroOp(cpu: *CpuState, uop: MicroOp, instr: u8, trap: bool
         }
     }
 
+    // TOS/NOS/ROS are top 3 in registers; on push, spill ROS to its memory position
     if (uop.depth_op == .inc and r.depth >= 3) {
         cpu.writeStackMem(@intCast(r.depth -% 3), r.ros);
     }
@@ -1231,6 +1234,7 @@ pub inline fn executeMicroOp(cpu: *CpuState, uop: MicroOp, instr: u8, trap: bool
         .hold => r.ros,
         .nos => r.nos,
         .tos => r.tos,
+        // When popping 2+ elements, ROS reads one deeper since multiple slots freed
         .stack_mem => switch (uop.depth_op) {
             .dec2, .dec3 => cpu.readStackMem(@intCast(r.depth -% 5)),
             else => cpu.readStackMem(@intCast(r.depth -% 4)),
@@ -1427,6 +1431,7 @@ pub inline fn step(cpu: *CpuState, irq: bool, irq_num: u4) void {
 
     const interrupt: bool = irq and cpu.reg.status.ie;
     const underflow: bool = cpu.reg.depth < fetched_uop.min_depth;
+    // Check post-instruction km (e.g. rets restores estatus.km) to apply correct depth limit
     const dest_km: bool = if (fetched_uop.km_src == .estatus) cpu.reg.estatus.km else cpu.reg.status.km;
     const max_depth: Word = if (dest_km) KERNEL_MAX_DEPTH else USER_MAX_DEPTH;
     const overflow: bool = cpu.reg.depth > max_depth;
@@ -1448,6 +1453,7 @@ pub inline fn step(cpu: *CpuState, irq: bool, irq_num: u4) void {
     else
         ECause.interrupt(irq_num);
 
+    // All traps reuse syscall's microcode: saves state, sets km, clears ie, jumps to evec
     const uop = if (trap) microcode_rom[@intFromEnum(Opcode.syscall)] else fetched_uop;
 
     if (cpu.log_enabled) {
