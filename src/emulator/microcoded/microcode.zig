@@ -288,7 +288,7 @@ pub const ExceptionCheck = enum(u2) {
 // ============================================================================
 
 /// Which registers to write this cycle
-pub const WriteEnables = packed struct(u16) {
+pub const WriteEnables = packed struct(u9) {
     fp: bool = false, // for pop fp, add fp - input is result bus
     ra: bool = false, // for pop ra, add ra, call/callp - input is result bus
     ar: bool = false, // for pop ar, add ar - input is result bus
@@ -297,7 +297,7 @@ pub const WriteEnables = packed struct(u16) {
     estatus: bool = false, // exception entry - input is status
     ecause: bool = false, // exception entry - input is ecause_value (from microcode or trap)
     halt: bool = false, // halt instruction - sets halted flip-flop
-    _padding: u8 = 0,
+    th: bool = false, // for setting th bit (not commonly changed)
 };
 
 // ============================================================================
@@ -382,7 +382,6 @@ pub const MicroOp = struct {
     // Status register bit controls (active when no exception)
     km_src: KmSrc = .hold,
     ie_src: IeSrc = .hold,
-    th_src: ThSrc = .hold,
 
     // Exception detection
     exception_check: ExceptionCheck = .none,
@@ -396,7 +395,7 @@ pub const MicroOp = struct {
     // 1 = needs valid TOS
     // 2 = needs valid TOS and NOS
     // 3 = needs valid TOS, NOS, and ROS
-    min_depth_required: u2 = 0,
+    min_depth: u2 = 0,
 };
 
 // ============================================================================
@@ -404,7 +403,7 @@ pub const MicroOp = struct {
 // ============================================================================
 
 /// Opcode extraction from instruction byte
-pub const Opcode = enum(u6) {
+pub const Opcode = enum(u7) {
     // Basic ops (0x00-0x0F)
     halt = 0x00,
     reserved_01 = 0x01,
@@ -478,6 +477,9 @@ pub const Opcode = enum(u6) {
     ext_reserved_3D = 0x3D,
     ext_reserved_3E = 0x3E,
     ext_reserved_3F = 0x3F,
+
+    push = 0x40, // push immediate (special case, not in 6-bit opcode space)
+    shi = 0x41, // shift immediate (special case, not in 6-bit opcode space)
 };
 
 /// Generate microcode for a single instruction
@@ -486,6 +488,24 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
         // ================================================================
         // Basic Instructions (must be in hardware)
         // ================================================================
+
+        .push => .{
+            .result_src = .imm_sext6,
+            .tos_src = .result,
+            .nos_src = .tos,
+            .ros_src = .nos,
+            .depth_op = .inc,
+            .min_depth = 0, // Just pushes immediate, no stack read
+        },
+
+        .shi => .{
+            .result_src = .alu_out,
+            .alu_op = .shl7_or,
+            .alu_a = .tos,
+            .alu_b = .imm7,
+            .tos_src = .result,
+            .min_depth = 1, // Reads TOS to shift
+        },
 
         .halt => .{
             // Halt CPU (when th=0), or trap (when th=1)
@@ -501,7 +521,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .writes = .{ .halt = true },
             .exception_check = .halt_trap,
             .ecause = 0x12, // For priority encoder when trap is taken
-            .min_depth_required = 0, // No stack access
+            .min_depth = 0, // No stack access
         },
 
         .reserved_01 => .{
@@ -511,7 +531,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .ie_src = .clear,
             .writes = .{ .epc = true, .estatus = true, .ecause = true },
             .ecause = 0x10,
-            .min_depth_required = 0, // No stack access
+            .min_depth = 0, // No stack access
         },
 
         .syscall => .{
@@ -529,7 +549,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .ie_src = .clear,
             .writes = .{ .epc = true, .estatus = true, .ecause = true },
             .ecause = 0x00, // Used when trap=0 (normal syscall)
-            .min_depth_required = 0, // No stack access
+            .min_depth = 0, // No stack access
         },
 
         .rets => .{
@@ -539,8 +559,8 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .pc_src = .epc,
             .km_src = .estatus,
             .ie_src = .estatus,
-            .th_src = .estatus,
-            .min_depth_required = 0, // No stack access
+            .writes = .{.th = true},
+            .min_depth = 0, // No stack access
         },
 
         .beqz => .{
@@ -551,7 +571,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .stack_mem,
             .ros_src = .stack_mem,
             .depth_op = .dec2,
-            .min_depth_required = 2, // Reads TOS (offset) and NOS (condition)
+            .min_depth = 2, // Reads TOS (offset) and NOS (condition)
         },
 
         .bnez => .{
@@ -562,14 +582,14 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .stack_mem,
             .ros_src = .stack_mem,
             .depth_op = .dec2,
-            .min_depth_required = 2, // Reads TOS (offset) and NOS (condition)
+            .min_depth = 2, // Reads TOS (offset) and NOS (condition)
         },
 
         .swap => .{
             // TOS <-> NOS
             .tos_src = .nos,
             .nos_src = .tos,
-            .min_depth_required = 2, // Reads both TOS and NOS
+            .min_depth = 2, // Reads both TOS and NOS
         },
 
         .over => .{
@@ -579,7 +599,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .tos,
             .ros_src = .nos,
             .depth_op = .inc,
-            .min_depth_required = 2, // Reads NOS to duplicate it
+            .min_depth = 2, // Reads NOS to duplicate it
         },
 
         .drop => .{
@@ -588,7 +608,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .ros,
             .ros_src = .stack_mem,
             .depth_op = .dec,
-            .min_depth_required = 1, // Need at least one item to drop
+            .min_depth = 1, // Need at least one item to drop
         },
 
         .dup => .{
@@ -597,7 +617,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .tos, // NOS gets old TOS
             .ros_src = .nos, // ROS gets old NOS
             .depth_op = .inc,
-            .min_depth_required = 1, // Reads TOS to duplicate it
+            .min_depth = 1, // Reads TOS to duplicate it
         },
 
         .ltu => .{
@@ -610,7 +630,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .ros,
             .ros_src = .stack_mem,
             .depth_op = .dec,
-            .min_depth_required = 2, // Binary op on TOS and NOS
+            .min_depth = 2, // Binary op on TOS and NOS
         },
 
         .lt => .{
@@ -623,7 +643,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .ros,
             .ros_src = .stack_mem,
             .depth_op = .dec,
-            .min_depth_required = 2, // Binary op on TOS and NOS
+            .min_depth = 2, // Binary op on TOS and NOS
         },
 
         .add => .{
@@ -636,7 +656,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .ros,
             .ros_src = .stack_mem,
             .depth_op = .dec,
-            .min_depth_required = 2, // Binary op on TOS and NOS
+            .min_depth = 2, // Binary op on TOS and NOS
         },
 
         .and_op => .{
@@ -649,7 +669,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .ros,
             .ros_src = .stack_mem,
             .depth_op = .dec,
-            .min_depth_required = 2, // Binary op on TOS and NOS
+            .min_depth = 2, // Binary op on TOS and NOS
         },
 
         .xor_op => .{
@@ -662,7 +682,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .ros,
             .ros_src = .stack_mem,
             .depth_op = .dec,
-            .min_depth_required = 2, // Binary op on TOS and NOS
+            .min_depth = 2, // Binary op on TOS and NOS
         },
 
         .fsl => .{
@@ -677,7 +697,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .stack_mem,
             .ros_src = .stack_mem,
             .depth_op = .dec2,
-            .min_depth_required = 3, // Uses TOS, NOS, and ROS
+            .min_depth = 3, // Uses TOS, NOS, and ROS
         },
 
         // ================================================================
@@ -690,7 +710,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .tos,
             .ros_src = .nos,
             .depth_op = .inc,
-            .min_depth_required = 0, // Pushes from register, no stack read
+            .min_depth = 0, // Pushes from register, no stack read
         },
 
         .push_fp => .{
@@ -699,7 +719,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .tos,
             .ros_src = .nos,
             .depth_op = .inc,
-            .min_depth_required = 0, // Pushes from register, no stack read
+            .min_depth = 0, // Pushes from register, no stack read
         },
 
         .push_ra => .{
@@ -708,7 +728,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .tos,
             .ros_src = .nos,
             .depth_op = .inc,
-            .min_depth_required = 0, // Pushes from register, no stack read
+            .min_depth = 0, // Pushes from register, no stack read
         },
 
         .push_ar => .{
@@ -717,7 +737,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .tos,
             .ros_src = .nos,
             .depth_op = .inc,
-            .min_depth_required = 0, // Pushes from register, no stack read
+            .min_depth = 0, // Pushes from register, no stack read
         },
 
         .pop_pc => .{
@@ -727,7 +747,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .ros,
             .ros_src = .stack_mem,
             .depth_op = .dec,
-            .min_depth_required = 1, // Reads TOS for jump target
+            .min_depth = 1, // Reads TOS for jump target
         },
 
         .pop_fp => .{
@@ -737,7 +757,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .ros,
             .ros_src = .stack_mem,
             .depth_op = .dec,
-            .min_depth_required = 1, // Reads TOS
+            .min_depth = 1, // Reads TOS
         },
 
         .pop_ra => .{
@@ -747,7 +767,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .ros,
             .ros_src = .stack_mem,
             .depth_op = .dec,
-            .min_depth_required = 1, // Reads TOS
+            .min_depth = 1, // Reads TOS
         },
 
         .pop_ar => .{
@@ -757,7 +777,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .ros,
             .ros_src = .stack_mem,
             .depth_op = .dec,
-            .min_depth_required = 1, // Reads TOS
+            .min_depth = 1, // Reads TOS
         },
 
         .jump => .{
@@ -767,7 +787,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .ros,
             .ros_src = .stack_mem,
             .depth_op = .dec,
-            .min_depth_required = 1, // Reads TOS for offset
+            .min_depth = 1, // Reads TOS for offset
         },
 
         .add_fp => .{
@@ -781,7 +801,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .ros,
             .ros_src = .stack_mem,
             .depth_op = .dec,
-            .min_depth_required = 1, // Reads TOS
+            .min_depth = 1, // Reads TOS
         },
 
         .add_ra => .{
@@ -795,7 +815,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .ros,
             .ros_src = .stack_mem,
             .depth_op = .dec,
-            .min_depth_required = 1, // Reads TOS
+            .min_depth = 1, // Reads TOS
         },
 
         .add_ar => .{
@@ -809,7 +829,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .ros,
             .ros_src = .stack_mem,
             .depth_op = .dec,
-            .min_depth_required = 1, // Reads TOS
+            .min_depth = 1, // Reads TOS
         },
 
         .pushcsr => .{
@@ -818,7 +838,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .csr_op = .read,
             .tos_src = .result,
             // No depth change - TOS is replaced, not pushed
-            .min_depth_required = 1, // Reads TOS for CSR index
+            .min_depth = 1, // Reads TOS for CSR index
         },
 
         .popcsr => .{
@@ -829,7 +849,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .stack_mem,
             .ros_src = .stack_mem,
             .depth_op = .dec2,
-            .min_depth_required = 2, // Reads TOS (index) and NOS (value)
+            .min_depth = 2, // Reads TOS (index) and NOS (value)
         },
 
         .llw => .{
@@ -839,7 +859,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .result_src = .mem_data,
             .tos_src = .result,
             // TOS replaced, no depth change
-            .min_depth_required = 1, // Reads TOS for offset
+            .min_depth = 1, // Reads TOS for offset
         },
 
         .slw => .{
@@ -851,7 +871,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .stack_mem,
             .ros_src = .stack_mem,
             .depth_op = .dec2,
-            .min_depth_required = 2, // Reads TOS (offset) and NOS (value)
+            .min_depth = 2, // Reads TOS (offset) and NOS (value)
         },
 
         // ================================================================
@@ -877,7 +897,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .depth_op = .dec,
             .exception_check = .div_zero,
             .ecause = 0x40, // For priority encoder when trap is taken
-            .min_depth_required = 2, // Binary op on TOS and NOS
+            .min_depth = 2, // Binary op on TOS and NOS
         },
 
         .divu => .{
@@ -893,7 +913,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .depth_op = .dec,
             .exception_check = .div_zero,
             .ecause = 0x40, // For priority encoder when trap is taken
-            .min_depth_required = 2, // Binary op on TOS and NOS
+            .min_depth = 2, // Binary op on TOS and NOS
         },
 
         .mod => .{
@@ -909,7 +929,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .depth_op = .dec,
             .exception_check = .div_zero,
             .ecause = 0x40, // For priority encoder when trap is taken
-            .min_depth_required = 2, // Binary op on TOS and NOS
+            .min_depth = 2, // Binary op on TOS and NOS
         },
 
         .modu => .{
@@ -925,7 +945,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .depth_op = .dec,
             .exception_check = .div_zero,
             .ecause = 0x40, // For priority encoder when trap is taken
-            .min_depth_required = 2, // Binary op on TOS and NOS
+            .min_depth = 2, // Binary op on TOS and NOS
         },
 
         .mul => .{
@@ -937,7 +957,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .ros,
             .ros_src = .stack_mem,
             .depth_op = .dec,
-            .min_depth_required = 2, // Binary op on TOS and NOS
+            .min_depth = 2, // Binary op on TOS and NOS
         },
 
         .mulh => .{
@@ -949,7 +969,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .ros,
             .ros_src = .stack_mem,
             .depth_op = .dec,
-            .min_depth_required = 2, // Binary op on TOS and NOS
+            .min_depth = 2, // Binary op on TOS and NOS
         },
 
         .select => .{
@@ -962,7 +982,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .stack_mem,
             .ros_src = .stack_mem,
             .depth_op = .dec2,
-            .min_depth_required = 3, // Uses TOS (cond), NOS (true), ROS (false)
+            .min_depth = 3, // Uses TOS (cond), NOS (true), ROS (false)
         },
 
         .rot => .{
@@ -970,7 +990,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .tos_src = .nos,
             .nos_src = .ros,
             .ros_src = .tos,
-            .min_depth_required = 3, // Accesses all three: TOS, NOS, ROS
+            .min_depth = 3, // Accesses all three: TOS, NOS, ROS
         },
 
         .srl => .{
@@ -984,7 +1004,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .ros,
             .ros_src = .stack_mem,
             .depth_op = .dec,
-            .min_depth_required = 2, // Binary shift: NOS >> TOS
+            .min_depth = 2, // Binary shift: NOS >> TOS
         },
 
         .sra => .{
@@ -998,7 +1018,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .ros,
             .ros_src = .stack_mem,
             .depth_op = .dec,
-            .min_depth_required = 2, // Binary shift: NOS >> TOS
+            .min_depth = 2, // Binary shift: NOS >> TOS
         },
 
         .sll => .{
@@ -1012,7 +1032,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .ros,
             .ros_src = .stack_mem,
             .depth_op = .dec,
-            .min_depth_required = 2, // Binary shift: NOS << TOS
+            .min_depth = 2, // Binary shift: NOS << TOS
         },
 
         .or_op => .{
@@ -1024,7 +1044,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .ros,
             .ros_src = .stack_mem,
             .depth_op = .dec,
-            .min_depth_required = 2, // Binary op on TOS and NOS
+            .min_depth = 2, // Binary op on TOS and NOS
         },
 
         .sub => .{
@@ -1036,7 +1056,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .ros,
             .ros_src = .stack_mem,
             .depth_op = .dec,
-            .min_depth_required = 2, // Binary op on TOS and NOS
+            .min_depth = 2, // Binary op on TOS and NOS
         },
 
         // Reserved extended ALU ops - trap as illegal instruction
@@ -1046,7 +1066,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .ie_src = .clear,
             .writes = .{ .epc = true, .estatus = true, .ecause = true },
             .ecause = 0x10,
-            .min_depth_required = 0, // Illegal instruction, no stack access
+            .min_depth = 0, // Illegal instruction, no stack access
         },
 
         // ================================================================
@@ -1059,7 +1079,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .mem_addr = .tos,
             .result_src = .mem_data,
             .tos_src = .result,
-            .min_depth_required = 1, // Reads TOS for address
+            .min_depth = 1, // Reads TOS for address
         },
 
         .sb => .{
@@ -1071,7 +1091,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .stack_mem,
             .ros_src = .stack_mem,
             .depth_op = .dec2,
-            .min_depth_required = 2, // Reads TOS (addr) and NOS (value)
+            .min_depth = 2, // Reads TOS (addr) and NOS (value)
         },
 
         .lh => .{
@@ -1080,7 +1100,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .mem_addr = .tos,
             .result_src = .mem_data,
             .tos_src = .result,
-            .min_depth_required = 1, // Reads TOS for address
+            .min_depth = 1, // Reads TOS for address
         },
 
         .sh => .{
@@ -1092,7 +1112,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .stack_mem,
             .ros_src = .stack_mem,
             .depth_op = .dec2,
-            .min_depth_required = 2, // Reads TOS (addr) and NOS (value)
+            .min_depth = 2, // Reads TOS (addr) and NOS (value)
         },
 
         .lw => .{
@@ -1101,7 +1121,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .mem_addr = .tos,
             .result_src = .mem_data,
             .tos_src = .result,
-            .min_depth_required = 1, // Reads TOS for address
+            .min_depth = 1, // Reads TOS for address
         },
 
         .sw => .{
@@ -1113,7 +1133,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .stack_mem,
             .ros_src = .stack_mem,
             .depth_op = .dec2,
-            .min_depth_required = 2, // Reads TOS (addr) and NOS (value)
+            .min_depth = 2, // Reads TOS (addr) and NOS (value)
         },
 
         .lnw => .{
@@ -1131,7 +1151,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .tos,
             .ros_src = .nos,
             .depth_op = .inc,
-            .min_depth_required = 0, // Reads from AR register, no stack read
+            .min_depth = 0, // Reads from AR register, no stack read
         },
 
         .snw => .{
@@ -1150,7 +1170,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .ros,
             .ros_src = .stack_mem,
             .depth_op = .dec,
-            .min_depth_required = 1, // Reads TOS for value to store
+            .min_depth = 1, // Reads TOS for value to store
         },
 
         // ================================================================
@@ -1166,7 +1186,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .ros,
             .ros_src = .stack_mem,
             .depth_op = .dec,
-            .min_depth_required = 1, // Reads TOS for target offset
+            .min_depth = 1, // Reads TOS for target offset
         },
 
         .callp => .{
@@ -1178,7 +1198,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .nos_src = .ros,
             .ros_src = .stack_mem,
             .depth_op = .dec,
-            .min_depth_required = 1, // Reads TOS for absolute target
+            .min_depth = 1, // Reads TOS for absolute target
         },
 
         // Reserved control ops - trap as illegal instruction
@@ -1188,57 +1208,25 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .ie_src = .clear,
             .writes = .{ .epc = true, .estatus = true, .ecause = true },
             .ecause = 0x10,
-            .min_depth_required = 0, // Illegal instruction, no stack access
+            .min_depth = 0, // Illegal instruction, no stack access
         },
     };
 }
 
-/// Generate microcode for push immediate instruction
-fn generatePushImm() MicroOp {
-    return .{
-        .result_src = .imm_sext6,
-        .tos_src = .result,
-        .nos_src = .tos,
-        .ros_src = .nos,
-        .depth_op = .inc,
-        .min_depth_required = 0, // Just pushes immediate, no stack read
-    };
-}
-
-/// Generate microcode for shift-immediate (shi) instruction
-fn generateShi() MicroOp {
-    return .{
-        .result_src = .alu_out,
-        .alu_op = .shl7_or,
-        .alu_a = .tos,
-        .alu_b = .imm7,
-        .tos_src = .result,
-        .min_depth_required = 1, // Reads TOS to shift
-    };
-}
-
 /// ROM has 256 entries (one per possible instruction byte)
-pub const MICROCODE_ROM_SIZE = 256;
+pub const MICROCODE_ROM_SIZE = 66;
 
 /// Generate the complete microcode ROM at compile time
 pub fn generateMicrocodeRom() [MICROCODE_ROM_SIZE]MicroOp {
     var rom: [MICROCODE_ROM_SIZE]MicroOp = undefined;
 
-    for (0..256) |i| {
-        const instr: u8 = @intCast(i);
-
-        if (instr & 0x80 != 0) {
-            // shi instruction (1xxxxxxx)
-            rom[i] = generateShi();
-        } else if (instr & 0xC0 == 0x40) {
-            // push immediate (01xxxxxx)
-            rom[i] = generatePushImm();
-        } else {
-            // O-format instruction (00xxxxxx)
-            const opcode: Opcode = @enumFromInt(instr & 0x3F);
-            rom[i] = generateMicrocode(opcode);
-        }
+    for (0..63) |i| {
+        // O-format instruction (00xxxxxx)
+        const opcode: Opcode = @enumFromInt(i & 0x3F);
+        rom[i] = generateMicrocode(opcode);
     }
+    rom[64] = generateMicrocode(.push); // push immediate (0x40)
+    rom[65] = generateMicrocode(.shi);  // shift immediate (0x41)
 
     return rom;
 }
@@ -1250,36 +1238,59 @@ pub const microcode_rom = generateMicrocodeRom();
 // Emulator Execution Engine
 // ============================================================================
 
-pub const CpuState = struct {
-    // Main registers
+/// Core registers that are frequently accessed during instruction execution.
+/// Separating these into a struct improves cache locality and makes it easier
+/// to snapshot/restore register state.
+pub const Regs = struct {
+    // Program counter
     pc: Word = 0,
-    ra: Word = 0,
-    ar: Word = 0,
+
+    // General purpose registers
+    ra: Word = 0, // Return address
+    ar: Word = 0, // Address register
 
     // Frame pointer registers (physical)
     // The "fp" and "afp" seen by software are mux outputs based on km bit
     ufp: Word = 0, // User frame pointer
     kfp: Word = 0, // Kernel frame pointer
 
-    // Data stack (TOS/NOS/ROS + memory backing)
-    tos: Word = 0,
-    nos: Word = 0,
-    ros: Word = 0,
-    stack_mem: [256]Word = [_]Word{0} ** 256, // Stack memory for depth > 3
+    // Data stack top registers
+    tos: Word = 0, // Top of stack
+    nos: Word = 0, // Next on stack
+    ros: Word = 0, // Rest of stack (third element)
+
+    // Stack depth
+    depth: Word = 0,
 
     // Status registers (packed bitfields)
     status: Status = .{ .km = true }, // Boot in kernel mode
     estatus: Status = .{},
 
-    // Exception-related registers
+    // Exception-related registers (frequently accessed)
     epc: Word = 0,
-    ecause: Word = 0,
     evec: Word = 0,
 
-    // Stack depth
-    depth: Word = 0,
+    // FP/AFP are mux outputs based on status.km bit - not actual registers
+    pub fn fp(self: *const Regs) Word {
+        return if (self.status.km) self.kfp else self.ufp;
+    }
 
-    // Memory protection CSRs
+    pub fn afp(self: *const Regs) Word {
+        return if (self.status.km) self.ufp else self.kfp;
+    }
+};
+
+pub const CpuState = struct {
+    // Core registers (frequently accessed during execution)
+    reg: Regs = .{},
+
+    // Stack memory backing (for depth > 3)
+    stack_mem: [256]Word = [_]Word{0} ** 256,
+
+    // Exception cause (written but rarely read in execution path)
+    ecause: Word = 0,
+
+    // Memory protection CSRs (only accessed during address translation)
     udmask: Word = 0,
     udset: Word = 0,
     upmask: Word = 0,
@@ -1295,17 +1306,20 @@ pub const CpuState = struct {
     // Halt flip-flop
     halted: bool = false,
 
+    // Logging control
+    log_enabled: bool = true,
+
     pub fn init(memory: []u8) CpuState {
         return .{ .memory = memory };
     }
 
-    // FP/AFP are mux outputs based on status.km bit - not actual registers
+    // Convenience accessors that delegate to reg
     pub fn fp(self: *const CpuState) Word {
-        return if (self.status.km) self.kfp else self.ufp;
+        return self.reg.fp();
     }
 
     pub fn afp(self: *const CpuState) Word {
-        return if (self.status.km) self.ufp else self.kfp;
+        return self.reg.afp();
     }
 
     // Stack memory access (for depth > 3)
@@ -1394,13 +1408,13 @@ pub const CpuState = struct {
     // CSR access
     pub fn readCsr(self: *const CpuState, index: Word) Word {
         return switch (index) {
-            0 => self.status.toWord(),
-            1 => self.estatus.toWord(),
-            2 => self.epc,
+            0 => self.reg.status.toWord(),
+            1 => self.reg.estatus.toWord(),
+            2 => self.reg.epc,
             3 => self.afp(), // mux output based on km
-            4 => self.depth,
+            4 => self.reg.depth,
             5 => self.ecause,
-            6 => self.evec,
+            6 => self.reg.evec,
             8 => self.udmask,
             9 => self.udset,
             10 => self.upmask,
@@ -1415,20 +1429,20 @@ pub const CpuState = struct {
 
     pub fn writeCsr(self: *CpuState, index: Word, value: Word) void {
         switch (index) {
-            0 => self.status = Status.fromWord(value),
-            1 => self.estatus = Status.fromWord(value),
-            2 => self.epc = value,
+            0 => self.reg.status = Status.fromWord(value),
+            1 => self.reg.estatus = Status.fromWord(value),
+            2 => self.reg.epc = value,
             3 => {
                 // Write to afp - writes to the "other" fp register
-                if (self.status.km) {
-                    self.ufp = value;
+                if (self.reg.status.km) {
+                    self.reg.ufp = value;
                 } else {
-                    self.kfp = value;
+                    self.reg.kfp = value;
                 }
             },
-            4 => self.depth = 0, // writes reset to 0
+            4 => self.reg.depth = 0, // writes reset to 0
             5 => self.ecause = value,
-            6 => self.evec = value,
+            6 => self.reg.evec = value,
             8 => self.udmask = value,
             9 => self.udset = value,
             10 => self.upmask = value,
@@ -1466,437 +1480,10 @@ pub const CpuState = struct {
     }
 };
 
-// ============================================================================
-// Bus Structure - All Combinational Logic Outputs
-// ============================================================================
-// This struct holds all the computed values from the combinational logic.
-// In hardware, these are the wire values that feed into register inputs.
-// All values are computed simultaneously from register outputs and microcode.
-
-/// All bus/wire values computed during a clock cycle.
-/// These represent the outputs of muxes and combinational logic blocks.
-pub const Busses = struct {
-    // Immediate extraction from instruction
-    imm6: Word, // Sign-extended 6-bit immediate
-    imm7: Word, // Zero-extended 7-bit immediate
-
-    // Frame pointer mux output (based on current km bit)
-    fp_value: Word,
-
-    // ALU operand busses
-    alu_a: Word,
-    alu_b: Word,
-    alu_c: Word, // For select (always ros)
-
-    // ALU result
-    alu_out: Word,
-
-    // Funnel shifter inputs and result
-    fsl_hi: Word,
-    fsl_lo: Word,
-    fsl_shift: Word,
-    fsl_out: Word,
-
-    // Main result bus (output of result_src mux)
-    result: Word,
-
-    // Memory busses
-    mem_addr: Word,
-    mem_read_data: Word, // Data read from memory
-    mem_write_data: Word, // Data to write to memory
-
-    // CSR read data
-    csr_data: Word,
-
-    // Stack memory reads (for depth > 3)
-    // For dec2 operations, NOS and ROS need different stack_mem values
-    stack_mem_read_nos: Word, // For NOS: stack_mem[depth-4]
-    stack_mem_read_ros: Word, // For ROS: stack_mem[depth-5]
-
-    // Branch condition evaluation
-    branch_taken: bool,
-
-    // ========================================
-    // Register input busses (new values to be latched)
-    // ========================================
-    // These are the outputs of muxes that feed register inputs.
-    // In hardware, these are wires going to register D inputs.
-
-    // Stack register input muxes
-    next_tos: Word,
-    next_nos: Word,
-    next_ros: Word,
-    next_depth: Word,
-
-    // PC input mux
-    next_pc: Word,
-
-    // Status register input mux (individual bits have muxes)
-    next_status: Status,
-
-    // Ecause value to write (from microcode or trap_cause)
-    // Used when writes.ecause is true
-    ecause_value: Word,
-
-    // Stack memory spill address and data (for push operations)
-    stack_spill_addr: Word,
-    stack_spill_data: Word,
-    stack_spill_enable: bool,
-};
-
-/// Compute all bus values from current register state and microcode.
+/// Execute one micro-operation (optimized inline version).
 ///
-/// This is pure combinational logic - it only reads register values and
-/// produces bus values. No state is modified.
-///
-/// In hardware, this represents all the muxes, ALU, shifter, and other
-/// combinational circuits that compute values during a clock cycle.
-///
-/// Parameters:
-/// - cpu: Current CPU register state (read-only)
-/// - uop: Microcode operation controlling mux selects
-/// - instr: Original fetched instruction (for immediate extraction)
-/// - trap: True if hardware exception detected (controls ecause mux)
-/// - trap_cause: Exception cause from priority encoder (used when trap=true)
-pub fn computeBusses(cpu: *const CpuState, uop: MicroOp, instr: u8, trap: bool, trap_cause: u8) Busses {
-    var b: Busses = undefined;
-
-    // ========================================
-    // Immediate extraction
-    // ========================================
-    b.imm6 = signExtend6(@truncate(instr & 0x3F));
-    b.imm7 = instr & 0x7F;
-
-    // ========================================
-    // Frame pointer mux (based on current km bit)
-    // ========================================
-    b.fp_value = if (cpu.status.km) cpu.kfp else cpu.ufp;
-
-    // ========================================
-    // ALU operand muxes
-    // ========================================
-    b.alu_a = switch (uop.alu_a) {
-        .tos => cpu.tos,
-        .nos => cpu.nos,
-        .fp => b.fp_value,
-        .ra => cpu.ra,
-        .ar => cpu.ar,
-    };
-
-    b.alu_b = switch (uop.alu_b) {
-        .tos => cpu.tos,
-        .nos => cpu.nos,
-        .imm7 => b.imm7,
-        .zero => 0,
-        .wordbytes => WORDBYTES,
-    };
-
-    b.alu_c = cpu.ros; // For select operation
-
-    // ========================================
-    // ALU
-    // ========================================
-    b.alu_out = executeAlu(uop.alu_op, b.alu_a, b.alu_b, b.alu_c);
-
-    // ========================================
-    // Funnel Shifter
-    // ========================================
-    // Computes: ({fsl_hi, fsl_lo} << fsl_shift) >> WORDSIZE
-    b.fsl_hi = switch (uop.fsl_hi) {
-        .zero => 0,
-        .nos => cpu.nos,
-        .ros => cpu.ros,
-        .sign_fill => if (cpu.nos & (1 << (WORDSIZE - 1)) != 0) @as(Word, @bitCast(@as(SWord, -1))) else 0,
-    };
-
-    b.fsl_lo = switch (uop.fsl_lo) {
-        .zero => 0,
-        .nos => cpu.nos,
-    };
-
-    // Shift mask depends on operation: single word ops mask to WORDSIZE-1,
-    // double word ops (fsl) mask to 2*WORDSIZE-1
-    const shift_mask: Word = switch (uop.fsl_mask) {
-        .single_word => WORDSIZE - 1,
-        .double_word => 2 * WORDSIZE - 1,
-    };
-    const masked_tos = cpu.tos & shift_mask;
-
-    b.fsl_shift = switch (uop.fsl_shift) {
-        .tos => masked_tos,
-        .neg_tos => (WORDSIZE -% masked_tos) & (2 * WORDSIZE - 1),
-    };
-
-    b.fsl_out = blk: {
-        if (WORDSIZE == 16) {
-            const dword: u32 = (@as(u32, b.fsl_hi) << 16) | b.fsl_lo;
-            break :blk @truncate((dword << @truncate(b.fsl_shift)) >> 16);
-        } else {
-            const dword: u64 = (@as(u64, b.fsl_hi) << 32) | b.fsl_lo;
-            break :blk @truncate((dword << @truncate(b.fsl_shift)) >> 32);
-        }
-    };
-
-    // ========================================
-    // Memory address mux
-    // ========================================
-    b.mem_addr = switch (uop.mem_addr) {
-        .tos => cpu.tos,
-        .fp_plus_tos => b.fp_value +% cpu.tos,
-        .ar => cpu.ar,
-    };
-
-    // ========================================
-    // Memory read (combinational - memory is read every cycle)
-    // ========================================
-    b.mem_read_data = switch (uop.mem_op) {
-        .read_byte => signExtend8(cpu.readByte(b.mem_addr)),
-        .read_half => cpu.readHalf(b.mem_addr),
-        .read_word => cpu.readWord(b.mem_addr),
-        else => 0,
-    };
-
-    // ========================================
-    // Memory write data mux
-    // ========================================
-    b.mem_write_data = switch (uop.mem_data) {
-        .nos => cpu.nos,
-        .tos => cpu.tos,
-    };
-
-    // ========================================
-    // CSR read
-    // ========================================
-    b.csr_data = cpu.readCsr(cpu.tos);
-
-    // ========================================
-    // Stack memory reads (for spills/fills when depth > 3)
-    // ========================================
-    // For dec operations, NOS gets stack_mem[depth-4]
-    // For dec2 operations, ROS needs stack_mem[depth-5] (one deeper)
-    b.stack_mem_read_nos = if (cpu.depth >= 4)
-        cpu.readStackMem(@intCast(cpu.depth - 4))
-    else
-        0;
-
-    b.stack_mem_read_ros = if (cpu.depth >= 5)
-        cpu.readStackMem(@intCast(cpu.depth - 5))
-    else
-        0;
-
-    // ========================================
-    // Result bus mux
-    // ========================================
-    b.result = switch (uop.result_src) {
-        .tos => cpu.tos,
-        .nos => cpu.nos,
-        .pc => cpu.pc,
-        .fp => b.fp_value,
-        .ra => cpu.ra,
-        .ar => cpu.ar,
-        .imm_sext6 => b.imm6,
-        .mem_data => b.mem_read_data,
-        .csr_data => b.csr_data,
-        .alu_out => b.alu_out,
-        .fsl_out => b.fsl_out,
-        .zero => 0,
-    };
-
-    // ========================================
-    // Branch condition evaluation
-    // ========================================
-    b.branch_taken = switch (uop.branch_cond) {
-        .always => true,
-        .if_nos_zero => cpu.nos == 0,
-        .if_nos_nzero => cpu.nos != 0,
-    };
-
-    // ========================================
-    // Register input muxes - compute next values for all registers
-    // ========================================
-
-    // TOS input mux
-    // TOS uses stack_mem_read_nos (same index as NOS would use)
-    b.next_tos = switch (uop.tos_src) {
-        .hold => cpu.tos,
-        .result => b.result,
-        .nos => cpu.nos,
-        .ros => cpu.ros,
-        .stack_mem => b.stack_mem_read_nos,
-        .mem_data => b.mem_read_data,
-    };
-
-    // NOS input mux
-    // NOS reads from stack_mem[depth-4]
-    b.next_nos = switch (uop.nos_src) {
-        .hold => cpu.nos,
-        .tos => cpu.tos,
-        .ros => cpu.ros,
-        .stack_mem => b.stack_mem_read_nos,
-    };
-
-    // ROS input mux
-    // For dec2 operations: ROS reads from stack_mem[depth-5]
-    // For dec operations: ROS reads from stack_mem[depth-4] (same index as NOS in dec2)
-    b.next_ros = switch (uop.ros_src) {
-        .hold => cpu.ros,
-        .nos => cpu.nos,
-        .tos => cpu.tos,
-        .stack_mem => switch (uop.depth_op) {
-            .dec2, .dec3 => b.stack_mem_read_ros,
-            else => b.stack_mem_read_nos,
-        },
-    };
-
-    // Depth calculation
-    b.next_depth = switch (uop.depth_op) {
-        .none => cpu.depth,
-        .inc => cpu.depth +% 1,
-        .dec => if (cpu.depth > 0) cpu.depth -% 1 else 0,
-        .dec2 => if (cpu.depth >= 2) cpu.depth -% 2 else 0,
-        .dec3 => if (cpu.depth >= 3) cpu.depth -% 3 else 0,
-    };
-
-    // Stack spill logic (for push operations when depth >= 3)
-    b.stack_spill_enable = uop.depth_op == .inc and cpu.depth >= 3;
-    b.stack_spill_addr = if (cpu.depth >= 3) cpu.depth - 3 else 0;
-    b.stack_spill_data = cpu.ros;
-
-    // PC input mux
-    // Note: PC was already incremented in step() to point to the next instruction.
-    b.next_pc = switch (uop.pc_src) {
-        .next => cpu.pc,
-        .rel_tos => if (b.branch_taken) cpu.pc +% cpu.tos else cpu.pc,
-        .abs_tos => if (b.branch_taken) cpu.tos else cpu.pc,
-        .evec => cpu.evec,
-        .epc => cpu.epc,
-        .hold => cpu.pc,
-    };
-
-    // Status register input muxes
-    b.next_status = .{
-        .km = switch (uop.km_src) {
-            .hold => cpu.status.km,
-            .set => true,
-            .estatus => cpu.estatus.km,
-        },
-        .ie = switch (uop.ie_src) {
-            .hold => cpu.status.ie,
-            .clear => false,
-            .estatus => cpu.estatus.ie,
-        },
-        .th = switch (uop.th_src) {
-            .hold => cpu.status.th,
-            .estatus => cpu.estatus.th,
-        },
-    };
-
-    // Ecause value (from microcode, or trap_cause when trap signal is active)
-    // Used when writes.ecause is true
-    b.ecause_value = if (trap) trap_cause else uop.ecause;
-
-    return b;
-}
-
-/// Commit register updates from computed bus values.
-///
-/// This is pure sequential logic - it only writes register values from
-/// bus values. No computation is performed.
-///
-/// In hardware, this represents the clock edge where all registers
-/// simultaneously latch their D inputs.
-///
-/// Parameters:
-/// - cpu: CPU state to update
-/// - b: Bus values computed by computeBusses()
-/// - uop: Microcode operation (for write enables and memory ops)
-pub fn commitRegisters(cpu: *CpuState, b: Busses, uop: MicroOp) void {
-    // ========================================
-    // Memory write (memory acts like a register bank)
-    // ========================================
-    switch (uop.mem_op) {
-        .write_byte => cpu.writeByte(b.mem_addr, @truncate(b.mem_write_data)),
-        .write_half => cpu.writeHalf(b.mem_addr, b.mem_write_data),
-        .write_word => cpu.writeWord(b.mem_addr, b.mem_write_data),
-        else => {},
-    }
-
-    // ========================================
-    // Stack memory spill (for push when depth >= 3)
-    // ========================================
-    if (b.stack_spill_enable) {
-        cpu.writeStackMem(@intCast(b.stack_spill_addr), b.stack_spill_data);
-    }
-
-    // ========================================
-    // CSR write
-    // ========================================
-    if (uop.writes.csr) {
-        cpu.writeCsr(cpu.tos, cpu.nos);
-    }
-
-    // ========================================
-    // Register updates - all happen "simultaneously" on clock edge
-    // ========================================
-
-    // Stack registers (active every cycle via mux)
-    cpu.tos = b.next_tos;
-    cpu.nos = b.next_nos;
-    cpu.ros = b.next_ros;
-    cpu.depth = b.next_depth;
-
-    // PC (active every cycle via mux)
-    cpu.pc = b.next_pc;
-
-    // FP write - controlled by write enable, input is result bus
-    // Writes to current mode's register (kfp or ufp based on km)
-    if (uop.writes.fp) {
-        if (cpu.status.km) {
-            cpu.kfp = b.result;
-        } else {
-            cpu.ufp = b.result;
-        }
-    }
-
-    // RA write - controlled by write enable, input is result bus
-    if (uop.writes.ra) {
-        cpu.ra = b.result;
-    }
-
-    // AR write - controlled by write enable, input is result bus
-    if (uop.writes.ar) {
-        cpu.ar = b.result;
-    }
-
-    // Status register (active every cycle via mux)
-    cpu.status = b.next_status;
-
-    // Estatus write - controlled by write enable, input is status
-    if (uop.writes.estatus) {
-        cpu.estatus = cpu.status;
-    }
-
-    // EPC write - controlled by write enable, input is pc
-    if (uop.writes.epc) {
-        cpu.epc = cpu.pc;
-    }
-
-    // Ecause write - controlled by write enable, input is ecause_value
-    if (uop.writes.ecause) {
-        cpu.ecause = b.ecause_value;
-    }
-
-    // Halt flip-flop - controlled by write enable
-    if (uop.writes.halt) {
-        cpu.halted = true;
-    }
-}
-
-/// Execute one micro-operation (convenience wrapper).
-///
-/// This calls computeBusses() followed by commitRegisters() to execute
-/// a single clock cycle. For debugging or visualization, you can call
-/// these functions separately to inspect bus values before commit.
+/// This executes a single clock cycle, only computing values that are
+/// actually needed by the microcode operation.
 ///
 /// Parameters:
 /// - cpu: CPU state
@@ -1904,9 +1491,237 @@ pub fn commitRegisters(cpu: *CpuState, b: Busses, uop: MicroOp) void {
 /// - instr: Original fetched instruction (for immediate extraction)
 /// - trap: True if hardware exception detected (controls ecause mux)
 /// - trap_cause: Exception cause from priority encoder (used when trap=true)
-pub fn executeMicroOp(cpu: *CpuState, uop: MicroOp, instr: u8, trap: bool, trap_cause: u8) void {
-    const busses = computeBusses(cpu, uop, instr, trap, trap_cause);
-    commitRegisters(cpu, busses, uop);
+pub inline fn executeMicroOp(cpu: *CpuState, uop: MicroOp, instr: u8, trap: bool, trap_cause: u8) void {
+    // Snapshot registers for reading - all reads use this copy
+    // All writes go directly to cpu.reg, making execution order irrelevant
+    const r = cpu.reg;
+
+    // ========================================
+    // Result bus computation
+    // ========================================
+    const result: Word = switch (uop.result_src) {
+        .tos => r.tos,
+        .nos => r.nos,
+        .pc => r.pc,
+        .fp => r.fp(),
+        .ra => r.ra,
+        .ar => r.ar,
+        .imm_sext6 => signExtend6(@truncate(instr & 0x3F)),
+        .mem_data => blk: {
+            const mem_addr = switch (uop.mem_addr) {
+                .tos => r.tos,
+                .fp_plus_tos => r.fp() +% r.tos,
+                .ar => r.ar,
+            };
+            break :blk switch (uop.mem_op) {
+                .read_byte => signExtend8(cpu.readByte(mem_addr)),
+                .read_half => cpu.readHalf(mem_addr),
+                .read_word => cpu.readWord(mem_addr),
+                else => 0,
+            };
+        },
+        .csr_data => cpu.readCsr(r.tos),
+        .alu_out => blk: {
+            const alu_a = switch (uop.alu_a) {
+                .tos => r.tos,
+                .nos => r.nos,
+                .fp => r.fp(),
+                .ra => r.ra,
+                .ar => r.ar,
+            };
+            const alu_b = switch (uop.alu_b) {
+                .tos => r.tos,
+                .nos => r.nos,
+                .imm7 => instr & 0x7F,
+                .zero => 0,
+                .wordbytes => WORDBYTES,
+            };
+            break :blk executeAlu(uop.alu_op, alu_a, alu_b, r.ros);
+        },
+        .fsl_out => blk: {
+            const fsl_hi: Word = switch (uop.fsl_hi) {
+                .zero => 0,
+                .nos => r.nos,
+                .ros => r.ros,
+                .sign_fill => if (r.nos & (1 << (WORDSIZE - 1)) != 0) @as(Word, @bitCast(@as(SWord, -1))) else 0,
+            };
+            const fsl_lo: Word = switch (uop.fsl_lo) {
+                .zero => 0,
+                .nos => r.nos,
+            };
+            const shift_mask: Word = switch (uop.fsl_mask) {
+                .single_word => WORDSIZE - 1,
+                .double_word => 2 * WORDSIZE - 1,
+            };
+            const masked_tos = r.tos & shift_mask;
+            const fsl_shift: Word = switch (uop.fsl_shift) {
+                .tos => masked_tos,
+                .neg_tos => (WORDSIZE -% masked_tos) & (2 * WORDSIZE - 1),
+            };
+            if (WORDSIZE == 16) {
+                const dword: u32 = (@as(u32, fsl_hi) << 16) | fsl_lo;
+                break :blk @truncate((dword << @truncate(fsl_shift)) >> 16);
+            } else {
+                const dword: u64 = (@as(u64, fsl_hi) << 32) | fsl_lo;
+                break :blk @truncate((dword << @truncate(fsl_shift)) >> 32);
+            }
+        },
+        .zero => 0,
+    };
+
+    // ========================================
+    // Memory operations
+    // ========================================
+    if (uop.mem_op == .write_byte or uop.mem_op == .write_half or uop.mem_op == .write_word) {
+        const mem_addr = switch (uop.mem_addr) {
+            .tos => r.tos,
+            .fp_plus_tos => r.fp() +% r.tos,
+            .ar => r.ar,
+        };
+        const mem_write_data = switch (uop.mem_data) {
+            .nos => r.nos,
+            .tos => r.tos,
+        };
+        switch (uop.mem_op) {
+            .write_byte => cpu.writeByte(mem_addr, @truncate(mem_write_data)),
+            .write_half => cpu.writeHalf(mem_addr, mem_write_data),
+            .write_word => cpu.writeWord(mem_addr, mem_write_data),
+            else => {},
+        }
+    }
+
+    // Stack spill (for push when depth >= 3)
+    if (uop.depth_op == .inc and r.depth >= 3) {
+        cpu.writeStackMem(@intCast(r.depth -% 3), r.ros);
+    }
+
+    // CSR write
+    if (uop.writes.csr) {
+        cpu.writeCsr(r.tos, r.nos);
+    }
+
+    // ========================================
+    // Register writes - order doesn't matter since all reads use snapshot
+    // ========================================
+
+    // TOS
+    cpu.reg.tos = switch (uop.tos_src) {
+        .hold => r.tos,
+        .result => result,
+        .nos => r.nos,
+        .ros => r.ros,
+        .stack_mem => cpu.readStackMem(@intCast(r.depth -% 4)),
+        .mem_data => blk: {
+            const mem_addr = switch (uop.mem_addr) {
+                .tos => r.tos,
+                .fp_plus_tos => r.fp() +% r.tos,
+                .ar => r.ar,
+            };
+            break :blk switch (uop.mem_op) {
+                .read_byte => signExtend8(cpu.readByte(mem_addr)),
+                .read_half => cpu.readHalf(mem_addr),
+                .read_word => cpu.readWord(mem_addr),
+                else => 0,
+            };
+        },
+    };
+
+    // NOS
+    cpu.reg.nos = switch (uop.nos_src) {
+        .hold => r.nos,
+        .tos => r.tos,
+        .ros => r.ros,
+        .stack_mem => cpu.readStackMem(@intCast(r.depth -% 4)),
+    };
+
+    // ROS
+    cpu.reg.ros = switch (uop.ros_src) {
+        .hold => r.ros,
+        .nos => r.nos,
+        .tos => r.tos,
+        .stack_mem => switch (uop.depth_op) {
+            .dec2, .dec3 => cpu.readStackMem(@intCast(r.depth -% 5)),
+            else => cpu.readStackMem(@intCast(r.depth -% 4)),
+        },
+    };
+
+    // Depth
+    cpu.reg.depth = switch (uop.depth_op) {
+        .none => r.depth,
+        .inc => r.depth +% 1,
+        .dec => if (r.depth > 0) r.depth -% 1 else 0,
+        .dec2 => if (r.depth >= 2) r.depth -% 2 else 0,
+        .dec3 => if (r.depth >= 3) r.depth -% 3 else 0,
+    };
+
+    // PC
+    const branch_taken: bool = switch (uop.branch_cond) {
+        .always => true,
+        .if_nos_zero => r.nos == 0,
+        .if_nos_nzero => r.nos != 0,
+    };
+    cpu.reg.pc = switch (uop.pc_src) {
+        .next => r.pc,
+        .rel_tos => if (branch_taken) r.pc +% r.tos else r.pc,
+        .abs_tos => if (branch_taken) r.tos else r.pc,
+        .evec => r.evec,
+        .epc => r.epc,
+        .hold => r.pc,
+    };
+
+    // Status
+    cpu.reg.status = .{
+        .km = switch (uop.km_src) {
+            .hold => r.status.km,
+            .set => true,
+            .estatus => r.estatus.km,
+        },
+        .ie = switch (uop.ie_src) {
+            .hold => r.status.ie,
+            .clear => false,
+            .estatus => r.estatus.ie,
+        },
+        .th = if (uop.writes.th) r.estatus.th else r.status.th,
+    };
+
+    // FP write
+    if (uop.writes.fp) {
+        if (r.status.km) {
+            cpu.reg.kfp = result;
+        } else {
+            cpu.reg.ufp = result;
+        }
+    }
+
+    // RA write
+    if (uop.writes.ra) {
+        cpu.reg.ra = result;
+    }
+
+    // AR write
+    if (uop.writes.ar) {
+        cpu.reg.ar = result;
+    }
+
+    // Estatus write (uses snapshot status, not new status)
+    if (uop.writes.estatus) {
+        cpu.reg.estatus = r.status;
+    }
+
+    // EPC write (uses snapshot pc, not new pc)
+    if (uop.writes.epc) {
+        cpu.reg.epc = r.pc;
+    }
+
+    // Ecause write
+    if (uop.writes.ecause) {
+        cpu.ecause = if (trap) trap_cause else uop.ecause;
+    }
+
+    // Halt
+    if (uop.writes.halt) {
+        cpu.halted = true;
+    }
 }
 
 fn executeAlu(op: AluOp, a: Word, b: Word, c: Word) Word {
@@ -1933,7 +1748,7 @@ fn executeAlu(op: AluOp, a: Word, b: Word, c: Word) Word {
     };
 }
 
-fn signExtend6(val: u6) Word {
+inline fn signExtend6(val: u6) Word {
     const sval: i6 = @bitCast(val);
     const extended: SWord = sval;
     return @bitCast(extended);
@@ -1989,10 +1804,10 @@ fn logInstruction(cpu: *const CpuState, pc_before: Word, instr: u8, uop: MicroOp
 
     // Stack state: TOS NOS ROS [depth]
     const stack_info = std.fmt.bufPrint(summary_buf[summary_len..], "stk:[{x:0>4},{x:0>4},{x:0>4}]d={d}", .{
-        cpu.tos,
-        cpu.nos,
-        cpu.ros,
-        cpu.depth,
+        cpu.reg.tos,
+        cpu.reg.nos,
+        cpu.reg.ros,
+        cpu.reg.depth,
     }) catch "";
     summary_len += stack_info.len;
 
@@ -2048,20 +1863,27 @@ fn logInstruction(cpu: *const CpuState, pc_before: Word, instr: u8, uop: MicroOp
 /// - cpu: CPU state
 /// - irq: External interrupt request (directly from hardware bus)
 /// - irq_num: Interrupt number 0-15 (used when irq=true)
-pub fn step(cpu: *CpuState, irq: bool, irq_num: u4) void {
+pub inline fn step(cpu: *CpuState, irq: bool, irq_num: u4) void {
     if (cpu.halted) return;
 
     // ========================================
     // Fetch stage
     // ========================================
-    const pc_before = cpu.pc; // Save PC for debug logging
-    const fetched_instr = cpu.readByte(cpu.pc);
-    cpu.pc +%= 1; // Advance PC (now points to next instruction)
+    const pc_before = cpu.reg.pc; // Save PC for debug logging
+    const fetched_instr = cpu.readByte(cpu.reg.pc);
+    cpu.reg.pc +%= 1; // Advance PC (now points to next instruction)
 
     // ========================================
     // Decode stage - get microcode for exception detection
     // ========================================
-    const fetched_uop = microcode_rom[fetched_instr];
+    const fetched_uop = if ((fetched_instr & 0x80) != 0)
+        // shi instruction
+        microcode_rom[65]
+     else if ((fetched_instr & 0xC0) == 0x40)
+        // push instruction
+        microcode_rom[64]
+     else
+        microcode_rom[fetched_instr&0x3F];
 
     // ========================================
     // Exception/Interrupt detection (combinational logic)
@@ -2071,23 +1893,23 @@ pub fn step(cpu: *CpuState, irq: bool, irq_num: u4) void {
     // External interrupt: masked by IE bit in status register
     // Interrupts are edge-triggered conceptually - the interrupt controller
     // should hold irq high until acknowledged.
-    const interrupt: bool = irq and cpu.status.ie;
+    const interrupt: bool = irq and cpu.reg.status.ie;
 
     // Underflow: instruction needs more stack depth than available
-    const underflow: bool = cpu.depth < fetched_uop.min_depth_required;
+    const underflow: bool = cpu.reg.depth < fetched_uop.min_depth;
 
     // Overflow threshold depends on destination mode:
     // For rets (km_src == .estatus), we check against estatus.km
     // This ensures rets triggers overflow if returning to user mode with too-deep stack
-    const dest_km: bool = if (fetched_uop.km_src == .estatus) cpu.estatus.km else cpu.status.km;
+    const dest_km: bool = if (fetched_uop.km_src == .estatus) cpu.reg.estatus.km else cpu.reg.status.km;
     const max_depth: Word = if (dest_km) KERNEL_MAX_DEPTH else USER_MAX_DEPTH;
-    const overflow: bool = cpu.depth > max_depth;
+    const overflow: bool = cpu.reg.depth > max_depth;
 
     // Instruction-specific exceptions
     const instr_exception: bool = switch (fetched_uop.exception_check) {
         .none => false,
-        .div_zero => cpu.tos == 0,
-        .halt_trap => cpu.status.th,
+        .div_zero => cpu.reg.tos == 0,
+        .halt_trap => cpu.reg.status.th,
     };
 
     // Trap signal: OR of all exception/interrupt conditions
@@ -2096,12 +1918,6 @@ pub fn step(cpu: *CpuState, irq: bool, irq_num: u4) void {
     // ========================================
     // Priority encoder (produces trap_cause)
     // ========================================
-    // Hardware priority encoder output - feeds into ecause mux
-    // Priority order (highest to lowest):
-    //   1. Underflow (0x30) - can't execute without stack
-    //   2. Overflow (0x31) - stack too deep
-    //   3. Instruction-specific (div_zero=0x40, halt=0x12)
-    //   4. External interrupt (0xF0-0xFF) - lowest priority
     const trap_cause: u8 = if (underflow)
         0x30 // Data stack underflow
     else if (overflow)
@@ -2117,13 +1933,14 @@ pub fn step(cpu: *CpuState, irq: bool, irq_num: u4) void {
     // In hardware, this is a mux on the IR register input.
     // When trap is asserted, the syscall opcode is forced (it performs
     // the same exception entry sequence needed for all exceptions).
-    const effective_instr: u8 = if (trap) @intFromEnum(Opcode.syscall) else fetched_instr;
-    const uop = microcode_rom[effective_instr];
+    const uop = if (trap) microcode_rom[@intFromEnum(Opcode.syscall)] else fetched_uop;
 
     // ========================================
-    // Debug logging
+    // Debug logging (only when enabled)
     // ========================================
-    logInstruction(cpu, pc_before, fetched_instr, uop, trap, trap_cause);
+    if (cpu.log_enabled) {
+        logInstruction(cpu, pc_before, fetched_instr, uop, trap, trap_cause);
+    }
 
     // ========================================
     // Execute stage
@@ -2133,9 +1950,7 @@ pub fn step(cpu: *CpuState, irq: bool, irq_num: u4) void {
     executeMicroOp(cpu, uop, fetched_instr, trap, trap_cause);
 }
 
-
-
-pub fn run(rom_file: []const u8, max_cycles: usize, gpa: std.mem.Allocator) !Word {
+pub fn run(rom_file: []const u8, max_cycles: usize, quiet: bool, gpa: std.mem.Allocator) !Word {
     const memory = try gpa.alloc(u16, 128 * 1024);
     defer gpa.free(memory);
 
@@ -2143,6 +1958,7 @@ pub fn run(rom_file: []const u8, max_cycles: usize, gpa: std.mem.Allocator) !Wor
     defer gpa.destroy(cpu);
     cpu.* = .{
         .memory = @ptrCast(memory),
+        .log_enabled = !quiet,
     };
 
     try cpu.loadRom(rom_file);
@@ -2160,7 +1976,7 @@ pub fn run(rom_file: []const u8, max_cycles: usize, gpa: std.mem.Allocator) !Wor
         cycles_per_sec,
     });
 
-    return cpu.tos;
+    return cpu.reg.tos;
 }
 
 pub const Error = error{
@@ -2187,12 +2003,12 @@ pub fn runTest(rom_file: []const u8, max_cycles: usize, gpa: std.mem.Allocator) 
         return Error.TooManyCycles;
     }
 
-    if (cpu.depth != 1) {
-        std.log.err("Expected exactly one value on stack after execution, found {}", .{cpu.depth});
+    if (cpu.reg.depth != 1) {
+        std.log.err("Expected exactly one value on stack after execution, found {}", .{cpu.reg.depth});
         return Error.InvalidStackDepth;
     }
 
-    return cpu.tos;
+    return cpu.reg.tos;
 }
 
 ///////////////////////////////////////////////////////

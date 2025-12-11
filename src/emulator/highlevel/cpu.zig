@@ -749,7 +749,7 @@ pub fn runTest(rom_file: []const u8, max_cycles: usize, gpa: std.mem.Allocator) 
 
     var cpu = Cpu.init(memory);
     try cpu.loadRom(rom_file);
-    try cpu.run(max_cycles);
+    _ = try cpu.run(max_cycles);
 
     if (cpu.csr.depth != 1) {
         std.log.err("Expected exactly one value on stack after execution, found {}", .{cpu.csr.depth});
