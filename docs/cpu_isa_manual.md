@@ -220,11 +220,11 @@ This layout is designed for efficient jump table dispatch using the `add pc` ins
   +------+----------+-----------+----------------------------------------+
   | 0x40 |    4     |     0     | Division by zero                       |
   +------+----------+-----------+----------------------------------------+
-  | 0x50-|   5-14   |    0-15   | Reserved for future use                |
-  | 0xEF |          |           |                                        |
+  | 0x50-|    5     |    0-15   | External interrupt (sub-cause =        |
+  | 0x5F |          |           | interrupt number)                      |
   +------+----------+-----------+----------------------------------------+
-  | 0xF0-|   15     |    0-15   | External interrupt (sub-cause =        |
-  | 0xFF |          |           | interrupt number)                      |
+  | 0x60-|   6-15   |    0-15   | Reserved for future use                |
+  | 0xFF |          |           |                                        |
   +------+----------+-----------+----------------------------------------+
 ```
 

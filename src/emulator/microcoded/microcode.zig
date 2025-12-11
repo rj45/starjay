@@ -283,6 +283,34 @@ pub const ExceptionCheck = enum(u2) {
     halt_trap = 2, // check if th bit is set (for halt)
 };
 
+pub const ECause = enum(u3) {
+    none = 0, // No exception (default)
+    syscall = 1, // 0x00: System call
+    illegal_instr = 2, // 0x10: Illegal instruction
+    halt_trap = 3, // 0x12: Halt with th=1
+    stack_underflow = 4, // 0x30: Data stack underflow
+    stack_overflow = 5, // 0x31: Data stack overflow
+    div_by_zero = 6, // 0x40: Division by zero
+
+    /// Convert compact enum to full 8-bit ecause value
+    pub fn toU8(self: ECause) u8 {
+        return switch (self) {
+            .none => 0x00,
+            .syscall => 0x00,
+            .illegal_instr => 0x10,
+            .halt_trap => 0x12,
+            .stack_underflow => 0x30,
+            .stack_overflow => 0x31,
+            .div_by_zero => 0x40,
+        };
+    }
+
+    /// Create interrupt ecause value (0x50 | irq_num)
+    pub fn interrupt(irq_num: u4) u8 {
+        return 0x50 | @as(u8, irq_num);
+    }
+};
+
 // ============================================================================
 // Register Write Enables
 // ============================================================================
@@ -297,16 +325,15 @@ pub const WriteEnables = packed struct(u9) {
     estatus: bool = false, // exception entry - input is status
     ecause: bool = false, // exception entry - input is ecause_value (from microcode or trap)
     halt: bool = false, // halt instruction - sets halted flip-flop
-    th: bool = false, // for setting th bit (not commonly changed)
+    th: bool = false, // for setting th bit
 };
 
 // ============================================================================
-// Complete Microcode Word
+// Microcode Word
 // ============================================================================
 
-/// Complete micro-operation specification
-/// This controls all datapaths for one clock cycle.
-pub const MicroOp = struct {
+/// MicroOp controls all datapaths for one clock cycle.
+pub const MicroOp = packed struct(u64) {
     // Result bus source (what value to put on the result bus)
     result_src: ResultSrc = .zero,
 
@@ -320,7 +347,7 @@ pub const MicroOp = struct {
     fsl_hi: FslHiSrc = .zero,
     fsl_lo: FslLoSrc = .zero,
     fsl_shift: FslShiftSrc = .tos,
-    fsl_mask: FslShiftMask = .single_word, // default to single word mask for safety
+    fsl_mask: FslShiftMask = .single_word,
 
     // Stack register sources
     tos_src: TosSrc = .hold,
@@ -351,7 +378,7 @@ pub const MicroOp = struct {
     exception_check: ExceptionCheck = .none,
 
     // Exception cause value (used when writes.ecause is true)
-    ecause: u8 = 0,
+    ecause: ECause = .none,
 
     // Stack safety: minimum depth required to execute without underflow
     // Hardware comparator checks: if (depth < min_depth) raise underflow
@@ -484,7 +511,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .pc_src = .hold,
             .writes = .{ .halt = true },
             .exception_check = .halt_trap,
-            .ecause = 0x12, // For priority encoder when trap is taken
+            .ecause = .halt_trap, // For priority encoder when trap is taken
             .min_depth = 0, // No stack access
         },
 
@@ -494,7 +521,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .km_src = .set,
             .ie_src = .clear,
             .writes = .{ .epc = true, .estatus = true, .ecause = true },
-            .ecause = 0x10,
+            .ecause = .illegal_instr,
             .min_depth = 0, // No stack access
         },
 
@@ -512,7 +539,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .km_src = .set,
             .ie_src = .clear,
             .writes = .{ .epc = true, .estatus = true, .ecause = true },
-            .ecause = 0x00, // Used when trap=0 (normal syscall)
+            .ecause = .syscall, // Used when trap=0 (normal syscall)
             .min_depth = 0, // No stack access
         },
 
@@ -860,7 +887,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .ros_src = .stack_mem,
             .depth_op = .dec,
             .exception_check = .div_zero,
-            .ecause = 0x40, // For priority encoder when trap is taken
+            .ecause = .div_by_zero, // For priority encoder when trap is taken
             .min_depth = 2, // Binary op on TOS and NOS
         },
 
@@ -876,7 +903,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .ros_src = .stack_mem,
             .depth_op = .dec,
             .exception_check = .div_zero,
-            .ecause = 0x40, // For priority encoder when trap is taken
+            .ecause = .div_by_zero, // For priority encoder when trap is taken
             .min_depth = 2, // Binary op on TOS and NOS
         },
 
@@ -892,7 +919,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .ros_src = .stack_mem,
             .depth_op = .dec,
             .exception_check = .div_zero,
-            .ecause = 0x40, // For priority encoder when trap is taken
+            .ecause = .div_by_zero, // For priority encoder when trap is taken
             .min_depth = 2, // Binary op on TOS and NOS
         },
 
@@ -908,7 +935,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .ros_src = .stack_mem,
             .depth_op = .dec,
             .exception_check = .div_zero,
-            .ecause = 0x40, // For priority encoder when trap is taken
+            .ecause = .div_by_zero, // For priority encoder when trap is taken
             .min_depth = 2, // Binary op on TOS and NOS
         },
 
@@ -1029,7 +1056,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .km_src = .set,
             .ie_src = .clear,
             .writes = .{ .epc = true, .estatus = true, .ecause = true },
-            .ecause = 0x10,
+            .ecause = .illegal_instr,
             .min_depth = 0, // Illegal instruction, no stack access
         },
 
@@ -1171,7 +1198,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .km_src = .set,
             .ie_src = .clear,
             .writes = .{ .epc = true, .estatus = true, .ecause = true },
-            .ecause = 0x10,
+            .ecause = .illegal_instr,
             .min_depth = 0, // Illegal instruction, no stack access
         },
     };
@@ -1675,7 +1702,7 @@ pub inline fn executeMicroOp(cpu: *CpuState, uop: MicroOp, instr: u8, trap: bool
 
     // Ecause write
     if (uop.writes.ecause) {
-        cpu.ecause = if (trap) trap_cause else uop.ecause;
+        cpu.ecause = if (trap) trap_cause else uop.ecause.toU8();
     }
 
     // Halt
@@ -1841,13 +1868,13 @@ pub inline fn step(cpu: *CpuState, irq: bool, irq_num: u4) void {
     const trap: bool = interrupt or underflow or overflow or instr_exception;
 
     const trap_cause: u8 = if (underflow)
-        0x30 // Data stack underflow
+        ECause.stack_underflow.toU8()
     else if (overflow)
-        0x31 // Data stack overflow
+        ECause.stack_overflow.toU8()
     else if (instr_exception)
-        fetched_uop.ecause // Instruction-specific cause
+        fetched_uop.ecause.toU8()
     else
-        0xF0 | @as(u8,irq_num); // External interrupt (category 15, sub-cause = irq number)
+        ECause.interrupt(irq_num);
 
     const uop = if (trap) microcode_rom[@intFromEnum(Opcode.syscall)] else fetched_uop;
 
