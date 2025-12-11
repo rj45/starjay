@@ -275,7 +275,7 @@ pub const ThSrc = enum(u1) {
 // ============================================================================
 
 /// What condition to check for exceptions
-/// Note: Underflow and overflow are checked automatically based on min_depth_required
+/// Note: Underflow and overflow are checked automatically based on min_depth
 /// and depth_op fields - they don't need explicit exception_check values.
 pub const ExceptionCheck = enum(u2) {
     none = 0, // no exception check
@@ -306,42 +306,6 @@ pub const WriteEnables = packed struct(u9) {
 
 /// Complete micro-operation specification
 /// This controls all datapaths for one clock cycle.
-///
-/// ## Hardware Exception Model
-///
-/// Exceptions are handled using a hardware-realistic IR mux approach:
-///
-/// 1. **Exception/Interrupt Detection** (combinational logic in step()):
-///    - External interrupt: `irq AND status.ie` (maskable)
-///    - Underflow: `depth < min_depth_required`
-///    - Overflow: `depth > max_depth` (mode-appropriate threshold)
-///    - Instruction-specific: `exception_check` field (div-zero, halt-trap)
-///
-/// 2. **Trap Signal**: OR of all exception/interrupt conditions
-///
-/// 3. **Priority Encoder** (produces trap_cause):
-///    - Underflow: 0x30 (highest priority)
-///    - Overflow: 0x31
-///    - Instruction-specific: from `ecause` field
-///    - External interrupt: 0xF0 | irq_num (lowest priority)
-///
-/// 4. **IR Mux**: When trap is asserted, forces the `syscall` opcode (0x02).
-///    The syscall instruction already performs the exception entry sequence
-///    (save status/pc, set km/ie, jump to evec).
-///
-/// 5. **Ecause Value**: When trap=1, ecause_value uses trap_cause from priority
-///    encoder. Otherwise it uses the microcode's ecause field. This allows
-///    syscall to serve dual purposes:
-///    - User-executed: ecause = 0x00
-///    - Hardware trap: ecause = trap_cause (underflow/overflow/div-zero/etc)
-///
-/// 6. **Intentional Traps** (illegal instructions): Use their own microcode
-///    with writes.ecause = true. The trap signal won't be set for these since
-///    they don't trigger exception_check conditions, so their immediate ecause
-///    is used directly.
-///
-/// This design ensures all operations happen through mux selection with no
-/// conditional early returns - matching real hardware behavior.
 pub const MicroOp = struct {
     // Result bus source (what value to put on the result bus)
     result_src: ResultSrc = .zero,
@@ -390,7 +354,7 @@ pub const MicroOp = struct {
     ecause: u8 = 0,
 
     // Stack safety: minimum depth required to execute without underflow
-    // Hardware comparator checks: if (depth < min_depth_required) raise underflow
+    // Hardware comparator checks: if (depth < min_depth) raise underflow
     // 0 = no stack access needed
     // 1 = needs valid TOS
     // 2 = needs valid TOS and NOS
@@ -1213,7 +1177,6 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
     };
 }
 
-/// ROM has 256 entries (one per possible instruction byte)
 pub const MICROCODE_ROM_SIZE = 66;
 
 /// Generate the complete microcode ROM at compile time
@@ -1221,8 +1184,7 @@ pub fn generateMicrocodeRom() [MICROCODE_ROM_SIZE]MicroOp {
     var rom: [MICROCODE_ROM_SIZE]MicroOp = undefined;
 
     for (0..63) |i| {
-        // O-format instruction (00xxxxxx)
-        const opcode: Opcode = @enumFromInt(i & 0x3F);
+        const opcode: Opcode = @enumFromInt(i);
         rom[i] = generateMicrocode(opcode);
     }
     rom[64] = generateMicrocode(.push); // push immediate (0x40)
@@ -1239,8 +1201,6 @@ pub const microcode_rom = generateMicrocodeRom();
 // ============================================================================
 
 /// Core registers that are frequently accessed during instruction execution.
-/// Separating these into a struct improves cache locality and makes it easier
-/// to snapshot/restore register state.
 pub const Regs = struct {
     // Program counter
     pc: Word = 0,
@@ -1601,7 +1561,7 @@ pub inline fn executeMicroOp(cpu: *CpuState, uop: MicroOp, instr: u8, trap: bool
     }
 
     // ========================================
-    // Register writes - order doesn't matter since all reads use snapshot
+    // Register writes
     // ========================================
 
     // TOS
@@ -1845,37 +1805,13 @@ fn logInstruction(cpu: *const CpuState, pc_before: Word, instr: u8, uop: MicroOp
 }
 
 /// Execute one instruction using microcode ROM
-///
-/// This models the hardware behavior:
-/// 1. Fetch instruction from memory
-/// 2. Advance PC (so PC points to next instruction during execution)
-/// 3. Look up fetched instruction's microcode for exception detection
-/// 4. Exception/interrupt detection (combinational logic):
-///    - Interrupt: irq=true AND status.ie=true (maskable)
-///    - Underflow: depth < min_depth_required
-///    - Overflow: depth > max_depth (mode-appropriate)
-///    - Instruction-specific: div-by-zero, halt-trap
-/// 5. Priority encoder produces trap_cause
-/// 6. IR mux: if trap, force syscall instruction; else use fetched instruction
-/// 7. Execute selected microcode
-///
-/// Parameters:
-/// - cpu: CPU state
-/// - irq: External interrupt request (directly from hardware bus)
-/// - irq_num: Interrupt number 0-15 (used when irq=true)
 pub inline fn step(cpu: *CpuState, irq: bool, irq_num: u4) void {
     if (cpu.halted) return;
 
-    // ========================================
-    // Fetch stage
-    // ========================================
-    const pc_before = cpu.reg.pc; // Save PC for debug logging
+    const pc_before = cpu.reg.pc;
     const fetched_instr = cpu.readByte(cpu.reg.pc);
-    cpu.reg.pc +%= 1; // Advance PC (now points to next instruction)
+    cpu.reg.pc +%= 1;
 
-    // ========================================
-    // Decode stage - get microcode for exception detection
-    // ========================================
     const fetched_uop = if ((fetched_instr & 0x80) != 0)
         // shi instruction
         microcode_rom[65]
@@ -1885,17 +1821,8 @@ pub inline fn step(cpu: *CpuState, irq: bool, irq_num: u4) void {
      else
         microcode_rom[fetched_instr&0x3F];
 
-    // ========================================
-    // Exception/Interrupt detection (combinational logic)
-    // ========================================
-    // These are parallel comparators in hardware, not sequential checks.
-
-    // External interrupt: masked by IE bit in status register
-    // Interrupts are edge-triggered conceptually - the interrupt controller
-    // should hold irq high until acknowledged.
     const interrupt: bool = irq and cpu.reg.status.ie;
 
-    // Underflow: instruction needs more stack depth than available
     const underflow: bool = cpu.reg.depth < fetched_uop.min_depth;
 
     // Overflow threshold depends on destination mode:
@@ -1905,19 +1832,14 @@ pub inline fn step(cpu: *CpuState, irq: bool, irq_num: u4) void {
     const max_depth: Word = if (dest_km) KERNEL_MAX_DEPTH else USER_MAX_DEPTH;
     const overflow: bool = cpu.reg.depth > max_depth;
 
-    // Instruction-specific exceptions
     const instr_exception: bool = switch (fetched_uop.exception_check) {
         .none => false,
         .div_zero => cpu.reg.tos == 0,
         .halt_trap => cpu.reg.status.th,
     };
 
-    // Trap signal: OR of all exception/interrupt conditions
     const trap: bool = interrupt or underflow or overflow or instr_exception;
 
-    // ========================================
-    // Priority encoder (produces trap_cause)
-    // ========================================
     const trap_cause: u8 = if (underflow)
         0x30 // Data stack underflow
     else if (overflow)
@@ -1927,26 +1849,12 @@ pub inline fn step(cpu: *CpuState, irq: bool, irq_num: u4) void {
     else
         0xF0 | @as(u8,irq_num); // External interrupt (category 15, sub-cause = irq number)
 
-    // ========================================
-    // IR mux: select instruction based on trap
-    // ========================================
-    // In hardware, this is a mux on the IR register input.
-    // When trap is asserted, the syscall opcode is forced (it performs
-    // the same exception entry sequence needed for all exceptions).
     const uop = if (trap) microcode_rom[@intFromEnum(Opcode.syscall)] else fetched_uop;
 
-    // ========================================
-    // Debug logging (only when enabled)
-    // ========================================
     if (cpu.log_enabled) {
         logInstruction(cpu, pc_before, fetched_instr, uop, trap, trap_cause);
     }
 
-    // ========================================
-    // Execute stage
-    // ========================================
-    // Pass trap flag and trap_cause. When trap=true, the ecause mux uses
-    // trap_cause instead of the instruction's immediate ecause field.
     executeMicroOp(cpu, uop, fetched_instr, trap, trap_cause);
 }
 
