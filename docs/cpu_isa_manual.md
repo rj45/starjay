@@ -339,11 +339,11 @@ All instructions are 8 bits wide. There are three instruction formats:
   +-------+-------+---------------+------------+--------------------------------+
   | 0   0 | 1   0 | 0   0   0   0 | div        | Signed division                |
   | 0   0 | 1   0 | 0   0   0   1 | divu       | Unsigned division              |
-  | 0   0 | 1   0 | 0   0   1   0 | mod        | Signed remainder / modulus     |
-  | 0   0 | 1   0 | 0   0   1   1 | modu       | Unsigned remainder / modulus   |
-  | 0   0 | 1   0 | 0   1   0   0 | mul        | Multiply                       |
-  | 0   0 | 1   0 | 0   1   0   1 | mulh       | Upper word of multiply         |
-  | 0   0 | 1   0 | 0   1   1   0 | select     | If tos then nos else ros       |
+  | 0   0 | 1   0 | 0   0   1   0 | mul        | Multiply                       |
+  | 0   0 | 1   0 | 0   0   1   1 |            |                                |
+  | 0   0 | 1   0 | 0   1   0   0 |            |                                |
+  | 0   0 | 1   0 | 0   1   0   1 |            |                                |
+  | 0   0 | 1   0 | 0   1   1   0 |            |                                |
   | 0   0 | 1   0 | 0   1   1   1 | rot        | Rotate tos into nos            |
   | 0   0 | 1   0 | 1   0   0   0 | srl        | Shift right logical            |
   | 0   0 | 1   0 | 1   0   0   1 | sra        | Shift right arithmetic         |
@@ -778,11 +778,14 @@ It is illegal to store a word to an unaligned address (that is, the lower 1 (16-
 
   if (tos! == 0) then raise { epc = pc; estatus = status; ecause = 0x40; ie = 0; km = 1; pc = evec } else
   push(signed(nos! / tos!))
+  push(signed(nos! % tos!))
 ```
 
-Performs signed integer division on the top two values on the data stack which are popped and the result pushed on the top of the stack.
+Performs signed integer division on the top two values on the data stack and the quotient and remainder replace the operands on the stack.
 
 If a division by zero is attempted, implementations are expected to raise an division by zero exception. If this instruction is emulated, the exception can be simulated by loading `ecause` with `0x40` and jumping to `evec`.
+
+Note: Division is always implemented in software as a macro instruction which may take many cycles to complete. Implementations may choose to detect and optimise common cases (such as division by powers of two) for efficiency.
 
 ##### 3.5.2. `divu` - Unsigned Divide
 
@@ -794,45 +797,16 @@ If a division by zero is attempted, implementations are expected to raise an div
 
   if (tos! == 0) then raise { epc = pc; estatus = status; ecause = 0x40; ie = 0; km = 1; pc = evec } else
   push(unsigned(nos! / tos!))
-```
-
-Performs unsigned integer division on the top two values on the data stack which are popped and the result pushed on the top of the stack.
-
-If a division by zero is attempted, implementations are expected to raise an division by zero exception. If this instruction is emulated, the exception can be simulated by loading `ecause` with `0x40` and jumping to `evec`.
-
-##### 3.5.3. `mod` - Signed Modulus
-
-```text
-   Fmt  7   6   5   4   3   2   1   0
-  +---+-------+-------+---------------+
-  | O | 0   0 | 1   0 | 0   0   1   0 |
-  +---+-------+-------+---------------+
-
-  if (tos! == 0) then raise { epc = pc; estatus = status; ecause = 0x40; ie = 0; km = 1; pc = evec } else
-  push(signed(nos! % tos!))
-```
-
-Performs signed integer modulus on the top two values on the data stack which are popped and the result pushed on the top of the stack.
-
-If a modulus by zero is attempted, implementations are expected to raise an division by zero exception. If this instruction is emulated, the exception can be simulated by loading `ecause` with `0x40` and jumping to `evec`.
-
-##### 3.5.4. `modu` - Unsigned Modulus
-
-```text
-   Fmt  7   6   5   4   3   2   1   0
-  +---+-------+-------+---------------+
-  | O | 0   0 | 1   0 | 0   0   1   1 |
-  +---+-------+-------+---------------+
-
-  if (tos! == 0) then raise { epc = pc; estatus = status; ecause = 0x40; ie = 0; km = 1; pc = evec } else
   push(unsigned(nos! % tos!))
 ```
 
-Performs unsigned integer modulus on the top two values on the data stack which are popped and the result pushed on the top of the stack.
+Performs unsigned integer division on the top two values on the data stack and the quotient and remainder replace the operands on the stack.
 
-If a modulus by zero is attempted, implementations are expected to raise an division by zero exception. If this instruction is emulated, the exception can be simulated by loading `ecause` with `0x40` and jumping to `evec`.
+If a division by zero is attempted, implementations are expected to raise an division by zero exception. If this instruction is emulated, the exception can be simulated by loading `ecause` with `0x40` and jumping to `evec`.
 
-##### 3.5.5. `mul` - Multiply
+Note: Division is always implemented in software as a macro instruction which may take many cycles to complete. Implementations may choose to detect and optimise common cases (such as division by powers of two) for efficiency.
+
+##### 3.5.3. `mul` - Multiply
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -840,42 +814,12 @@ If a modulus by zero is attempted, implementations are expected to raise an divi
   | O | 0   0 | 1   0 | 0   1   0   0 |
   +---+-------+-------+---------------+
 
-  push((nos! * tos!) & WORDMASK)
+  result = nos! * tos!; push(result & WORDMASK); push(result >> WORDSIZE)
 ```
 
-Multiplies the top two values on the data stack which are popped and the result pushed on the top of the stack. Only the least significant `WORDSIZE` bits of the result are kept; the rest are discarded.
+Multiplies the top two values on the data stack and replace them with the result with the upper word in `tos`. If only the lower word is needed, simply `drop` the upper word.
 
-If wanting to multiply double-words, use sequences of `mul`, `mulh` and `add` instructions to implement multi-precision multiplication. Implementations may choose to fuse typical sequences of stack ops, `mul`, and `add` into a single multi-precision multiply-and-accumulate instruction for efficiency. Compilers should ensure they use a canonical sequence of instructions to allow implementations to recognize these patterns.
-
-##### 3.5.6. `mulh` - Multiply High
-
-```text
-   Fmt  7   6   5   4   3   2   1   0
-  +---+-------+-------+---------------+
-  | O | 0   0 | 1   0 | 0   1   0   1 |
-  +---+-------+-------+---------------+
-
-  push(unsigned(nos! * tos!) >> WORDSIZE)
-```
-
-Multiplies the top two values on the data stack which are popped. The high `WORDSIZE` bits of the result are then pushed on the data stack. The least significant `WORDSIZE` bits are discarded. The operation is performed treating both operands as unsigned integers.
-
-If wanting to multiply double-words, use sequences of `mul`, `mulh`, and `add` instructions to implement multi-precision multiplication. Implementations may choose to fuse typical sequences of stack ops, `mul`, `mulh`, and `add` into a single multi-precision multiply-and-accumulate instruction for efficiency. Compilers should ensure they use a canonical sequence of instructions to allow implementations to recognize these patterns.
-
-##### 3.5.7. `select` - Select
-
-```text
-   Fmt  7   6   5   4   3   2   1   0
-  +---+-------+-------+---------------+
-  | O | 0   0 | 1   0 | 0   1   1   0 |
-  +---+-------+-------+---------------+
-
-  push(if tos! then nos! else ros!)
-```
-
-Selects between either the next on stack, if the top of stack is non-zero, or the third on stack, if the top of stack is zero. The top three stack values are popped and the selected value is pushed onto the top of the stack.
-
-##### 3.5.8. `rot` - Rotate
+##### 3.5.4. `rot` - Rotate
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -888,7 +832,7 @@ Selects between either the next on stack, if the top of stack is non-zero, or th
 
 Rotates the top three stack items such that the top on stack is rotated into being the third on stack. In other words, if the top three values are `A`, `B`, and `C`, they become `B`, `C`, and `A` after the operation.
 
-##### 3.5.9. `srl` - Shift Right Logical
+##### 3.5.5. `srl` - Shift Right Logical
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -901,7 +845,7 @@ Rotates the top three stack items such that the top on stack is rotated into bei
 
 Shifts the next on stack value right logically by the number of bits specified in the top of stack value which are popped and the result pushed on the top of the stack. Only the least significant `WORDSIZE` bits of the result are kept; the rest are discarded. The shift amount is masked to be within 0 to `WORDSIZE - 1`.
 
-##### 3.5.10. `sra` - Shift Right Arithmetic
+##### 3.5.6. `sra` - Shift Right Arithmetic
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -914,7 +858,7 @@ Shifts the next on stack value right logically by the number of bits specified i
 
 Shifts the next on stack value right arithmetically by the number of bits specified in the top of stack value  which are popped and the result pushed on the top of the stack. In other words, the sign bit is copied into the vacated most significant bits which are popped and the result pushed on the top of the stack. The shift amount is masked to be within 0 to `WORDSIZE - 1`.
 
-##### 3.5.11. `sll` - Shift Left Logical
+##### 3.5.7. `sll` - Shift Left Logical
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -927,7 +871,7 @@ Shifts the next on stack value right arithmetically by the number of bits specif
 
 Shifts the next on stack value left logically by the number of bits specified in the top of stack value which are popped and the result pushed on the top of the stack. Only the least significant `WORDSIZE` bits of the result are kept; the rest are discarded. The shift amount is masked to be within 0 to `WORDSIZE - 1`.
 
-##### 3.5.12. `or` - Bitwise OR
+##### 3.5.8. `or` - Bitwise OR
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -940,7 +884,7 @@ Shifts the next on stack value left logically by the number of bits specified in
 
 Performs a bitwise OR operation on the top two values on the data stack which are popped and the result pushed on the top of the stack.
 
-##### 3.5.13. `sub` - Subtract
+##### 3.5.9. `sub` - Subtract
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -1233,43 +1177,7 @@ Any or all of the 32 instructions with binary 0b001XXXXX may be implemented in t
 
 If they are not implemented in hardware, then executing one of these instructions will trigger the macro instruction trap sequence. The processor will enter kernel mode and jump to the appropriate macro instruction handler vector at address `imm * 8 + 0x100`.
 
-The macro instruction vector table is located at addresses 0x0100-0x01FF, with each handler allocated 8 bytes:
-
-```text
-  Address   Instruction
-  0x0100    div
-  0x0108    divu
-  0x0110    mod
-  0x0118    modu
-  0x0120    mul
-  0x0128    mulh
-  0x0130    select
-  0x0138    rot
-  0x0140    srl
-  0x0148    sra
-  0x0150    sll
-  0x0158    (reserved)
-  0x0160    (reserved)
-  0x0168    (reserved)
-  0x0170    (reserved)
-  0x0178    (reserved)
-  0x0180    lb
-  0x0188    sb
-  0x0190    lh
-  0x0198    sh
-  0x01A0    lw
-  0x01A8    sw
-  0x01B0    lnw
-  0x01B8    snw
-  0x01C0    call
-  0x01C8    callp
-  0x01D0    (reserved)
-  0x01D8    (reserved)
-  0x01E0    (reserved)
-  0x01E8    (reserved)
-  0x01F0    (reserved)
-  0x01F8    (reserved)
-```
+The macro instruction vector table is located at addresses 0x0100-0x01FF, with each handler allocated 8 bytes.
 
 Space should be reserved at 0x02XX for macro instruction handlers to jump to if needed, should they overflow the allotted 8-byte space.
 
@@ -1277,7 +1185,7 @@ Only 8 bytes are reserved for each macro instruction handler, so if more space i
 
 Note: The Invalid Instruction Exception (`ecause` = 0x10) does not include macro instructions (`0b001XXXXX`). Those instead trigger the specific macro instruction handler vector. If a specific instruction is implemented in hardware, it must not trigger an exception.
 
-Note 2: The divide related instructions (`div`, `divu`, `mod`, `modu`) are defined to cause a division by zero exception if the divisor is zero. This can be simulated by writing the `ecause` for division by zero and jumping to the general exception vector at `evec`.
+Note 2: The divide related instructions (`div`, `divu`) are defined to cause a division by zero exception if the divisor is zero. This can be simulated by writing the `ecause` for division by zero and jumping to the general exception vector at `evec`.
 
 **Warning**: Macro instruction handlers must either use no more than 4 stack slots, or they must first save `epc` and `estatus` to the frame stack before using more than 4 stack slots. See the previous two sections for more details.
 
