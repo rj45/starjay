@@ -100,7 +100,8 @@ sieve:
     ; Stack: [i]
     dup                      ; [i, i]
     dup                      ; [i, i, i]
-    mul                      ; [i, i*i]
+    mul                      ; [i, i*i lower, i*i upper]
+    drop                     ; [i, i*i]
     push SIEVE_SIZE          ; [i, i*i, SIEVE_SIZE]
     swap                     ; [i, SIEVE_SIZE, i*i]
     lt                       ; [i, SIEVE_SIZE < i*i] (1 if we should stop)
@@ -118,7 +119,8 @@ sieve:
     ; for j = i * i; j < SIEVE_SIZE; j += i
     dup                      ; [i, i]
     dup                      ; [i, i, i]
-    mul                      ; [i, j=i*i]
+    mul                      ; [i, j=i*i lower, j=i*i upper]
+    drop                     ; [i, j=i*i]
 
 .inner_loop:
     ; Stack: [i, j]

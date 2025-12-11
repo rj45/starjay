@@ -25,174 +25,28 @@ pub const Status = packed struct(u16) {
     }
 };
 
-pub const ResultSrc = enum(u4) {
-    tos = 0,
-    nos = 1,
-    pc = 2,
-    fp = 3,
-    ra = 4,
-    ar = 5,
-    imm_sext6 = 6,
-    mem_data = 7,
-    csr_data = 8,
-    alu_out = 9,
-    fsl_out = 10,
-    zero = 11,
+pub const OpASrc = enum(u3) { tos, nos, ros, fp, ra, ar, pc, zero };
+pub const OpBSrc = enum(u3) { tos, nos, ros, imm7, zero, wordbytes };
+pub const ResultSrc = enum(u3) {
+    op_a,
+    imm_sext6,
+    shl7_or,
+    alu,
+    shifter,
+    mem,
+    csr,
 };
-
-pub const AluASrc = enum(u3) {
-    tos = 0,
-    nos = 1,
-    fp = 2,
-    ra = 3,
-    ar = 4,
-};
-
-pub const AluBSrc = enum(u3) {
-    tos = 0,
-    nos = 1,
-    imm7 = 2,
-    zero = 3,
-    wordbytes = 4,
-};
-
-pub const AluOp = enum(u4) {
-    pass_a = 0,
-    add = 1,
-    sub = 2,
-    and_op = 3,
-    or_op = 4,
-    xor_op = 5,
-    lt = 6,
-    ltu = 7,
-    shl7_or = 8,
-    mul = 9,
-    mulh = 10,
-    div = 11,
-    divu = 12,
-    mod = 13,
-    modu = 14,
-    select = 15,
-};
-
-// Funnel Shifter: ({hi, lo} << shift) >> WORDSIZE
-pub const FslHiSrc = enum(u2) {
-    zero = 0,
-    nos = 1,
-    ros = 2,
-    sign_fill = 3,
-};
-
-pub const FslLoSrc = enum(u2) {
-    zero = 0,
-    nos = 1,
-};
-
-pub const FslShiftSrc = enum(u2) {
-    tos = 0,
-    neg_tos = 1,
-};
-
-pub const FslShiftMask = enum(u1) {
-    single_word = 0,
-    double_word = 1,
-};
-
-pub const TosSrc = enum(u3) {
-    hold = 0,
-    result = 1,
-    nos = 2,
-    ros = 3,
-    stack_mem = 4,
-    mem_data = 5,
-};
-
-pub const NosSrc = enum(u2) {
-    hold = 0,
-    tos = 1,
-    ros = 2,
-    stack_mem = 3,
-};
-
-pub const RosSrc = enum(u2) {
-    hold = 0,
-    nos = 1,
-    tos = 2,
-    stack_mem = 3,
-};
-
-pub const DepthOp = enum(u3) {
-    none = 0,
-    inc = 1,
-    dec = 2,
-    dec2 = 3,
-    dec3 = 4,
-};
-
-pub const MemOp = enum(u3) {
-    none = 0,
-    read_byte = 1,
-    read_half = 2,
-    read_word = 3,
-    write_byte = 4,
-    write_half = 5,
-    write_word = 6,
-};
-
-pub const MemAddrSrc = enum(u2) {
-    tos = 0,
-    fp_plus_tos = 1,
-    ar = 2,
-};
-
-pub const MemDataSrc = enum(u1) {
-    nos = 0,
-    tos = 1,
-};
-
-pub const PcSrc = enum(u3) {
-    next = 0,
-    rel_tos = 1,
-    abs_tos = 2,
-    evec = 3,
-    epc = 4,
-    hold = 5,
-};
-
-pub const BranchCond = enum(u2) {
-    always = 0,
-    if_nos_zero = 1,
-    if_nos_nzero = 2,
-};
-
-pub const CsrOp = enum(u2) {
-    none = 0,
-    read = 1,
-    write = 2,
-};
-
-pub const KmSrc = enum(u2) {
-    hold = 0,
-    set = 1,
-    estatus = 2,
-};
-
-pub const IeSrc = enum(u2) {
-    hold = 0,
-    clear = 1,
-    estatus = 2,
-};
-
-pub const ThSrc = enum(u1) {
-    hold = 0,
-    estatus = 1,
-};
-
-pub const ExceptionCheck = enum(u2) {
-    none = 0,
-    div_zero = 1,
-    halt_trap = 2,
-};
+pub const AluOp = enum(u3) { add, sub, and_op, or_op, xor_op, lt, ltu };
+pub const ShiftMode = enum(u2) { sll, srl, sra, fsl };
+pub const MemOp = enum(u2) { none, read, write };
+pub const MemWidth = enum(u2) { byte, half, word };
+pub const MemAddr = enum(u2) { tos, fp_rel, ar };
+pub const MemWData = enum(u1) { nos, tos };
+pub const Dest = enum(u3) { none, tos, fp, ra, ar, csr };
+pub const StackMode = enum(u3) { hold, push, pop, pop2, pop3, swap, rot };
+pub const PcSrc = enum(u3) { next, rel, abs, evec, epc, hold, macro };
+pub const BranchCond = enum(u2) { always, if_nos_zero, if_nos_nzero };
+pub const TrapCheck = enum(u1) { none, th_trap };
 
 pub const ECause = enum(u3) {
     none = 0,
@@ -201,10 +55,9 @@ pub const ECause = enum(u3) {
     halt_trap = 3,
     stack_underflow = 4,
     stack_overflow = 5,
-    div_by_zero = 6,
 
     /// Convert to full 8-bit ecause value.
-    /// Upper nibble encodes exception class: 0x0=syscall, 0x1=illegal, 0x3=stack, 0x4=arith, 0x5=irq
+    /// Upper nibble encodes exception class: 0x0=syscall, 0x1=illegal, 0x3=stack, 0x5=irq
     pub fn toU8(self: ECause) u8 {
         return switch (self) {
             .none => 0x00,
@@ -213,7 +66,6 @@ pub const ECause = enum(u3) {
             .halt_trap => 0x12,
             .stack_underflow => 0x30,
             .stack_overflow => 0x31,
-            .div_by_zero => 0x40,
         };
     }
 
@@ -222,43 +74,43 @@ pub const ECause = enum(u3) {
     }
 };
 
-pub const WriteEnables = packed struct(u9) {
-    fp: bool = false,
-    ra: bool = false,
-    ar: bool = false,
-    csr: bool = false,
-    epc: bool = false,
-    estatus: bool = false,
-    ecause: bool = false,
-    halt: bool = false,
-    th: bool = false,
-};
+pub const MicroOp = packed struct(u43) {
+    // OPERAND SELECTION
+    op_a: OpASrc = .tos,
+    op_b: OpBSrc = .zero,
 
-pub const MicroOp = packed struct(u64) {
-    result_src: ResultSrc = .zero,
-    alu_op: AluOp = .pass_a,
-    alu_a: AluASrc = .nos,
-    alu_b: AluBSrc = .zero,
-    fsl_hi: FslHiSrc = .zero,
-    fsl_lo: FslLoSrc = .zero,
-    fsl_shift: FslShiftSrc = .tos,
-    fsl_mask: FslShiftMask = .single_word,
-    tos_src: TosSrc = .hold,
-    nos_src: NosSrc = .hold,
-    ros_src: RosSrc = .hold,
-    depth_op: DepthOp = .none,
+    // RESULT GENERATION
+    result_src: ResultSrc = .op_a,
+    alu_op: AluOp = .add,
+    shift_mode: ShiftMode = .sll,
+
+    // MULTIPLIER (1 bit)
+    mul_enable: bool = false,
+
+    // MEMORY ACCESS
     mem_op: MemOp = .none,
-    mem_addr: MemAddrSrc = .tos,
-    mem_data: MemDataSrc = .nos,
+    mem_width: MemWidth = .word,
+    mem_addr: MemAddr = .tos,
+    mem_wdata: MemWData = .nos,
+
+    // DESTINATION & STACK
+    dest: Dest = .none,
+    stack_mode: StackMode = .hold,
+    ar_increment: bool = false,
+
+    // CONTROL FLOW
     pc_src: PcSrc = .next,
     branch_cond: BranchCond = .always,
-    csr_op: CsrOp = .none,
-    writes: WriteEnables = .{},
-    km_src: KmSrc = .hold,
-    ie_src: IeSrc = .hold,
-    exception_check: ExceptionCheck = .none,
+
+    // EXCEPTION & STATUS
+    trap_check: TrapCheck = .none,
     ecause: ECause = .none,
+    enter_trap: bool = false,
+    exit_trap: bool = false,
+
+    // SAFETY
     min_depth: u2 = 0,
+    halt: bool = false,
 };
 
 pub const Opcode = enum(u7) {
@@ -296,11 +148,11 @@ pub const Opcode = enum(u7) {
     slw = 0x1F,
     div = 0x20,
     divu = 0x21,
-    mod = 0x22,
-    modu = 0x23,
+    ext_reserved_22 = 0x22,
+    ext_reserved_23 = 0x23,
     mul = 0x24,
-    mulh = 0x25,
-    select = 0x26,
+    ext_reserved_25 = 0x25,
+    ext_reserved_26 = 0x26,
     rot = 0x27,
     srl = 0x28,
     sra = 0x29,
@@ -331,557 +183,501 @@ pub const Opcode = enum(u7) {
 };
 
 fn generateMicrocode(opcode: Opcode) MicroOp {
+    const illegal_instr: MicroOp = .{
+        .pc_src = .evec,
+        .enter_trap = true,
+        .ecause = .illegal_instr,
+    };
+
     return switch (opcode) {
+        // push (immediate): push sign-extended 6-bit immediate
         .push => .{
             .result_src = .imm_sext6,
-            .tos_src = .result,
-            .nos_src = .tos,
-            .ros_src = .nos,
-            .depth_op = .inc,
+            .dest = .tos,
+            .stack_mode = .push,
         },
+
+        // shi (shift-high-immediate): TOS = (TOS << 7) | imm7
         .shi => .{
-            .result_src = .alu_out,
-            .alu_op = .shl7_or,
-            .alu_a = .tos,
-            .alu_b = .imm7,
-            .tos_src = .result,
+            .op_a = .tos,
+            .op_b = .imm7, // imm7 comes from instruction
+            .result_src = .shl7_or,
+            .dest = .tos,
+            .stack_mode = .hold,
             .min_depth = 1,
         },
+
+        // halt: stop execution, trap if TH flag set
         .halt => .{
             .pc_src = .hold,
-            .writes = .{ .halt = true },
-            .exception_check = .halt_trap,
+            .halt = true,
+            .trap_check = .th_trap,
             .ecause = .halt_trap,
         },
-        .reserved_01 => .{
-            .pc_src = .evec,
-            .km_src = .set,
-            .ie_src = .clear,
-            .writes = .{ .epc = true, .estatus = true, .ecause = true },
-            .ecause = .illegal_instr,
-        },
+
+        // reserved_01: illegal instruction
+        .reserved_01 => illegal_instr,
+
+        // syscall: trap to exception handler
         .syscall => .{
             .pc_src = .evec,
-            .km_src = .set,
-            .ie_src = .clear,
-            .writes = .{ .epc = true, .estatus = true, .ecause = true },
+            .enter_trap = true,
             .ecause = .syscall,
         },
+
+        // rets: return from exception
         .rets => .{
             .pc_src = .epc,
-            .km_src = .estatus,
-            .ie_src = .estatus,
-            .writes = .{ .th = true },
+            .exit_trap = true,
         },
+
+        // beqz: branch if NOS == 0
         .beqz => .{
-            .pc_src = .rel_tos,
+            .op_a = .tos,
+            .pc_src = .rel,
             .branch_cond = .if_nos_zero,
-            .tos_src = .ros,
-            .nos_src = .stack_mem,
-            .ros_src = .stack_mem,
-            .depth_op = .dec2,
+            .stack_mode = .pop2,
             .min_depth = 2,
         },
+
+        // bnez: branch if NOS != 0
         .bnez => .{
-            .pc_src = .rel_tos,
+            .op_a = .tos,
+            .pc_src = .rel,
             .branch_cond = .if_nos_nzero,
-            .tos_src = .ros,
-            .nos_src = .stack_mem,
-            .ros_src = .stack_mem,
-            .depth_op = .dec2,
+            .stack_mode = .pop2,
             .min_depth = 2,
         },
+
+        // swap: exchange TOS and NOS
         .swap => .{
-            .tos_src = .nos,
-            .nos_src = .tos,
+            .stack_mode = .swap,
             .min_depth = 2,
         },
+
+        // over: push NOS (copy second to top)
         .over => .{
-            .result_src = .nos,
-            .tos_src = .result,
-            .nos_src = .tos,
-            .ros_src = .nos,
-            .depth_op = .inc,
+            .op_a = .nos,
+            .result_src = .op_a,
+            .dest = .tos,
+            .stack_mode = .push,
             .min_depth = 2,
         },
+
+        // drop: pop and discard TOS
         .drop => .{
-            .tos_src = .nos,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
+            .stack_mode = .pop,
             .min_depth = 1,
         },
+
+        // dup: push TOS (duplicate top)
         .dup => .{
-            .nos_src = .tos,
-            .ros_src = .nos,
-            .depth_op = .inc,
+            .op_a = .tos,
+            .result_src = .op_a,
+            .dest = .tos,
+            .stack_mode = .push,
             .min_depth = 1,
         },
+
+        // ltu: unsigned less than
         .ltu => .{
-            .result_src = .alu_out,
+            .op_a = .nos,
+            .op_b = .tos,
+            .result_src = .alu,
             .alu_op = .ltu,
-            .alu_a = .nos,
-            .alu_b = .tos,
-            .tos_src = .result,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
+            .dest = .tos,
+            .stack_mode = .pop,
             .min_depth = 2,
         },
+
+        // lt: signed less than
         .lt => .{
-            .result_src = .alu_out,
+            .op_a = .nos,
+            .op_b = .tos,
+            .result_src = .alu,
             .alu_op = .lt,
-            .alu_a = .nos,
-            .alu_b = .tos,
-            .tos_src = .result,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
+            .dest = .tos,
+            .stack_mode = .pop,
             .min_depth = 2,
         },
+
+        // add: NOS + TOS
         .add => .{
-            .result_src = .alu_out,
+            .op_a = .nos,
+            .op_b = .tos,
+            .result_src = .alu,
             .alu_op = .add,
-            .alu_a = .nos,
-            .alu_b = .tos,
-            .tos_src = .result,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
+            .dest = .tos,
+            .stack_mode = .pop,
             .min_depth = 2,
         },
+
+        // and: NOS & TOS
         .and_op => .{
-            .result_src = .alu_out,
+            .op_a = .nos,
+            .op_b = .tos,
+            .result_src = .alu,
             .alu_op = .and_op,
-            .alu_a = .nos,
-            .alu_b = .tos,
-            .tos_src = .result,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
+            .dest = .tos,
+            .stack_mode = .pop,
             .min_depth = 2,
         },
+
+        // xor: NOS ^ TOS
         .xor_op => .{
-            .result_src = .alu_out,
+            .op_a = .nos,
+            .op_b = .tos,
+            .result_src = .alu,
             .alu_op = .xor_op,
-            .alu_a = .nos,
-            .alu_b = .tos,
-            .tos_src = .result,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
+            .dest = .tos,
+            .stack_mode = .pop,
             .min_depth = 2,
         },
+
+        // fsl: funnel shift left ({ROS, NOS} << TOS) >> 16
         .fsl => .{
-            .result_src = .fsl_out,
-            .fsl_hi = .ros,
-            .fsl_lo = .nos,
-            .fsl_shift = .tos,
-            .fsl_mask = .double_word,
-            .tos_src = .result,
-            .nos_src = .stack_mem,
-            .ros_src = .stack_mem,
-            .depth_op = .dec2,
+            .op_a = .nos,
+            .op_b = .tos,
+            .result_src = .shifter,
+            .shift_mode = .fsl,
+            .dest = .tos,
+            .stack_mode = .pop2,
             .min_depth = 3,
         },
+
+        // push_pc: push program counter
         .push_pc => .{
-            .result_src = .pc,
-            .tos_src = .result,
-            .nos_src = .tos,
-            .ros_src = .nos,
-            .depth_op = .inc,
+            .op_a = .pc,
+            .result_src = .op_a,
+            .dest = .tos,
+            .stack_mode = .push,
         },
+
+        // push_fp: push frame pointer
         .push_fp => .{
-            .result_src = .fp,
-            .tos_src = .result,
-            .nos_src = .tos,
-            .ros_src = .nos,
-            .depth_op = .inc,
+            .op_a = .fp,
+            .result_src = .op_a,
+            .dest = .tos,
+            .stack_mode = .push,
         },
+
+        // push_ra: push return address
         .push_ra => .{
-            .result_src = .ra,
-            .tos_src = .result,
-            .nos_src = .tos,
-            .ros_src = .nos,
-            .depth_op = .inc,
+            .op_a = .ra,
+            .result_src = .op_a,
+            .dest = .tos,
+            .stack_mode = .push,
         },
+
+        // push_ar: push address register
         .push_ar => .{
-            .result_src = .ar,
-            .tos_src = .result,
-            .nos_src = .tos,
-            .ros_src = .nos,
-            .depth_op = .inc,
+            .op_a = .ar,
+            .result_src = .op_a,
+            .dest = .tos,
+            .stack_mode = .push,
         },
+
+        // pop_pc: pop to program counter (return)
         .pop_pc => .{
-            .pc_src = .abs_tos,
-            .tos_src = .nos,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
+            .op_a = .tos,
+            .pc_src = .abs,
+            .stack_mode = .pop,
             .min_depth = 1,
         },
+
+        // pop_fp: pop to frame pointer
         .pop_fp => .{
-            .result_src = .tos,
-            .writes = .{ .fp = true },
-            .tos_src = .nos,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
+            .op_a = .tos,
+            .result_src = .op_a,
+            .dest = .fp,
+            .stack_mode = .pop,
             .min_depth = 1,
         },
+
+        // pop_ra: pop to return address
         .pop_ra => .{
-            .result_src = .tos,
-            .writes = .{ .ra = true },
-            .tos_src = .nos,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
+            .op_a = .tos,
+            .result_src = .op_a,
+            .dest = .ra,
+            .stack_mode = .pop,
             .min_depth = 1,
         },
+
+        // pop_ar: pop to address register
         .pop_ar => .{
-            .result_src = .tos,
-            .writes = .{ .ar = true },
-            .tos_src = .nos,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
+            .op_a = .tos,
+            .result_src = .op_a,
+            .dest = .ar,
+            .stack_mode = .pop,
             .min_depth = 1,
         },
+
+        // jump: relative jump by TOS
         .jump => .{
-            .pc_src = .rel_tos,
-            .tos_src = .nos,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
+            .op_a = .tos,
+            .pc_src = .rel,
+            .stack_mode = .pop,
             .min_depth = 1,
         },
+
+        // add_fp: FP += TOS
         .add_fp => .{
-            .result_src = .alu_out,
+            .op_a = .fp,
+            .op_b = .tos,
+            .result_src = .alu,
             .alu_op = .add,
-            .alu_a = .fp,
-            .alu_b = .tos,
-            .writes = .{ .fp = true },
-            .tos_src = .nos,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
+            .dest = .fp,
+            .stack_mode = .pop,
             .min_depth = 1,
         },
+
+        // add_ra: RA += TOS
         .add_ra => .{
-            .result_src = .alu_out,
+            .op_a = .ra,
+            .op_b = .tos,
+            .result_src = .alu,
             .alu_op = .add,
-            .alu_a = .ra,
-            .alu_b = .tos,
-            .writes = .{ .ra = true },
-            .tos_src = .nos,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
+            .dest = .ra,
+            .stack_mode = .pop,
             .min_depth = 1,
         },
+
+        // add_ar: AR += TOS
         .add_ar => .{
-            .result_src = .alu_out,
+            .op_a = .ar,
+            .op_b = .tos,
+            .result_src = .alu,
             .alu_op = .add,
-            .alu_a = .ar,
-            .alu_b = .tos,
-            .writes = .{ .ar = true },
-            .tos_src = .nos,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
+            .dest = .ar,
+            .stack_mode = .pop,
             .min_depth = 1,
         },
+
+        // pushcsr: read CSR[TOS] into TOS
         .pushcsr => .{
-            .result_src = .csr_data,
-            .csr_op = .read,
-            .tos_src = .result,
+            .result_src = .csr,
+            .dest = .tos,
+            .stack_mode = .hold,
             .min_depth = 1,
         },
+
+        // popcsr: write NOS to CSR[TOS]
         .popcsr => .{
-            .csr_op = .write,
-            .writes = .{ .csr = true },
-            .tos_src = .ros,
-            .nos_src = .stack_mem,
-            .ros_src = .stack_mem,
-            .depth_op = .dec2,
+            .dest = .csr,
+            .stack_mode = .pop2,
             .min_depth = 2,
         },
+
+        // llw: load local word (fp-relative)
         .llw => .{
-            .mem_op = .read_word,
-            .mem_addr = .fp_plus_tos,
-            .result_src = .mem_data,
-            .tos_src = .result,
+            .result_src = .mem,
+            .mem_op = .read,
+            .mem_width = .word,
+            .mem_addr = .fp_rel,
+            .dest = .tos,
+            .stack_mode = .hold,
             .min_depth = 1,
         },
+
+        // slw: store local word (fp-relative)
         .slw => .{
-            .mem_op = .write_word,
-            .mem_addr = .fp_plus_tos,
-            .result_src = .nos,
-            .tos_src = .ros,
-            .nos_src = .stack_mem,
-            .ros_src = .stack_mem,
-            .depth_op = .dec2,
+            .mem_op = .write,
+            .mem_width = .word,
+            .mem_addr = .fp_rel,
+            .stack_mode = .pop2,
             .min_depth = 2,
         },
+
+        // div: macro-vectored to software implementation
         .div => .{
-            .result_src = .alu_out,
-            .alu_op = .div,
-            .alu_a = .nos,
-            .alu_b = .tos,
-            .tos_src = .result,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
-            .exception_check = .div_zero,
-            .ecause = .div_by_zero,
+            .pc_src = .macro,
+            .enter_trap = true,
             .min_depth = 2,
         },
+
+        // divu: macro-vectored to software implementation
         .divu => .{
-            .result_src = .alu_out,
-            .alu_op = .divu,
-            .alu_a = .nos,
-            .alu_b = .tos,
-            .tos_src = .result,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
-            .exception_check = .div_zero,
-            .ecause = .div_by_zero,
+            .pc_src = .macro,
+            .enter_trap = true,
             .min_depth = 2,
         },
-        .mod => .{
-            .result_src = .alu_out,
-            .alu_op = .mod,
-            .alu_a = .nos,
-            .alu_b = .tos,
-            .tos_src = .result,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
-            .exception_check = .div_zero,
-            .ecause = .div_by_zero,
-            .min_depth = 2,
-        },
-        .modu => .{
-            .result_src = .alu_out,
-            .alu_op = .modu,
-            .alu_a = .nos,
-            .alu_b = .tos,
-            .tos_src = .result,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
-            .exception_check = .div_zero,
-            .ecause = .div_by_zero,
-            .min_depth = 2,
-        },
+
+        .ext_reserved_22, .ext_reserved_23, .ext_reserved_25, .ext_reserved_26 => illegal_instr,
+
+        // mul: multiply, produces TOS=high, NOS=low
         .mul => .{
-            .result_src = .alu_out,
-            .alu_op = .mul,
-            .alu_a = .nos,
-            .alu_b = .tos,
-            .tos_src = .result,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
+            .op_a = .nos,
+            .op_b = .tos,
+            .mul_enable = true,
             .min_depth = 2,
         },
-        .mulh => .{
-            .result_src = .alu_out,
-            .alu_op = .mulh,
-            .alu_a = .nos,
-            .alu_b = .tos,
-            .tos_src = .result,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
-            .min_depth = 2,
-        },
-        .select => .{
-            .result_src = .alu_out,
-            .alu_op = .select,
-            .alu_a = .tos,
-            .alu_b = .nos,
-            .tos_src = .result,
-            .nos_src = .stack_mem,
-            .ros_src = .stack_mem,
-            .depth_op = .dec2,
-            .min_depth = 3,
-        },
+
+        // rot: rotate stack (TOS=NOS, NOS=ROS, ROS=TOS)
         .rot => .{
-            .tos_src = .nos,
-            .nos_src = .ros,
-            .ros_src = .tos,
+            .stack_mode = .rot,
             .min_depth = 3,
         },
+
+        // srl: shift right logical
         .srl => .{
-            .result_src = .fsl_out,
-            .fsl_hi = .zero,
-            .fsl_lo = .nos,
-            .fsl_shift = .neg_tos,
-            .tos_src = .result,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
+            .op_a = .nos,
+            .op_b = .tos,
+            .result_src = .shifter,
+            .shift_mode = .srl,
+            .dest = .tos,
+            .stack_mode = .pop,
             .min_depth = 2,
         },
+
+        // sra: shift right arithmetic
         .sra => .{
-            .result_src = .fsl_out,
-            .fsl_hi = .sign_fill,
-            .fsl_lo = .nos,
-            .fsl_shift = .neg_tos,
-            .tos_src = .result,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
+            .op_a = .nos,
+            .op_b = .tos,
+            .result_src = .shifter,
+            .shift_mode = .sra,
+            .dest = .tos,
+            .stack_mode = .pop,
             .min_depth = 2,
         },
+
+        // sll: shift left logical
         .sll => .{
-            .result_src = .fsl_out,
-            .fsl_hi = .nos,
-            .fsl_lo = .zero,
-            .fsl_shift = .tos,
-            .tos_src = .result,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
+            .op_a = .nos,
+            .op_b = .tos,
+            .result_src = .shifter,
+            .shift_mode = .sll,
+            .dest = .tos,
+            .stack_mode = .pop,
             .min_depth = 2,
         },
+
+        // or: NOS | TOS
         .or_op => .{
-            .result_src = .alu_out,
+            .op_a = .nos,
+            .op_b = .tos,
+            .result_src = .alu,
             .alu_op = .or_op,
-            .alu_a = .nos,
-            .alu_b = .tos,
-            .tos_src = .result,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
+            .dest = .tos,
+            .stack_mode = .pop,
             .min_depth = 2,
         },
+
+        // sub: NOS - TOS
         .sub => .{
-            .result_src = .alu_out,
+            .op_a = .nos,
+            .op_b = .tos,
+            .result_src = .alu,
             .alu_op = .sub,
-            .alu_a = .nos,
-            .alu_b = .tos,
-            .tos_src = .result,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
+            .dest = .tos,
+            .stack_mode = .pop,
             .min_depth = 2,
         },
-        .ext_reserved_2D, .ext_reserved_2E, .ext_reserved_2F => .{
-            .pc_src = .evec,
-            .km_src = .set,
-            .ie_src = .clear,
-            .writes = .{ .epc = true, .estatus = true, .ecause = true },
-            .ecause = .illegal_instr,
-        },
+
+        .ext_reserved_2D, .ext_reserved_2E, .ext_reserved_2F => illegal_instr,
+
+        // lb: load byte (sign-extended)
         .lb => .{
-            .mem_op = .read_byte,
+            .result_src = .mem,
+            .mem_op = .read,
+            .mem_width = .byte,
             .mem_addr = .tos,
-            .result_src = .mem_data,
-            .tos_src = .result,
+            .dest = .tos,
+            .stack_mode = .hold,
             .min_depth = 1,
         },
+
+        // sb: store byte
         .sb => .{
-            .mem_op = .write_byte,
+            .mem_op = .write,
+            .mem_width = .byte,
             .mem_addr = .tos,
-            .result_src = .nos,
-            .tos_src = .ros,
-            .nos_src = .stack_mem,
-            .ros_src = .stack_mem,
-            .depth_op = .dec2,
+            .stack_mode = .pop2,
             .min_depth = 2,
         },
+
+        // lh: load half (sign-extended)
         .lh => .{
-            .mem_op = .read_half,
+            .result_src = .mem,
+            .mem_op = .read,
+            .mem_width = .half,
             .mem_addr = .tos,
-            .result_src = .mem_data,
-            .tos_src = .result,
+            .dest = .tos,
+            .stack_mode = .hold,
             .min_depth = 1,
         },
+
+        // sh: store half
         .sh => .{
-            .mem_op = .write_half,
+            .mem_op = .write,
+            .mem_width = .half,
             .mem_addr = .tos,
-            .result_src = .nos,
-            .tos_src = .ros,
-            .nos_src = .stack_mem,
-            .ros_src = .stack_mem,
-            .depth_op = .dec2,
+            .stack_mode = .pop2,
             .min_depth = 2,
         },
+
+        // lw: load word
         .lw => .{
-            .mem_op = .read_word,
+            .result_src = .mem,
+            .mem_op = .read,
+            .mem_width = .word,
             .mem_addr = .tos,
-            .result_src = .mem_data,
-            .tos_src = .result,
+            .dest = .tos,
+            .stack_mode = .hold,
             .min_depth = 1,
         },
+
+        // sw: store word
         .sw => .{
-            .mem_op = .write_word,
+            .mem_op = .write,
+            .mem_width = .word,
             .mem_addr = .tos,
-            .result_src = .nos,
-            .tos_src = .ros,
-            .nos_src = .stack_mem,
-            .ros_src = .stack_mem,
-            .depth_op = .dec2,
+            .stack_mode = .pop2,
             .min_depth = 2,
         },
+
+        // lnw: load next word via AR, then AR += WORDBYTES
         .lnw => .{
-            .mem_op = .read_word,
+            .result_src = .mem,
+            .mem_op = .read,
+            .mem_width = .word,
             .mem_addr = .ar,
-            .result_src = .alu_out,
-            .alu_op = .add,
-            .alu_a = .ar,
-            .alu_b = .wordbytes,
-            .writes = .{ .ar = true },
-            .tos_src = .mem_data,
-            .nos_src = .tos,
-            .ros_src = .nos,
-            .depth_op = .inc,
+            .dest = .tos,
+            .stack_mode = .push,
+            .ar_increment = true,
         },
+
+        // snw: store next word via AR, then AR += WORDBYTES
         .snw => .{
-            .mem_op = .write_word,
+            .mem_op = .write,
+            .mem_width = .word,
             .mem_addr = .ar,
-            .mem_data = .tos,
-            .result_src = .alu_out,
-            .alu_op = .add,
-            .alu_a = .ar,
-            .alu_b = .wordbytes,
-            .writes = .{ .ar = true },
-            .tos_src = .nos,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
+            .mem_wdata = .tos,
+            .stack_mode = .pop,
+            .ar_increment = true,
             .min_depth = 1,
         },
+
+        // call: relative call, saves PC to RA
         .call => .{
-            .result_src = .pc,
-            .writes = .{ .ra = true },
-            .pc_src = .rel_tos,
-            .tos_src = .nos,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
+            .op_a = .pc,
+            .result_src = .op_a,
+            .dest = .ra,
+            .pc_src = .rel,
+            .stack_mode = .pop,
             .min_depth = 1,
         },
+
+        // callp: absolute call (function pointer), saves PC to RA
         .callp => .{
-            .result_src = .pc,
-            .writes = .{ .ra = true },
-            .pc_src = .abs_tos,
-            .tos_src = .nos,
-            .nos_src = .ros,
-            .ros_src = .stack_mem,
-            .depth_op = .dec,
+            .op_a = .pc,
+            .result_src = .op_a,
+            .dest = .ra,
+            .pc_src = .abs,
+            .stack_mode = .pop,
             .min_depth = 1,
         },
-        .ext_reserved_3A, .ext_reserved_3B, .ext_reserved_3C, .ext_reserved_3D, .ext_reserved_3E, .ext_reserved_3F => .{
-            .pc_src = .evec,
-            .km_src = .set,
-            .ie_src = .clear,
-            .writes = .{ .epc = true, .estatus = true, .ecause = true },
-            .ecause = .illegal_instr,
-        },
+
+        .ext_reserved_3A, .ext_reserved_3B, .ext_reserved_3C, .ext_reserved_3D, .ext_reserved_3E, .ext_reserved_3F => illegal_instr,
     };
 }
 
@@ -1104,218 +900,181 @@ pub const CpuState = struct {
 pub inline fn executeMicroOp(cpu: *CpuState, uop: MicroOp, instr: u8, trap: bool, trap_cause: u8) void {
     const r = cpu.reg;
 
-    const result: Word = switch (uop.result_src) {
+    const op_a: Word = switch (uop.op_a) {
         .tos => r.tos,
         .nos => r.nos,
-        .pc => r.pc,
+        .ros => r.ros,
         .fp => r.fp(),
         .ra => r.ra,
         .ar => r.ar,
-        .imm_sext6 => signExtend6(@truncate(instr & 0x3F)),
-        .mem_data => blk: {
-            const mem_addr = switch (uop.mem_addr) {
-                .tos => r.tos,
-                .fp_plus_tos => r.fp() +% r.tos,
-                .ar => r.ar,
-            };
-            break :blk switch (uop.mem_op) {
-                .read_byte => signExtend8(cpu.readByte(mem_addr)),
-                .read_half => cpu.readHalf(mem_addr),
-                .read_word => cpu.readWord(mem_addr),
-                else => 0,
-            };
-        },
-        .csr_data => cpu.readCsr(r.tos),
-        .alu_out => blk: {
-            const alu_a = switch (uop.alu_a) {
-                .tos => r.tos,
-                .nos => r.nos,
-                .fp => r.fp(),
-                .ra => r.ra,
-                .ar => r.ar,
-            };
-            const alu_b = switch (uop.alu_b) {
-                .tos => r.tos,
-                .nos => r.nos,
-                .imm7 => instr & 0x7F,
-                .zero => 0,
-                .wordbytes => WORDBYTES,
-            };
-            break :blk executeAlu(uop.alu_op, alu_a, alu_b, r.ros);
-        },
-        .fsl_out => blk: {
-            const fsl_hi: Word = switch (uop.fsl_hi) {
-                .zero => 0,
-                .nos => r.nos,
-                .ros => r.ros,
-                .sign_fill => if (r.nos & (1 << (WORDSIZE - 1)) != 0) @as(Word, @bitCast(@as(SWord, -1))) else 0,
-            };
-            const fsl_lo: Word = switch (uop.fsl_lo) {
-                .zero => 0,
-                .nos => r.nos,
-            };
-            const shift_mask: Word = switch (uop.fsl_mask) {
-                .single_word => WORDSIZE - 1,
-                .double_word => 2 * WORDSIZE - 1,
-            };
-            const masked_tos = r.tos & shift_mask;
-            // neg_tos implements right-shift via left-shift of complementary amount
-            const fsl_shift: Word = switch (uop.fsl_shift) {
-                .tos => masked_tos,
-                .neg_tos => (WORDSIZE -% masked_tos) & (2 * WORDSIZE - 1),
-            };
-            if (WORDSIZE == 16) {
-                const dword: u32 = (@as(u32, fsl_hi) << 16) | fsl_lo;
-                break :blk @truncate((dword << @truncate(fsl_shift)) >> 16);
-            } else {
-                const dword: u64 = (@as(u64, fsl_hi) << 32) | fsl_lo;
-                break :blk @truncate((dword << @truncate(fsl_shift)) >> 32);
-            }
-        },
+        .pc => r.pc,
         .zero => 0,
     };
 
-    if (uop.mem_op == .write_byte or uop.mem_op == .write_half or uop.mem_op == .write_word) {
-        const mem_addr = switch (uop.mem_addr) {
-            .tos => r.tos,
-            .fp_plus_tos => r.fp() +% r.tos,
-            .ar => r.ar,
-        };
-        const mem_write_data = switch (uop.mem_data) {
+    const op_b: Word = switch (uop.op_b) {
+        .tos => r.tos,
+        .nos => r.nos,
+        .ros => r.ros,
+        .imm7 => instr & 0x7F,
+        .zero => 0,
+        .wordbytes => WORDBYTES,
+    };
+
+    const mem_addr: Word = if (uop.mem_op != .none) switch (uop.mem_addr) {
+        .tos => r.tos,
+        .fp_rel => r.fp() +% r.tos,
+        .ar => r.ar,
+    } else 0;
+
+    const mem_data: Word = if (uop.mem_op == .read) switch (uop.mem_width) {
+        .byte => signExtend8(cpu.readByte(mem_addr)),
+        .half => cpu.readHalf(mem_addr),
+        .word => cpu.readWord(mem_addr),
+    } else 0;
+
+    const alu_out: Word = executeAlu(uop.alu_op, op_a, op_b);
+
+    const shifter_out: Word = executeShifter(uop.shift_mode, op_a, op_b, r.ros);
+
+    const csr_out: Word = cpu.readCsr(r.tos);
+
+    const result: Word = switch (uop.result_src) {
+        .op_a => op_a,
+        .imm_sext6 => signExtend6(@truncate(instr & 0x3F)),
+        .shl7_or => (op_a << 7) | (op_b & 0x7F),
+        .alu => alu_out,
+        .shifter => shifter_out,
+        .mem => mem_data,
+        .csr => csr_out,
+    };
+
+    if (uop.mem_op == .write) {
+        const mem_write_data = switch (uop.mem_wdata) {
             .nos => r.nos,
             .tos => r.tos,
         };
-        switch (uop.mem_op) {
-            .write_byte => cpu.writeByte(mem_addr, @truncate(mem_write_data)),
-            .write_half => cpu.writeHalf(mem_addr, mem_write_data),
-            .write_word => cpu.writeWord(mem_addr, mem_write_data),
-            else => {},
+        switch (uop.mem_width) {
+            .byte => cpu.writeByte(mem_addr, @truncate(mem_write_data)),
+            .half => cpu.writeHalf(mem_addr, mem_write_data),
+            .word => cpu.writeWord(mem_addr, mem_write_data),
         }
     }
 
-    // TOS/NOS/ROS are top 3 in registers; on push, spill ROS to its memory position
-    if (uop.depth_op == .inc and r.depth >= 3) {
-        cpu.writeStackMem(@intCast(r.depth -% 3), r.ros);
+    switch (uop.stack_mode) {
+        .hold => {
+            // mul_enable overrides normal dest routing - always writes both TOS and NOS
+            if (uop.mul_enable) {
+                const full_product = @as(u32, op_a) * @as(u32, op_b);
+                const mul_high: Word = @truncate(full_product >> WORDSIZE);
+                const mul_low: Word = @truncate(full_product);
+                cpu.reg.tos = mul_high;
+                cpu.reg.nos = mul_low;
+            }
+        },
+        .push => {
+            cpu.reg.ros = r.nos;
+            cpu.reg.nos = r.tos;
+            cpu.reg.tos = result;
+            cpu.reg.depth = r.depth +% 1;
+            if (r.depth >= 3) {
+                cpu.writeStackMem(@intCast(r.depth -% 3), r.ros);
+            }
+        },
+        .pop => {
+            if (uop.dest == .tos) {
+                cpu.reg.tos = result;
+            } else {
+                cpu.reg.tos = r.nos;
+            }
+            cpu.reg.nos = r.ros;
+            cpu.reg.ros = cpu.readStackMem(@intCast(r.depth -% 4));
+            cpu.reg.depth = if (r.depth > 0) r.depth -% 1 else 0;
+        },
+        .pop2 => {
+            if (uop.dest == .tos) {
+                cpu.reg.tos = result;
+            } else {
+                cpu.reg.tos = r.ros;
+            }
+            cpu.reg.nos = cpu.readStackMem(@intCast(r.depth -% 4));
+            cpu.reg.ros = cpu.readStackMem(@intCast(r.depth -% 5));
+            cpu.reg.depth = if (r.depth >= 2) r.depth -% 2 else 0;
+        },
+        .pop3 => {
+            cpu.reg.tos = cpu.readStackMem(@intCast(r.depth -% 4));
+            cpu.reg.nos = cpu.readStackMem(@intCast(r.depth -% 5));
+            cpu.reg.ros = cpu.readStackMem(@intCast(r.depth -% 6));
+            cpu.reg.depth = if (r.depth >= 3) r.depth -% 3 else 0;
+        },
+        .swap => {
+            cpu.reg.tos = r.nos;
+            cpu.reg.nos = r.tos;
+        },
+        .rot => {
+            cpu.reg.tos = r.nos;
+            cpu.reg.nos = r.ros;
+            cpu.reg.ros = r.tos;
+        },
     }
 
-    if (uop.writes.csr) {
-        cpu.writeCsr(r.tos, r.nos);
+    switch (uop.dest) {
+        .none => {},
+        .tos => cpu.reg.tos = result,
+        .fp => {
+            if (r.status.km) {
+                cpu.reg.kfp = result;
+            } else {
+                cpu.reg.ufp = result;
+            }
+        },
+        .ra => cpu.reg.ra = result,
+        .ar => cpu.reg.ar = result,
+        .csr => cpu.writeCsr(r.tos, r.nos),
     }
 
-    cpu.reg.tos = switch (uop.tos_src) {
-        .hold => r.tos,
-        .result => result,
-        .nos => r.nos,
-        .ros => r.ros,
-        .stack_mem => cpu.readStackMem(@intCast(r.depth -% 4)),
-        .mem_data => blk: {
-            const mem_addr = switch (uop.mem_addr) {
-                .tos => r.tos,
-                .fp_plus_tos => r.fp() +% r.tos,
-                .ar => r.ar,
-            };
-            break :blk switch (uop.mem_op) {
-                .read_byte => signExtend8(cpu.readByte(mem_addr)),
-                .read_half => cpu.readHalf(mem_addr),
-                .read_word => cpu.readWord(mem_addr),
-                else => 0,
-            };
-        },
-    };
-
-    cpu.reg.nos = switch (uop.nos_src) {
-        .hold => r.nos,
-        .tos => r.tos,
-        .ros => r.ros,
-        .stack_mem => cpu.readStackMem(@intCast(r.depth -% 4)),
-    };
-
-    cpu.reg.ros = switch (uop.ros_src) {
-        .hold => r.ros,
-        .nos => r.nos,
-        .tos => r.tos,
-        // When popping 2+ elements, ROS reads one deeper since multiple slots freed
-        .stack_mem => switch (uop.depth_op) {
-            .dec2, .dec3 => cpu.readStackMem(@intCast(r.depth -% 5)),
-            else => cpu.readStackMem(@intCast(r.depth -% 4)),
-        },
-    };
-
-    cpu.reg.depth = switch (uop.depth_op) {
-        .none => r.depth,
-        .inc => r.depth +% 1,
-        .dec => if (r.depth > 0) r.depth -% 1 else 0,
-        .dec2 => if (r.depth >= 2) r.depth -% 2 else 0,
-        .dec3 => if (r.depth >= 3) r.depth -% 3 else 0,
-    };
+    if (uop.ar_increment) {
+        cpu.reg.ar = r.ar +% WORDBYTES;
+    }
 
     const branch_taken: bool = switch (uop.branch_cond) {
         .always => true,
         .if_nos_zero => r.nos == 0,
         .if_nos_nzero => r.nos != 0,
     };
+
     cpu.reg.pc = switch (uop.pc_src) {
         .next => r.pc,
-        .rel_tos => if (branch_taken) r.pc +% r.tos else r.pc,
-        .abs_tos => if (branch_taken) r.tos else r.pc,
+        .rel => if (branch_taken) r.pc +% r.tos else r.pc,
+        .abs => if (branch_taken) r.tos else r.pc,
         .evec => r.evec,
         .epc => r.epc,
         .hold => r.pc,
+        .macro => 0x100 +% ((@as(Word, instr) & 0x1F) << 3),
     };
 
-    cpu.reg.status = .{
-        .km = switch (uop.km_src) {
-            .hold => r.status.km,
-            .set => true,
-            .estatus => r.estatus.km,
-        },
-        .ie = switch (uop.ie_src) {
-            .hold => r.status.ie,
-            .clear => false,
-            .estatus => r.estatus.ie,
-        },
-        .th = if (uop.writes.th) r.estatus.th else r.status.th,
-    };
-
-    if (uop.writes.fp) {
-        if (r.status.km) {
-            cpu.reg.kfp = result;
-        } else {
-            cpu.reg.ufp = result;
-        }
-    }
-
-    if (uop.writes.ra) {
-        cpu.reg.ra = result;
-    }
-
-    if (uop.writes.ar) {
-        cpu.reg.ar = result;
-    }
-
-    if (uop.writes.estatus) {
-        cpu.reg.estatus = r.status;
-    }
-
-    if (uop.writes.epc) {
+    // Enter trap: save epc, estatus, ecause, set KM, clear IE
+    if (uop.enter_trap) {
         cpu.reg.epc = r.pc;
-    }
-
-    if (uop.writes.ecause) {
+        cpu.reg.estatus = r.status;
         cpu.ecause = if (trap) trap_cause else uop.ecause.toU8();
+        cpu.reg.status.km = true;
+        cpu.reg.status.ie = false;
     }
 
-    if (uop.writes.halt) {
+    if (uop.exit_trap) {
+        cpu.reg.status = r.estatus;
+    }
+
+    if (uop.halt) {
         cpu.halted = true;
     }
 }
 
-fn executeAlu(op: AluOp, a: Word, b: Word, c: Word) Word {
+inline fn executeAlu(op: AluOp, a: Word, b: Word) Word {
     const sa: SWord = @bitCast(a);
     const sb: SWord = @bitCast(b);
 
     return switch (op) {
-        .pass_a => a,
         .add => a +% b,
         .sub => a -% b,
         .and_op => a & b,
@@ -1323,14 +1082,30 @@ fn executeAlu(op: AluOp, a: Word, b: Word, c: Word) Word {
         .xor_op => a ^ b,
         .lt => if (sa < sb) 1 else 0,
         .ltu => if (a < b) 1 else 0,
-        .shl7_or => (a << 7) | (b & 0x7F),
-        .mul => @truncate(@as(u64, a) * @as(u64, b)),
-        .mulh => @truncate((@as(u64, a) * @as(u64, b)) >> WORDSIZE),
-        .div => if (b != 0) @bitCast(@divTrunc(sa, sb)) else 0,
-        .divu => if (b != 0) a / b else 0,
-        .mod => if (b != 0) @bitCast(@rem(sa, sb)) else 0,
-        .modu => if (b != 0) a % b else 0,
-        .select => if (a != 0) b else c,
+    };
+}
+
+inline fn executeShifter(mode: ShiftMode, value: Word, shift_amount: Word, ros: Word) Word {
+    const masked_shift = shift_amount & (WORDSIZE - 1);
+    const double_mask = shift_amount & (2 * WORDSIZE - 1);
+
+    return switch (mode) {
+        .sll => value << @truncate(masked_shift),
+        .srl => value >> @truncate(masked_shift),
+        .sra => blk: {
+            const sval: SWord = @bitCast(value);
+            break :blk @bitCast(sval >> @truncate(masked_shift));
+        },
+        .fsl => blk: {
+            // Funnel shift: ({ros, value} << shift) >> WORDSIZE
+            if (WORDSIZE == 16) {
+                const dword: u32 = (@as(u32, ros) << 16) | value;
+                break :blk @truncate((dword << @truncate(double_mask)) >> 16);
+            } else {
+                const dword: u64 = (@as(u64, ros) << 32) | value;
+                break :blk @truncate((dword << @truncate(double_mask)) >> 32);
+            }
+        },
     };
 }
 
@@ -1396,9 +1171,9 @@ fn logInstruction(cpu: *const CpuState, pc_before: Word, instr: u8, uop: MicroOp
         summary_len += pc_info.len;
     }
 
-    if (uop.depth_op != .none) {
-        const depth_info = std.fmt.bufPrint(summary_buf[summary_len..], " dep:{s}", .{@tagName(uop.depth_op)}) catch "";
-        summary_len += depth_info.len;
+    if (uop.stack_mode != .hold) {
+        const stack_mode_info = std.fmt.bufPrint(summary_buf[summary_len..], " stk:{s}", .{@tagName(uop.stack_mode)}) catch "";
+        summary_len += stack_mode_info.len;
     }
 
     if (uop.mem_op != .none) {
@@ -1432,14 +1207,13 @@ pub inline fn step(cpu: *CpuState, irq: bool, irq_num: u4) void {
     const interrupt: bool = irq and cpu.reg.status.ie;
     const underflow: bool = cpu.reg.depth < fetched_uop.min_depth;
     // Check post-instruction km (e.g. rets restores estatus.km) to apply correct depth limit
-    const dest_km: bool = if (fetched_uop.km_src == .estatus) cpu.reg.estatus.km else cpu.reg.status.km;
+    const dest_km: bool = if (fetched_uop.exit_trap) cpu.reg.estatus.km else cpu.reg.status.km;
     const max_depth: Word = if (dest_km) KERNEL_MAX_DEPTH else USER_MAX_DEPTH;
     const overflow: bool = cpu.reg.depth > max_depth;
 
-    const instr_exception: bool = switch (fetched_uop.exception_check) {
+    const instr_exception: bool = switch (fetched_uop.trap_check) {
         .none => false,
-        .div_zero => cpu.reg.tos == 0,
-        .halt_trap => cpu.reg.status.th,
+        .th_trap => cpu.reg.status.th,
     };
 
     const trap: bool = interrupt or underflow or overflow or instr_exception;
@@ -1592,6 +1366,15 @@ test "bootstrap push/pop ecause instruction" {
     try std.testing.expect(value == 5);
 }
 
+test "bootstrap div macro vector" {
+    const value = try runTest("starj/tests/bootstrap/boot_14_div_vector.bin", 40, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "bootstrap divu macro vector" {
+    const value = try runTest("starj/tests/bootstrap/boot_15_divu_vector.bin", 40, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
 
 ///////////////////////////////////////////////////////
 // Regular instruction tests
@@ -1634,16 +1417,6 @@ test "call/ret instructions" {
 
 test "callp instructions" {
     const value = try runTest("starj/tests/callp.bin", 200, std.testing.allocator);
-    try std.testing.expect(value == 1);
-}
-
-test "div instructions" {
-    const value = try runTest("starj/tests/div.bin", 200, std.testing.allocator);
-    try std.testing.expect(value == 1);
-}
-
-test "divu instructions" {
-    const value = try runTest("starj/tests/divu.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
@@ -1697,24 +1470,8 @@ test "ltu instruction" {
     try std.testing.expect(value == 1);
 }
 
-test "mod instruction" {
-    const value = try runTest("starj/tests/mod.bin", 200, std.testing.allocator);
-    try std.testing.expect(value == 1);
-}
-
-test "modu instruction" {
-    // std.testing.log_level = .debug;
-    const value = try runTest("starj/tests/modu.bin", 200, std.testing.allocator);
-    try std.testing.expect(value == 1);
-}
-
 test "mul instruction" {
     const value = try runTest("starj/tests/mul.bin", 200, std.testing.allocator);
-    try std.testing.expect(value == 1);
-}
-
-test "mulh instruction" {
-    const value = try runTest("starj/tests/mulh.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
@@ -1735,11 +1492,6 @@ test "push/pop <reg> instructions" {
 
 test "rot instruction" {
     const value = try runTest("starj/tests/rot.bin", 200, std.testing.allocator);
-    try std.testing.expect(value == 1);
-}
-
-test "select instruction" {
-    const value = try runTest("starj/tests/select.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 

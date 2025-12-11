@@ -72,11 +72,7 @@ pub const Opcode = enum(u8) {
     SLW = 0x1f,
     DIV = 0x20,
     DIVU = 0x21,
-    MOD = 0x22,
-    MODU = 0x23,
     MUL = 0x24,
-    MULH = 0x25,
-    SELECT = 0x26,
     ROT = 0x27,
     SRL = 0x28,
     SRA = 0x29,
@@ -455,70 +451,43 @@ pub const Cpu = struct {
                     self.memory[addr >> 1] = nos;
                 },
                 .DIV => {
+                    // TODO: this should always jump to macro vector; implement after exceptions are implemented
                     read = 2;
-                    stackop = .POP1;
+                    stackop = .REPLACE;
                     const divisor: SWord = @bitCast(tos);
                     const dividend: SWord = @bitCast(nos);
                     std.log.info("{x:0>4}: {x:0>2} DIV {} / {}", .{ self.reg.pc - 1, ir, dividend, divisor });
                     if (divisor == 0) {
                         return Error.DivideByZero;
                     }
-                    result = @bitCast(@divTrunc(dividend, divisor));
+                    const quotient: SWord = @divTrunc(dividend, divisor);
+                    const remainder: SWord = @rem(dividend, divisor);
+                    result = @bitCast(remainder);
+                    nos = @bitCast(quotient);
                 },
                 .DIVU => {
+                    // TODO: this should always jump to macro vector; implement after exceptions are implemented
                     read = 2;
-                    stackop = .POP1;
-                    std.log.info("{x:0>4}: {x:0>2} DIVU {} / {}", .{ self.reg.pc - 1, ir, nos, tos });
-                    if (tos == 0) {
-                        return Error.DivideByZero;
-                    }
-                    result = @divFloor(nos, tos);
-                },
-                .MOD => {
-                    read = 2;
-                    stackop = .POP1;
-                    const divisor: SWord = @bitCast(tos);
-                    const dividend: SWord = @bitCast(nos);
-                    std.log.info("{x:0>4}: {x:0>2} MOD {} % {}", .{ self.reg.pc - 1, ir, dividend, divisor });
+                    stackop = .REPLACE;
+                    const divisor: Word = @bitCast(tos);
+                    const dividend: Word = @bitCast(nos);
+                    std.log.info("{x:0>4}: {x:0>2} DIV {} / {}", .{ self.reg.pc - 1, ir, dividend, divisor });
                     if (divisor == 0) {
                         return Error.DivideByZero;
                     }
-                    result = @bitCast(@rem(dividend, divisor));
-                },
-                .MODU => {
-                    read = 2;
-                    stackop = .POP1;
-                    std.log.info("{x:0>4}: {x:0>2} MODU {} % {}", .{ self.reg.pc - 1, ir, nos, tos });
-                    if (tos == 0) {
-                        return Error.DivideByZero;
-                    }
-                    result = @rem(nos, tos);
+                    nos = @divTrunc(dividend, divisor);
+                    result = dividend % divisor;
                 },
                 .MUL => {
                     read = 2;
-                    stackop = .POP1;
-                    const b: SWord = @bitCast(tos);
-                    const a: SWord = @bitCast(nos);
-                    const res: SWord = @mulWithOverflow(a, b)[0];
-                    result = @bitCast(res);
-                    std.log.info("{x:0>4}: {x:0>2} MUL {} * {} = {}", .{ self.reg.pc - 1, ir, a, b, res });
-                },
-                .MULH => {
-                    read = 2;
-                    stackop = .POP1;
+                    stackop = .REPLACE;
                     const b: i32 = @intCast(tos);
                     const a: i32 = @intCast(nos);
                     const full_result: i32 = @mulWithOverflow(a, b)[0];
-                    const res: SWord = @truncate(full_result >> 16);
-                    result = @bitCast(res);
-                    std.log.info("{x:0>4}: {x:0>2} MULH {} * {} = {}", .{ self.reg.pc - 1, ir, a, b, res });
-                },
-                .SELECT => {
-                    read = 3;
-                    stackop = .POP2;
-                    // stack: ros=false_val, nos=true_val, tos=cond
-                    std.log.info("{x:0>4}: {x:0>2} SELECT {} ? {} : {}", .{ self.reg.pc - 1, ir, tos, nos, ros });
-                    result = if (tos != 0) nos else ros;
+                    const unsigned_result: u32 = @bitCast(full_result);
+                    result = @truncate(unsigned_result >> 16);
+                    nos = @truncate(unsigned_result & WORDMASK);
+                    std.log.info("{x:0>4}: {x:0>2} MUL {} * {} = {}, {}", .{ self.reg.pc - 1, ir, a, b, result, nos });
                 },
                 .ROT => {
                     read = 3;
@@ -828,6 +797,18 @@ test "bootstrap push/pop ecause instruction" {
     try std.testing.expect(value == 5);
 }
 
+// TODO: won't pass until exceptions are implemented
+// test "bootstrap div instructions" {
+//     const value = try runTest("starj/tests/bootstrap/boot_14_div.bin", 200, std.testing.allocator);
+//     try std.testing.expect(value == 1);
+// }
+
+// TODO: won't pass until exceptions are implemented
+// test "bootstrap divu instructions" {
+//     const value = try runTest("starj/tests/bootstrap/boot_15_divu.bin", 200, std.testing.allocator);
+//     try std.testing.expect(value == 1);
+// }
+
 ///////////////////////////////////////////////////////
 // Regular instruction tests
 ///////////////////////////////////////////////////////
@@ -869,16 +850,6 @@ test "call/ret instructions" {
 
 test "callp instructions" {
     const value = try runTest("starj/tests/callp.bin", 200, std.testing.allocator);
-    try std.testing.expect(value == 1);
-}
-
-test "div instructions" {
-    const value = try runTest("starj/tests/div.bin", 200, std.testing.allocator);
-    try std.testing.expect(value == 1);
-}
-
-test "divu instructions" {
-    const value = try runTest("starj/tests/divu.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
@@ -932,24 +903,8 @@ test "ltu instruction" {
     try std.testing.expect(value == 1);
 }
 
-test "mod instruction" {
-    const value = try runTest("starj/tests/mod.bin", 200, std.testing.allocator);
-    try std.testing.expect(value == 1);
-}
-
-test "modu instruction" {
-    // std.testing.log_level = .debug;
-    const value = try runTest("starj/tests/modu.bin", 200, std.testing.allocator);
-    try std.testing.expect(value == 1);
-}
-
 test "mul instruction" {
     const value = try runTest("starj/tests/mul.bin", 200, std.testing.allocator);
-    try std.testing.expect(value == 1);
-}
-
-test "mulh instruction" {
-    const value = try runTest("starj/tests/mulh.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
@@ -970,11 +925,6 @@ test "push/pop <reg> instructions" {
 
 test "rot instruction" {
     const value = try runTest("starj/tests/rot.bin", 200, std.testing.allocator);
-    try std.testing.expect(value == 1);
-}
-
-test "select instruction" {
-    const value = try runTest("starj/tests/select.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 

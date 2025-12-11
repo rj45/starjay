@@ -714,92 +714,108 @@ _fail:
 """)
 
 
-def generate_select_test():
-    write_test("tests/select.asm", """; Test select
-    ; select: if tos != 0 then nos else ros
-    ; Stack: [ros, nos, condition] -> [result]
+def generate_mul_test():
+    """Generate test for mul instruction which produces TOS=high, NOS=low."""
+    write_test("tests/mul.asm", """; Test mul instruction
+    ; mul now produces two results: TOS=high word, NOS=low word
+    ; Stack before: [nos, tos] (nos * tos)
+    ; Stack after:  [low, high] (high=TOS, low=NOS, same depth)
 
-    ; Case 1: True (tos = 1) -> select nos
-    push 0xAAAA ; ros
-    push 0xBBBB ; nos
-    push 1      ; tos (true)
-    select
-    push 0xBBBB
+    ; Test 1: Small multiplication (result fits in low word)
+    ; 10 * 10 = 100, high=0, low=100
+    push 10         ; nos
+    push 10         ; tos
+    mul
+    ; Stack: [100, 0] (NOS=100, TOS=0)
+    push 0          ; expected high
+    xor
+    failnez
+    push 100        ; expected low
     xor
     failnez
 
-    ; Case 2: False (tos = 0) -> select ros
-    push 0xAAAA ; ros
-    push 0xBBBB ; nos
-    push 0      ; tos (false)
-    select
-    push 0xAAAA
+    ; Test 2: Multiplication with overflow into high word
+    ; 256 * 256 = 65536 = 0x10000, high=1, low=0
+    push 256        ; nos
+    push 256        ; tos
+    mul
+    ; Stack: [0, 1] (NOS=0, TOS=1)
+    push 1          ; expected high
+    xor
+    failnez
+    push 0          ; expected low
     xor
     failnez
 
-    ; Case 3: True with negative condition (-1 is non-zero)
-    push 0x1111 ; ros
-    push 0x2222 ; nos
-    push -1     ; tos (true, -1 != 0)
-    select
-    push 0x2222
+    ; Test 3: Larger multiplication
+    ; 1000 * 1000 = 1000000 = 0xF4240, high=0x0F, low=0x4240
+    push 1000       ; nos
+    push 1000       ; tos
+    mul
+    ; Stack: [0x4240, 0x0F]
+    push 0x0F       ; expected high
+    xor
+    failnez
+    push 0x4240     ; expected low
     xor
     failnez
 
-    ; Case 4: True with large positive condition
-    push 0x3333 ; ros
-    push 0x4444 ; nos
-    push 0x7FFF ; tos (true)
-    select
-    push 0x4444
+    ; Test 4: Multiply by zero
+    ; 12345 * 0 = 0, high=0, low=0
+    push 12345      ; nos
+    push 0          ; tos
+    mul
+    push 0          ; expected high
+    xor
+    failnez
+    push 0          ; expected low
     xor
     failnez
 
-    ; Case 5: Select between same values
-    push 0x5555 ; ros
-    push 0x5555 ; nos
-    push 1      ; tos
-    select
-    push 0x5555
+    ; Test 5: Multiply by one
+    ; 12345 * 1 = 12345, high=0, low=12345
+    push 12345      ; nos
+    push 1          ; tos
+    mul
+    push 0          ; expected high
+    xor
+    failnez
+    push 12345      ; expected low
     xor
     failnez
 
-    ; Case 6: Select with zeros
-    push 0      ; ros
-    push 0      ; nos
-    push 0      ; tos (false) -> ros
-    select
-    push 0
+    ; Test 6: Max values
+    ; 0xFFFF * 0xFFFF = 0xFFFE0001, high=0xFFFE, low=0x0001
+    push 0xFFFF     ; nos
+    push 0xFFFF     ; tos
+    mul
+    push 0xFFFE     ; expected high
+    xor
+    failnez
+    push 0x0001     ; expected low
     xor
     failnez
 
-    ; === Deep Stack Preservation Test ===
-    ; Verify select correctly preserves stack_mem values when depth >= 5
-    push 0x1111     ; will be stack_mem[0] (deepest)
-    push 0x2222     ; will be stack_mem[1] - CRITICAL VALUE
-    push 0x3333     ; will be stack_mem[2]
-    push 0xFFFF     ; ROS - false value for select
-    push 0xEEEE     ; NOS - true value for select
-    push 1          ; TOS - condition (true)
-
-    ; depth=6
-    select          ; result = 0xEEEE (true branch)
-
-    ; After depth=4
-    ; Expected: TOS=result(0xEEEE), NOS=0x3333, ROS=0x2222
-    push 0xEEEE     ; verify result
+    ; Test 7: 0x8000 * 2 = 0x10000, high=1, low=0
+    push 0x8000     ; nos (32768)
+    push 2          ; tos
+    mul
+    push 1          ; expected high
+    xor
+    failnez
+    push 0          ; expected low
     xor
     failnez
 
-    push 0x3333
+    ; Test 8: Asymmetric values
+    ; 0x1234 * 0x0100 = 0x123400, high=0x12, low=0x3400
+    push 0x1234     ; nos
+    push 0x0100     ; tos
+    mul
+    push 0x12       ; expected high
     xor
     failnez
-
-    push 0x2222     ; CRITICAL check
-    xor
-    failnez
-
-    push 0x1111
+    push 0x3400     ; expected low
     xor
     failnez
 
@@ -1759,71 +1775,8 @@ def main():
 
     # --- Extended Math ---
 
-    # div (signed)
-    generate_binary_op_test(
-        "div",
-        [(20, 10, 2), (20, -10, -2), (-20, 10, -2), (-20, -10, 2), (11, 3, 3), (-11, 3, -3), (11, -3, -3)],
-    )
-
-    # divu (unsigned)
-    generate_binary_op_test(
-        "divu",
-        [
-            (20, 10, 2),
-            (0xFFFF, 1, 0xFFFF),  # 65535 / 1 = 65535
-            (10, 20, 0),
-        ],
-    )
-
-    # mod
-    generate_binary_op_test(
-        "mod",
-        [(10, 3, 1), (-10, 3, -1), (10, -3, 1), (-10, -3, -1)],
-    )
-
-    # modu
-    generate_binary_op_test(
-        "modu",
-        [
-            (10, 3, 1),
-            (20, 6, 2),
-            (100, 7, 2),
-            (0xFFFF, 256, 255),
-            (1000, 1000, 0),
-            (5, 10, 5),
-            (0, 5, 0),
-        ],
-    )
-
-    # mul
-    generate_binary_op_test(
-        "mul",
-        [
-            (10, 10, 100),
-            (1000, 1000, 0x4240),   # 1000000 & 0xFFFF = 16960
-            (0, 12345, 0),
-            (1, 12345, 12345),
-            (256, 256, 0),          # 65536 & 0xFFFF = 0 (overflow)
-            (2, 0x4000, 0x8000),
-            (-1, 2, -2),
-            (0x100, 0x100, 0),
-        ],
-    )
-
-    # mulh - upper word of unsigned multiply
-    generate_binary_op_test(
-        "mulh",
-        [
-            (10, 10, 0),
-            (0x100, 0x100, 1),        # 256*256 = 65536, upper = 1
-            (0xFFFF, 2, 1),           # 65535*2 = 131070, upper = 1
-            (0xFFFF, 0xFFFF, 0xFFFE), # 65535*65535, upper = 0xFFFE
-            (0x8000, 2, 1),           # 32768*2 = 65536, upper = 1
-        ],
-    )
-
-    # select
-    generate_select_test()
+    # mul (produces TOS=high, NOS=low)
+    generate_mul_test()
 
     # rot
     generate_rot_test()

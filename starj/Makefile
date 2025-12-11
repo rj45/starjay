@@ -60,7 +60,7 @@ tests/bootstrap/%.hex: tests/bootstrap/%.asm $(ISA)
 	customasm -q -f intelhex,addr_unit:8 -o $@ $(ISA) $<
 
 # Build _listing.txt from .asm (regular tests - use full kernel)
-tests/bootstrap/%_listing.txt: tests/bootstrap/%.asm $(ISA) $(KERNEL)
+tests/bootstrap/%_listing.txt: tests/bootstrap/%.asm $(ISA)
 	customasm -q -f annotated,base:16,group:2,addr_base:16,labels:true -o $@ $(ISA) $<
 
 
