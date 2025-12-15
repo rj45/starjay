@@ -3,3 +3,9 @@ zig-out
 .vscode
 .DS_Store
 *.log
+
+# ignore AI related stuff
+.claude
+.ignore
+AGENTS.md
+CLAUDE.md
