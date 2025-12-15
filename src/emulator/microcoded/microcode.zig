@@ -84,7 +84,7 @@ pub const MicroOp = packed struct(u43) {
     alu_op: AluOp = .add,
     shift_mode: ShiftMode = .sll,
 
-    // MULTIPLIER (1 bit)
+    // MULTIPLIER
     mul_enable: bool = false,
 
     // MEMORY ACCESS
@@ -180,6 +180,92 @@ pub const Opcode = enum(u7) {
     ext_reserved_3F = 0x3F,
     push = 0x40,
     shi = 0x41,
+
+    /// Returns the assembly mnemonic for this opcode
+    pub fn toMnemonic(self: Opcode) []const u8 {
+        return switch (self) {
+            .halt => "halt",
+            .reserved_01 => "???",
+            .syscall => "syscall",
+            .rets => "rets",
+            .beqz => "beqz",
+            .bnez => "bnez",
+            .swap => "swap",
+            .over => "over",
+            .drop => "drop",
+            .dup => "dup",
+            .ltu => "ltu",
+            .lt => "lt",
+            .add => "add",
+            .and_op => "and",
+            .xor_op => "xor",
+            .fsl => "fsl",
+            .push_pc => "push pc",
+            .push_fp => "push fp",
+            .push_ra => "push ra",
+            .push_ar => "push ar",
+            .pop_pc => "pop pc",
+            .pop_fp => "pop fp",
+            .pop_ra => "pop ra",
+            .pop_ar => "pop ar",
+            .jump => "jump",
+            .add_fp => "add fp",
+            .add_ra => "add ra",
+            .add_ar => "add ar",
+            .pushcsr => "pushcsr",
+            .popcsr => "popcsr",
+            .llw => "llw",
+            .slw => "slw",
+            .div => "div",
+            .divu => "divu",
+            .ext_reserved_22 => "???",
+            .ext_reserved_23 => "???",
+            .mul => "mul",
+            .ext_reserved_25 => "???",
+            .ext_reserved_26 => "???",
+            .rot => "rot",
+            .srl => "srl",
+            .sra => "sra",
+            .sll => "sll",
+            .or_op => "or",
+            .sub => "sub",
+            .ext_reserved_2D => "???",
+            .ext_reserved_2E => "???",
+            .ext_reserved_2F => "???",
+            .lb => "lb",
+            .sb => "sb",
+            .lh => "lh",
+            .sh => "sh",
+            .lw => "lw",
+            .sw => "sw",
+            .lnw => "lnw",
+            .snw => "snw",
+            .call => "call",
+            .callp => "callp",
+            .ext_reserved_3A => "???",
+            .ext_reserved_3B => "???",
+            .ext_reserved_3C => "???",
+            .ext_reserved_3D => "???",
+            .ext_reserved_3E => "???",
+            .ext_reserved_3F => "???",
+            .push => "push",
+            .shi => "shi",
+        };
+    }
+
+    /// Decode a byte into an opcode
+    pub fn fromByte(byte: u8) Opcode {
+        // shi: 0x80-0xFF (high bit set)
+        if ((byte & 0x80) != 0) {
+            return .shi;
+        }
+        // push: 0x40-0x7F
+        if ((byte & 0xC0) == 0x40) {
+            return .push;
+        }
+        // All other opcodes: 0x00-0x3F
+        return @enumFromInt(byte & 0x3F);
+    }
 };
 
 fn generateMicrocode(opcode: Opcode) MicroOp {
@@ -1128,18 +1214,18 @@ fn getInstrMnemonic(instr: u8) []const u8 {
         return "push";
     } else {
         const opcode: Opcode = @enumFromInt(instr & 0x3F);
-        return @tagName(opcode);
+        return opcode.toMnemonic();
     }
 }
 
 fn formatImmediate(instr: u8, buf: *[32]u8) []const u8 {
     if (instr & 0x80 != 0) {
         const imm7 = instr & 0x7F;
-        return std.fmt.bufPrint(buf, " 0x{x:0>2}", .{imm7}) catch "???";
+        return std.fmt.bufPrint(buf, "0x{x:0>2}", .{imm7}) catch "???";
     } else if (instr & 0xC0 == 0x40) {
         const imm6: i6 = @bitCast(@as(u6, @truncate(instr & 0x3F)));
         const extended: i16 = imm6;
-        return std.fmt.bufPrint(buf, " {d}", .{extended}) catch "???";
+        return std.fmt.bufPrint(buf, "{d}", .{extended}) catch "???";
     } else {
         return "";
     }
@@ -1149,6 +1235,9 @@ fn logInstruction(cpu: *const CpuState, pc_before: Word, instr: u8, uop: MicroOp
     var imm_buf: [32]u8 = undefined;
     const mnemonic = getInstrMnemonic(instr);
     const imm_str = formatImmediate(instr, &imm_buf);
+
+    var instr_buf: [128]u8 = undefined;
+    const instr_str = std.fmt.bufPrint(instr_buf[0..], "{s} {s}", .{mnemonic, imm_str}) catch "";
 
     var summary_buf: [128]u8 = undefined;
     var summary_len: usize = 0;
@@ -1181,11 +1270,10 @@ fn logInstruction(cpu: *const CpuState, pc_before: Word, instr: u8, uop: MicroOp
         summary_len += mem_info.len;
     }
 
-    std.log.info("{x:0>4}: {x:0>2} {s:<7}{s:<8} {s}", .{
+    std.debug.print("{x:0>4}: {x:0>2} {s:<12} {s}\n", .{
         pc_before,
         instr,
-        mnemonic,
-        imm_str,
+        instr_str,
         summary_buf[0..summary_len],
     });
 }

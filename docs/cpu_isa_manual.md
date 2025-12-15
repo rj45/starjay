@@ -59,8 +59,8 @@ StarJette has a minimal set of registers:
   +---+---------+-------------------------------------------------------------------------------+
   | 0 | pc      | Program Counter - Points to the next instruction to execute.                  |
   | 1 | fp      | Frame Pointer - Points to the base of the current stack frame.                |
-  | 2 | ra      | Return Address - Holds the return address during function calls.              |
-  | 3 | ar      | Address Register - Holds an address for memory copies.                        |
+  | 2 | rx      | Count / Address Register and return address during function call.             |
+  | 3 | ry      | Count / Address Register.                                                     |
   +---+---------+-------------------------------------------------------------------------------+
 ```
 
@@ -70,9 +70,9 @@ Also note that the `pc` register points to the next instruction to execute after
 
 StarJette does not have a flags register or condition codes. Instead, comparison instructions push their results onto the data stack. Conditional branches then pop the top of the stack to determine the branch direction. There is no add-with-carry or subtract-with-borrow: ltu instructions can be used to read the carry flag and implement multi-precision arithmetic in a manner similar to RISC-V.
 
-`ar` is intended to be used for memory copy operations using the `lnw` and `snw` instructions, allowing efficient copying of data between the data stack and memory. It can also be used for efficient stack spilling and filling during context switches, or in stack overflow/underflow handlers.
+During a function call, the `rx` register will be assigned the return address (the current `pc`).
 
-Both `ra` and `ar` may be used as temporary registers if they are not otherwise used. They are caller saved.
+The `rx` and `ry` registers are intended to be used for loop counters and address registers and allow efficient memory copy operations using the `lnw` and `snw` instructions. They can also be used for efficient stack spilling and filling during context switches, or in stack overflow/underflow handlers.
 
 See the calling convention below to understand better how `fp` and the frame stack work. In hardware, there is a `kfp` and `ufp` register for the kernel and user mode frame pointers respectively, and there is a mux to select between them based on the `km` bit in the `status` CSR to be the value of `fp`. There is also a mux on the input when `fp` is written to write to the appropriate register based on the `km` bit.
 
@@ -112,8 +112,8 @@ On boot / reset, the registers are initialized as follows:
   | epc     |   0   |
   | fp      |   0   |
   | afp     |   0   |
-  | ra      |   0   |
-  | ar      |   0   |
+  | rx      |   0   |
+  | ry      |   0   |
   | ecause  |   0   |
   | evec    |   0   |
   | udmask  |   0   |
@@ -174,7 +174,7 @@ The operating system may choose to handle underflow and overflow exceptions by m
 
 See the interrupt handling section below for more information on the data stack overflow and underflow exceptions.
 
-The `ar` register and `lnw` / `snw` instructions may be used to efficiently copy the data stack to and from memory.
+The `ry` register and `lnw` / `snw` instructions may be used to efficiently copy the data stack to and from memory.
 
 The `depth` register may be read in user mode, but writes cause an illegal instruction exception. In kernel mode, any writes to this register will write as zero, as the stack only supports being reset.
 
@@ -308,7 +308,7 @@ All instructions are 8 bits wide. There are three instruction formats:
   | 0   1 |          imm          | push <imm> | Push sign extended immediate   |
   +-------+-------+---------------+------------+--------------------------------+
   | 0   0 | 0   0 | 0   0   0   0 | halt       | Halt the processor             |
-  | 0   0 | 0   0 | 0   0   0   1 |            | reserved (maybe nop?)          |
+  | 0   0 | 0   0 | 0   0   0   1 | lpw        | Load pc-rel word               |
   | 0   0 | 0   0 | 0   0   1   0 | syscall    | Jump to kernel                 |
   | 0   0 | 0   0 | 0   0   1   1 | rets       | Return from kernel             |
   | 0   0 | 0   0 | 0   1   0   0 | beqz       | Branch if equal zero           |
@@ -340,19 +340,22 @@ All instructions are 8 bits wide. There are three instruction formats:
   | 0   0 | 1   0 | 0   0   0   0 | div        | Signed division                |
   | 0   0 | 1   0 | 0   0   0   1 | divu       | Unsigned division              |
   | 0   0 | 1   0 | 0   0   1   0 | mul        | Multiply                       |
-  | 0   0 | 1   0 | 0   0   1   1 |            |                                |
-  | 0   0 | 1   0 | 0   1   0   0 |            |                                |
-  | 0   0 | 1   0 | 0   1   0   1 |            |                                |
-  | 0   0 | 1   0 | 0   1   1   0 |            |                                |
-  | 0   0 | 1   0 | 0   1   1   1 | rot        | Rotate tos into nos            |
-  | 0   0 | 1   0 | 1   0   0   0 | srl        | Shift right logical            |
-  | 0   0 | 1   0 | 1   0   0   1 | sra        | Shift right arithmetic         |
-  | 0   0 | 1   0 | 1   0   1   0 | sll        | Shift left logical             |
-  | 0   0 | 1   0 | 1   0   1   1 | or         | Bitwise OR                     |
-  | 0   0 | 1   0 | 1   1   0   0 | sub        | Subtraction                    |
-  | 0   0 | 1   0 | 1   1   0   1 |            |                                |
-  | 0   0 | 1   0 | 1   1   1   0 |            |                                |
-  | 0   0 | 1   0 | 1   1   1   1 |            |                                |
+  | 0   0 | 1   0 | 0   0   1   1 | rot        | Rotate tos into nos            |
+  | 0   0 | 1   0 | 0   1   0   0 | srl        | Shift right logical            |
+  | 0   0 | 1   0 | 0   1   0   1 | sra        | Shift right arithmetic         |
+  | 0   0 | 1   0 | 0   1   1   0 | sll        | Shift left logical             |
+  | 0   0 | 1   0 | 0   1   1   1 | or         | Bitwise OR                     |
+  | 0   0 | 1   0 | 1   0   0   0 | sub        | Subtraction                    |
+  | 0   0 | 1   0 | 1   0   0   1 | clz        | Count leading zero bits        |
+  +-------+-----------+-----------+------------+--------------------------------+
+  | 7   6   5   4   3   2   1   0 |          Extended Control Flow              |
+  +-------+-----------+-----------+------------+--------------------------------+
+  | 0   0 | 1   0 | 1   0   1   0 | call       | Call pc-relative function      |
+  | 0   0 | 1   0 | 1   0   1   1 | callp      | Call function pointer          |
+  | 0   0 | 1   0 | 1   1   0   0 | brxlt      | Branch if rx less than         |
+  | 0   0 | 1   0 | 1   1   0   1 | brylt      | Branch if ry less than         |
+  | 0   0 | 1   0 | 1   1   1   0 | brxeqz     | Branch if rx equal zero        |
+  | 0   0 | 1   0 | 1   1   1   1 | bryeqz     | Branch if ry equal zero        |
   +-------+-------+---------------+------------+--------------------------------+
   | 7   6   5   4   3   2   1   0 |            Extended Memory Ops              |
   +-------+-----------+-----------+------------+--------------------------------+
@@ -362,21 +365,16 @@ All instructions are 8 bits wide. There are three instruction formats:
   | 0   0 | 1   1   0 | 0   1   1 | sh         | Store half word                |
   | 0   0 | 1   1   0 | 1   0   0 | lw         | Load word from address in tos  |
   | 0   0 | 1   1   0 | 1   0   1 | sw         | Store nos to address in tos    |
-  | 0   0 | 1   1   0 | 1   1   0 | lnw        | Load next word at ar           |
-  | 0   0 | 1   1   0 | 1   1   1 | snw        | Store next word at ar          |
-  +-------+-----------+-----------+------------+--------------------------------+
-  | 7   6   5   4   3   2   1   0 |          Extended Control Flow              |
-  +-------+-----------+-----------+------------+--------------------------------+
-  | 0   0 | 1   1   1 | 0   0   0 | call       | Call pc-relative function      |
-  | 0   0 | 1   1   1 | 0   0   1 | callp      | Call function pointer          |
-  | 0   0 | 1   1   1 | 0   1   0 |            |                                |
-  | 0   0 | 1   1   1 | 0   1   1 |            |                                |
-  | 0   0 | 1   1   1 | 1   0   0 |            |                                |
-  | 0   0 | 1   1   1 | 1   0   1 |            |                                |
-  | 0   0 | 1   1   1 | 1   1   0 |            |                                |
-  | 0   0 | 1   1   1 | 1   1   1 |            |                                |
+  | 0   0 | 1   1   0 | 1   1   0 |            |                                |
+  | 0   0 | 1   1   0 | 1   1   1 |            |                                |
+  | 0   0 | 1   1   1 | r   0   0 | lnw rx/ry  | Load word at rx/ry & inc       |
+  | 0   0 | 1   1   1 | r   0   1 | snw rx/ry  | Store word at rx/ry & inc      |
+  | 0   0 | 1   1   1 | r   1   0 | lrw rx/ry  | Load word at rx/ry + tos!      |
+  | 0   0 | 1   1   1 | r   1   1 | srw rx/ry  | Store word at rx/ry + tos!     |
   +-------+-----------+-----------+------------+--------------------------------+
 ```
+
+
 
 ### 3.3. Instruction Set Details
 
@@ -582,7 +580,26 @@ Compares the top two values on the data stack as unsigned integers, popping both
 
 The `gtu` pseudo-instruction may be implemented as `swap` followed by `ltu`. `leu` is `gtu` followed by `bnot`. `geu` is `ltu` followed by `bnot`.
 
-This instruction can also be used to read the carry flag for multi-precision arithmetic. Implementations may choose to fuse typical sequences of stack ops, `add`/`sub`, and `ltu` into a single multi-precision add-with-carry or subtract-with-borrow instruction for efficiency. Compilers should ensure they use a canonical sequence of instructions to allow implementations to recognize these patterns.
+This instruction can also be used to read the carry flag for multi-precision arithmetic as follows:
+
+```asm
+    ; Example 32 bit add (presuming a 16 bit WORDSIZE)
+    llw 4  ; load a lower word
+    llw 8  ; load b lower word
+    over   ; duplicate a for carry
+    over   ; duplicate b for carry
+    ltu    ; calculate carry
+    rot    ; stash carry
+    add    ; a.low + b.low
+    llw 6  ; load a upper word
+    llw 10 ; load b upper word
+    add    ; a.high + b.high
+    add    ; add carry
+```
+
+Implementations may choose to fuse `over; over; ltu` or `over; over; ltu; rot` sequences for efficiency. Compilers should conform to this sequence when performing multi-precision arithmetic.
+
+Note: the above example also works for subtraction, just substitute all three `add` instructions with `sub`.
 
 ##### 3.4.14. `lt` - Less Than
 
@@ -1001,10 +1018,10 @@ It is illegal to store a word to an unaligned address (that is, the lower 1 (16-
   | O | 0   0 | 1   1   0 | 1   1   0 |
   +---+-------+-----------+-----------+
 
-  push(mem[ar]); ar += WORDBYTES
+  push(mem[ry]); ry += WORDBYTES
 ```
 
-Pushes a word from main memory onto the data stack from the address in the `ar` register. The `ar` register is then incremented by the number of bytes in a word. This can be used to implement more efficient memory copies or for loops over a block of memory.
+Pushes a word from main memory onto the data stack from the address in the `ry` register. The `ry` register is then incremented by the number of bytes in a word. This can be used to implement more efficient memory copies or for loops over a block of memory.
 
 It is illegal to load a word from an unaligned address (that is, the lower 1 (16-bit) or 2 (32-bit) bits of the address are not zero). Implementations are expected to raise an exception if this occurs.
 
@@ -1016,10 +1033,10 @@ It is illegal to load a word from an unaligned address (that is, the lower 1 (16
   | O | 0   0 | 1   1   0 | 1   1   1 |
   +---+-------+-----------+-----------+
 
-  mem[ar] = tos!; ar += WORDBYTES
+  mem[ry] = tos!; ry += WORDBYTES
 ```
 
-Pops a word from the data stack and stores it to main memory at the address in the `ar` register. The `ar` register is then incremented by the number of bytes in a word. This can be used to implement more efficient memory copies or for loops over a block of memory.
+Pops a word from the data stack and stores it to main memory at the address in the `ry` register. The `ry` register is then incremented by the number of bytes in a word. This can be used to implement more efficient memory copies or for loops over a block of memory.
 
 It is illegal to store a word to an unaligned address (that is, the lower 1 (16-bit) or 2 (32-bit) bits of the address are not zero). Implementations are expected to raise an exception if this occurs.
 
@@ -1033,10 +1050,10 @@ It is illegal to store a word to an unaligned address (that is, the lower 1 (16-
   | O | 0   0 | 1   1   1 | 0   0   0 |
   +---+-------+-----------+-----------+
 
-  ra = pc; pc += tos!
+  rx = pc; pc += tos!
 ```
 
-Calls a function at a pc-relative target address. The return address (the address of the instruction after the `call`) is saved to the `ra` register. The program counter is then set to the target address, which is calculated by adding the address of the next instruction to execute to the top of stack value (which is then popped).
+Calls a function at a pc-relative target address. The return address (the address of the instruction after the `call`) is saved to the `rx` register. The program counter is then set to the target address, which is calculated by adding the address of the next instruction to execute to the top of stack value (which is then popped).
 
 ##### 3.7.2. `callp` - Call Function Pointer
 
@@ -1046,37 +1063,43 @@ Calls a function at a pc-relative target address. The return address (the addres
   | O | 0   0 | 1   1   1 | 0   0   1 |
   +---+-------+-----------+-----------+
 
-  ra = pc; pc = tos!
+  rx = pc; pc = tos!
 ```
 
-Calls a function at an absolute target address. The return address (the address of the instruction after the `call`) is saved to the `ra` register. The program counter is then set to the top of stack value (which is then popped).
+Calls a function at an absolute target address. The return address (the address of the instruction after the `call`) is saved to the `rx` register. The program counter is then set to the top of stack value (which is then popped).
 
 ## 4. Calling Convention
 
 By convention, the frame stack grows downwards from the top of memory, and `fp` always points to the bottom of the stack frame, that is, the lowest address. Locals stored at a positive offset from `fp`. The return address and previous frame pointer are stored at the bottom of the stack frame at negative offsets from `fp`.
 
+Of the registers, `rx` is **caller** saved, and `ry` is **callee** saved.
+
 The following steps happen during a function call:
 
 In the function prologue:
 
+- If `rx` is in use, it is saved to the frame or data stack.
 - Function arguments are pushed onto the data stack in reverse order (last argument first). The upper word of multi-word arguments are pushed first.
-- The `call` instruction is used to invoke a function, which saves the return address to the `ra` register.
-- The callee pushes `ra` and `fp` onto the data stack.
-- The callee adjusts the frame pointer downward (subtracts) to allocate space for local variables, `ra` and `fp` using the `add fp` instruction with negative immediate.
-- The callee saves the `ra` on the data stack to a negative 1 word offset from the new `fp` using the `slw` instruction.
-- The callee saves the `fp` on the data stack to a negative 2 word offset from the new `fp` using the `slw` instruction.
+- The `call` instruction is used to invoke a function, which saves the return address to the `rx` register.
+- The callee pushes `rx` and `fp` onto the data stack.
+- The callee adjusts the frame pointer downward (subtracts) to allocate space for local variables, `rx` and `fp` using the `add fp` instruction with negative immediate.
+- The callee saves the return address on the data stack to a negative 1 word offset from the new `fp` using the `slw` instruction.
+- The callee saves the old frame pointer on the data stack to a negative 2 word offset from the new `fp` using the `slw` instruction.
 - The callee accesses local variables using the `llw` and `slw` instructions.
+- If the callee uses the `ry` register, it saves the old value to the frame or data stack.
 - If the callee wants to, it can pop parameters into local variables.
 
 In the function epilogue:
 
 - Any parameters on the data stack must be popped off before returning from the callee.
-- The return values are pushed onto the data stack in reverse order before executing the `ret` instruction to return to the caller. The upper word of multi-word return values are pushed first.
-- The callee loads the `ra` from the negative 1 word offset from `fp` using the `llw` instruction.
-- The callee loads the previous `fp` from the negative 2 word offset from `fp` using the `llw` instruction, popping it to `fp`.
-- The callee jumps to the `ra` address to return to the caller.
+- If `ry` was used, the callee restores it from the frame or data stack.
+- The return values are pushed onto the data stack in reverse order. The upper word of multi-word return values are pushed first.
+- The callee loads the return address onto the data stack from the negative 1 word offset from `fp` using the `llw` instruction.
+- The callee loads the previous frame pointer from the negative 2 word offset from `fp` using the `llw` instruction, popping it to `fp` to restore it to the saved value.
+- The callee jumps to the return address on the stack with `pop pc` to return to the caller.
+- The caller can restore its `rx` register from the frame or data stack if it was saved earlier.
 
-In leaf functions which do not call any other functions, this can be simplified by skipping the saving and restoring of `fp` and `ra`. If the function needs no local variables, the frame pointer adjustment can also be skipped, or it may opt to store locals at negative 3+ word offsets from `fp`.
+In leaf functions which do not call any other functions, this can be simplified by skipping the saving and restoring of `fp` and `rx`. If the function needs no local variables, the frame pointer adjustment can also be skipped, or it may opt to store locals at negative 3+ word offsets from `fp`.
 
 Presuming a 16-bit an example layout of stack frames with Fn 2 being a leaf function is as follows:
 
