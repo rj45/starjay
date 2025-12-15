@@ -352,10 +352,10 @@ All instructions are 8 bits wide. There are three instruction formats:
   +-------+-----------+-----------+------------+--------------------------------+
   | 0   0 | 1   0 | 1   0   1   0 | call       | Call pc-relative function      |
   | 0   0 | 1   0 | 1   0   1   1 | callp      | Call function pointer          |
-  | 0   0 | 1   0 | 1   1   0   0 | brxlt      | Branch if rx less than         |
-  | 0   0 | 1   0 | 1   1   0   1 | brylt      | Branch if ry less than         |
-  | 0   0 | 1   0 | 1   1   1   0 | brxeqz     | Branch if rx equal zero        |
-  | 0   0 | 1   0 | 1   1   1   1 | bryeqz     | Branch if ry equal zero        |
+  | 0   0 | 1   0 | 1   1   0   0 | brxlt      | Branch if rx less than tos     |
+  | 0   0 | 1   0 | 1   1   0   1 | brylt      | Branch if ry less than tos     |
+  | 0   0 | 1   0 | 1   1   1   0 |            |                                |
+  | 0   0 | 1   0 | 1   1   1   1 |            |                                |
   +-------+-------+---------------+------------+--------------------------------+
   | 7   6   5   4   3   2   1   0 |            Extended Memory Ops              |
   +-------+-----------+-----------+------------+--------------------------------+

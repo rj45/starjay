@@ -12,11 +12,13 @@ pub const Status = types.Status;
 pub const ECause = types.ECause;
 pub const CsrNum = types.CsrNum;
 pub const Regs = types.Regs;
+pub const CpuState = types.CpuState;
 pub const Opcode = common.opcode.Opcode;
 
-pub const MAX_STACK_DEPTH = types.MAX_STACK_DEPTH;
-pub const USER_MAX_DEPTH = types.USER_MAX_DEPTH;
-pub const KERNEL_MAX_DEPTH = types.KERNEL_MAX_DEPTH;
+const STACK_SIZE = types.STACK_SIZE;
+const STACK_MASK = types.STACK_MASK;
+const USER_HIGH_WATER = types.USER_HIGH_WATER;
+const KERNEL_HIGH_WATER = types.KERNEL_HIGH_WATER;
 
 pub const OpASrc = enum(u3) { tos, nos, ros, fp, ra, ar, pc, zero };
 pub const OpBSrc = enum(u3) { tos, nos, ros, imm7, zero, wordbytes };
@@ -594,118 +596,6 @@ pub fn generateMicrocodeRom() [MICROCODE_ROM_SIZE]MicroOp {
 
 pub const microcode_rom = generateMicrocodeRom();
 
-pub const CpuState = struct {
-    reg: Regs = .{},
-    stack_mem: [256]Word = [_]Word{0} ** 256,
-    memory: []u8,
-    halted: bool = false,
-    log_enabled: bool = true,
-
-    pub fn init(memory: []u8) CpuState {
-        return .{ .memory = memory };
-    }
-
-    pub fn readStackMem(self: *const CpuState, index: usize) Word {
-        if (index < self.stack_mem.len) {
-            return self.stack_mem[index];
-        }
-        return 0;
-    }
-
-    pub fn writeStackMem(self: *CpuState, index: usize, value: Word) void {
-        if (index < self.stack_mem.len) {
-            self.stack_mem[index] = value;
-        }
-    }
-
-    pub fn readByte(self: *const CpuState, addr: Word) u8 {
-        const phys = self.translateDataAddr(addr);
-        if (phys < self.memory.len) {
-            return self.memory[phys];
-        }
-        return 0;
-    }
-
-    pub fn readHalf(self: *const CpuState, addr: Word) Word {
-        const phys = self.translateDataAddr(addr);
-        if (phys + 1 < self.memory.len) {
-            const lo: Word = self.memory[phys];
-            const hi: Word = self.memory[phys + 1];
-            return lo | (hi << 8);
-        }
-        return 0;
-    }
-
-    pub fn readWord(self: *const CpuState, addr: Word) Word {
-        if (WORDSIZE == 16) {
-            return self.readHalf(addr);
-        } else {
-            const phys = self.translateDataAddr(addr);
-            if (phys + 3 < self.memory.len) {
-                var result: Word = 0;
-                for (0..4) |i| {
-                    result |= @as(Word, self.memory[phys + i]) << @intCast(i * 8);
-                }
-                return result;
-            }
-            return 0;
-        }
-    }
-
-    pub fn writeByte(self: *CpuState, addr: Word, value: u8) void {
-        const phys = self.translateDataAddr(addr);
-        if (phys < self.memory.len) {
-            self.memory[phys] = value;
-        }
-    }
-
-    pub fn writeHalf(self: *CpuState, addr: Word, value: Word) void {
-        const phys = self.translateDataAddr(addr);
-        if (phys + 1 < self.memory.len) {
-            self.memory[phys] = @truncate(value);
-            self.memory[phys + 1] = @truncate(value >> 8);
-        }
-    }
-
-    pub fn writeWord(self: *CpuState, addr: Word, value: Word) void {
-        if (WORDSIZE == 16) {
-            self.writeHalf(addr, value);
-        } else {
-            const phys = self.translateDataAddr(addr);
-            if (phys + 3 < self.memory.len) {
-                for (0..4) |i| {
-                    self.memory[phys + i] = @truncate(value >> @intCast(i * 8));
-                }
-            }
-        }
-    }
-
-    fn translateDataAddr(self: *const CpuState, vaddr: Word) usize {
-        _ = self;
-        return @intCast(vaddr);
-    }
-
-    pub fn loadRom(self: *CpuState, rom_file: []const u8) !void {
-        var file = try std.fs.cwd().openFile(rom_file, .{});
-        defer file.close();
-        const file_size = try file.getEndPos();
-        for (self.memory) |*word| {
-            word.* = 0;
-        }
-        std.log.info("Load {} bytes as rom", .{file_size});
-        _ = try file.readAll(@ptrCast(self.memory));
-    }
-
-    pub fn run(self: *CpuState, max_cycles: usize) usize {
-        var cycles: usize = 0;
-        while (!self.halted and cycles < max_cycles) {
-            step(self, false, 0);
-            cycles += 1;
-        }
-        return cycles;
-    }
-};
-
 pub inline fn executeMicroOp(cpu: *CpuState, uop: MicroOp, instr: u8, trap: bool, trap_cause: u8) void {
     const r = cpu.reg;
 
@@ -981,7 +871,20 @@ fn logInstruction(cpu: *const CpuState, pc_before: Word, instr: u8, uop: MicroOp
     });
 }
 
-pub inline fn step(cpu: *CpuState, irq: bool, irq_num: u4) void {
+pub fn runForCycles(cpu: *CpuState, max_cycles: usize) usize {
+    var cycles: usize = 0;
+    while (!cpu.halted and cycles < max_cycles) {
+        step(cpu, false, 0);
+        cycles += 1;
+    }
+
+    cpu.stack[@subWithOverflow(cpu.reg.depth, 1)[0] & STACK_MASK] = cpu.reg.tos;
+    cpu.stack[@subWithOverflow(cpu.reg.depth, 2)[0] & STACK_MASK] = cpu.reg.nos;
+    cpu.stack[@subWithOverflow(cpu.reg.depth, 3)[0] & STACK_MASK] = cpu.reg.ros;
+    return cycles;
+}
+
+inline fn step(cpu: *CpuState, irq: bool, irq_num: u4) void {
     if (cpu.halted) return;
 
     const pc_before = cpu.reg.pc;
@@ -999,7 +902,7 @@ pub inline fn step(cpu: *CpuState, irq: bool, irq_num: u4) void {
     const underflow: bool = cpu.reg.depth < fetched_uop.min_depth;
     // Check post-instruction km (e.g. rets restores estatus.km) to apply correct depth limit
     const dest_km: bool = if (fetched_uop.exit_trap) cpu.reg.estatus.km else cpu.reg.status.km;
-    const max_depth: Word = if (dest_km) KERNEL_MAX_DEPTH else USER_MAX_DEPTH;
+    const max_depth: Word = if (dest_km) KERNEL_HIGH_WATER else USER_HIGH_WATER;
     const overflow: bool = cpu.reg.depth > max_depth;
 
     const instr_exception: bool = switch (fetched_uop.trap_check) {
@@ -1042,7 +945,7 @@ pub fn run(rom_file: []const u8, max_cycles: usize, quiet: bool, gpa: std.mem.Al
     try cpu.loadRom(rom_file);
 
     const start = try std.time.Instant.now();
-    const cycles = cpu.run(max_cycles);
+    const cycles = runForCycles(cpu, max_cycles);
     const elapsed = (try std.time.Instant.now()).since(start);
     const cycles_per_sec = if (elapsed > 0)
         @as(f64, @floatFromInt(cycles)) / (@as(f64, @floatFromInt(elapsed)) / 1_000_000_000.0)
@@ -1074,7 +977,7 @@ fn runTest(rom_file: []const u8, max_cycles: usize, gpa: std.mem.Allocator) !Wor
     };
 
     try cpu.loadRom(rom_file);
-    const cycles = cpu.run(max_cycles);
+    const cycles = runForCycles(cpu, max_cycles);
 
     if (cycles == max_cycles) {
         std.log.err("Execution did not halt within {} cycles", .{max_cycles});

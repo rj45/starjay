@@ -69,7 +69,7 @@ pub fn main() !void {
         if (res.args.llemu != 0) {
             try ll_emu.main(rom, 100000000, quiet, gpa);
         } else {
-            try hl_emu.main(rom, 100000000, gpa);
+            try hl_emu.main(rom, 100000000, quiet, gpa);
         }
     }
 }
