@@ -1,29 +1,22 @@
 const std = @import("std");
 
-pub const WORDSIZE = 16;
-pub const WORDBYTES = WORDSIZE / 8;
+const common = @import("../root.zig");
+pub const types = common.types;
+pub const utils = common.utils;
 
-pub const Word = if (WORDSIZE == 16) u16 else u32;
-pub const SWord = if (WORDSIZE == 16) i16 else i32;
+pub const WORDSIZE = types.WORDSIZE;
+pub const WORDBYTES = types.WORDBYTES;
+pub const Word = types.Word;
+pub const SWord = types.SWord;
+pub const Status = types.Status;
+pub const ECause = types.ECause;
+pub const CsrNum = types.CsrNum;
+pub const Regs = types.Regs;
+pub const Opcode = common.opcode.Opcode;
 
-pub const MAX_STACK_DEPTH: Word = 256;
-pub const USER_MAX_DEPTH: Word = MAX_STACK_DEPTH - 8;
-pub const KERNEL_MAX_DEPTH: Word = MAX_STACK_DEPTH - 4;
-
-pub const Status = packed struct(u16) {
-    km: bool = false,
-    ie: bool = false,
-    th: bool = false,
-    _reserved: u13 = 0,
-
-    pub fn toWord(self: Status) Word {
-        return @bitCast(self);
-    }
-
-    pub fn fromWord(w: Word) Status {
-        return @bitCast(w);
-    }
-};
+pub const MAX_STACK_DEPTH = types.MAX_STACK_DEPTH;
+pub const USER_MAX_DEPTH = types.USER_MAX_DEPTH;
+pub const KERNEL_MAX_DEPTH = types.KERNEL_MAX_DEPTH;
 
 pub const OpASrc = enum(u3) { tos, nos, ros, fp, ra, ar, pc, zero };
 pub const OpBSrc = enum(u3) { tos, nos, ros, imm7, zero, wordbytes };
@@ -47,32 +40,6 @@ pub const StackMode = enum(u3) { hold, push, pop, pop2, pop3, swap, rot };
 pub const PcSrc = enum(u3) { next, rel, abs, evec, epc, hold, macro };
 pub const BranchCond = enum(u2) { always, if_nos_zero, if_nos_nzero };
 pub const TrapCheck = enum(u1) { none, th_trap };
-
-pub const ECause = enum(u3) {
-    none = 0,
-    syscall = 1,
-    illegal_instr = 2,
-    halt_trap = 3,
-    stack_underflow = 4,
-    stack_overflow = 5,
-
-    /// Convert to full 8-bit ecause value.
-    /// Upper nibble encodes exception class: 0x0=syscall, 0x1=illegal, 0x3=stack, 0x5=irq
-    pub fn toU8(self: ECause) u8 {
-        return switch (self) {
-            .none => 0x00,
-            .syscall => 0x00,
-            .illegal_instr => 0x10,
-            .halt_trap => 0x12,
-            .stack_underflow => 0x30,
-            .stack_overflow => 0x31,
-        };
-    }
-
-    pub fn interrupt(irq_num: u4) u8 {
-        return 0x50 | @as(u8, irq_num);
-    }
-};
 
 pub const MicroOp = packed struct(u43) {
     // OPERAND SELECTION
@@ -111,161 +78,6 @@ pub const MicroOp = packed struct(u43) {
     // SAFETY
     min_depth: u2 = 0,
     halt: bool = false,
-};
-
-pub const Opcode = enum(u7) {
-    halt = 0x00,
-    reserved_01 = 0x01,
-    syscall = 0x02,
-    rets = 0x03,
-    beqz = 0x04,
-    bnez = 0x05,
-    swap = 0x06,
-    over = 0x07,
-    drop = 0x08,
-    dup = 0x09,
-    ltu = 0x0A,
-    lt = 0x0B,
-    add = 0x0C,
-    and_op = 0x0D,
-    xor_op = 0x0E,
-    fsl = 0x0F,
-    push_pc = 0x10,
-    push_fp = 0x11,
-    push_ra = 0x12,
-    push_ar = 0x13,
-    pop_pc = 0x14,
-    pop_fp = 0x15,
-    pop_ra = 0x16,
-    pop_ar = 0x17,
-    jump = 0x18,
-    add_fp = 0x19,
-    add_ra = 0x1A,
-    add_ar = 0x1B,
-    pushcsr = 0x1C,
-    popcsr = 0x1D,
-    llw = 0x1E,
-    slw = 0x1F,
-    div = 0x20,
-    divu = 0x21,
-    ext_reserved_22 = 0x22,
-    ext_reserved_23 = 0x23,
-    mul = 0x24,
-    ext_reserved_25 = 0x25,
-    ext_reserved_26 = 0x26,
-    rot = 0x27,
-    srl = 0x28,
-    sra = 0x29,
-    sll = 0x2A,
-    or_op = 0x2B,
-    sub = 0x2C,
-    ext_reserved_2D = 0x2D,
-    ext_reserved_2E = 0x2E,
-    ext_reserved_2F = 0x2F,
-    lb = 0x30,
-    sb = 0x31,
-    lh = 0x32,
-    sh = 0x33,
-    lw = 0x34,
-    sw = 0x35,
-    lnw = 0x36,
-    snw = 0x37,
-    call = 0x38,
-    callp = 0x39,
-    ext_reserved_3A = 0x3A,
-    ext_reserved_3B = 0x3B,
-    ext_reserved_3C = 0x3C,
-    ext_reserved_3D = 0x3D,
-    ext_reserved_3E = 0x3E,
-    ext_reserved_3F = 0x3F,
-    push = 0x40,
-    shi = 0x41,
-
-    /// Returns the assembly mnemonic for this opcode
-    pub fn toMnemonic(self: Opcode) []const u8 {
-        return switch (self) {
-            .halt => "halt",
-            .reserved_01 => "???",
-            .syscall => "syscall",
-            .rets => "rets",
-            .beqz => "beqz",
-            .bnez => "bnez",
-            .swap => "swap",
-            .over => "over",
-            .drop => "drop",
-            .dup => "dup",
-            .ltu => "ltu",
-            .lt => "lt",
-            .add => "add",
-            .and_op => "and",
-            .xor_op => "xor",
-            .fsl => "fsl",
-            .push_pc => "push pc",
-            .push_fp => "push fp",
-            .push_ra => "push ra",
-            .push_ar => "push ar",
-            .pop_pc => "pop pc",
-            .pop_fp => "pop fp",
-            .pop_ra => "pop ra",
-            .pop_ar => "pop ar",
-            .jump => "jump",
-            .add_fp => "add fp",
-            .add_ra => "add ra",
-            .add_ar => "add ar",
-            .pushcsr => "pushcsr",
-            .popcsr => "popcsr",
-            .llw => "llw",
-            .slw => "slw",
-            .div => "div",
-            .divu => "divu",
-            .ext_reserved_22 => "???",
-            .ext_reserved_23 => "???",
-            .mul => "mul",
-            .ext_reserved_25 => "???",
-            .ext_reserved_26 => "???",
-            .rot => "rot",
-            .srl => "srl",
-            .sra => "sra",
-            .sll => "sll",
-            .or_op => "or",
-            .sub => "sub",
-            .ext_reserved_2D => "???",
-            .ext_reserved_2E => "???",
-            .ext_reserved_2F => "???",
-            .lb => "lb",
-            .sb => "sb",
-            .lh => "lh",
-            .sh => "sh",
-            .lw => "lw",
-            .sw => "sw",
-            .lnw => "lnw",
-            .snw => "snw",
-            .call => "call",
-            .callp => "callp",
-            .ext_reserved_3A => "???",
-            .ext_reserved_3B => "???",
-            .ext_reserved_3C => "???",
-            .ext_reserved_3D => "???",
-            .ext_reserved_3E => "???",
-            .ext_reserved_3F => "???",
-            .push => "push",
-            .shi => "shi",
-        };
-    }
-
-    /// Decode a byte into an opcode
-    pub fn fromByte(byte: u8) Opcode {
-        // shi: 0x80-0xFF (high bit set)
-        if ((byte & 0x80) != 0) {
-            return .shi;
-        }
-        // push: 0x40-0x7F
-        if ((byte & 0xC0) == 0x40) {
-            return .push;
-        }
-        // All other opcodes: 0x00-0x3F
-        return @enumFromInt(byte & 0x3F);
-    }
 };
 
 fn generateMicrocode(opcode: Opcode) MicroOp {
@@ -782,56 +594,15 @@ pub fn generateMicrocodeRom() [MICROCODE_ROM_SIZE]MicroOp {
 
 pub const microcode_rom = generateMicrocodeRom();
 
-pub const Regs = struct {
-    pc: Word = 0,
-    ra: Word = 0,
-    ar: Word = 0,
-    ufp: Word = 0,
-    kfp: Word = 0,
-    tos: Word = 0,
-    nos: Word = 0,
-    ros: Word = 0,
-    depth: Word = 0,
-    status: Status = .{ .km = true },
-    estatus: Status = .{},
-    epc: Word = 0,
-    evec: Word = 0,
-
-    pub fn fp(self: *const Regs) Word {
-        return if (self.status.km) self.kfp else self.ufp;
-    }
-
-    pub fn afp(self: *const Regs) Word {
-        return if (self.status.km) self.ufp else self.kfp;
-    }
-};
-
 pub const CpuState = struct {
     reg: Regs = .{},
     stack_mem: [256]Word = [_]Word{0} ** 256,
-    ecause: Word = 0,
-    udmask: Word = 0,
-    udset: Word = 0,
-    upmask: Word = 0,
-    upset: Word = 0,
-    kdmask: Word = 0,
-    kdset: Word = 0,
-    kpmask: Word = 0,
-    kpset: Word = 0,
     memory: []u8,
     halted: bool = false,
     log_enabled: bool = true,
 
     pub fn init(memory: []u8) CpuState {
         return .{ .memory = memory };
-    }
-
-    pub fn fp(self: *const CpuState) Word {
-        return self.reg.fp();
-    }
-
-    pub fn afp(self: *const CpuState) Word {
-        return self.reg.afp();
     }
 
     pub fn readStackMem(self: *const CpuState, index: usize) Word {
@@ -914,54 +685,6 @@ pub const CpuState = struct {
         return @intCast(vaddr);
     }
 
-    pub fn readCsr(self: *const CpuState, index: Word) Word {
-        return switch (index) {
-            0 => self.reg.status.toWord(),
-            1 => self.reg.estatus.toWord(),
-            2 => self.reg.epc,
-            3 => self.afp(),
-            4 => self.reg.depth,
-            5 => self.ecause,
-            6 => self.reg.evec,
-            8 => self.udmask,
-            9 => self.udset,
-            10 => self.upmask,
-            11 => self.upset,
-            12 => self.kdmask,
-            13 => self.kdset,
-            14 => self.kpmask,
-            15 => self.kpset,
-            else => 0,
-        };
-    }
-
-    pub fn writeCsr(self: *CpuState, index: Word, value: Word) void {
-        switch (index) {
-            0 => self.reg.status = Status.fromWord(value),
-            1 => self.reg.estatus = Status.fromWord(value),
-            2 => self.reg.epc = value,
-            3 => {
-                if (self.reg.status.km) {
-                    self.reg.ufp = value;
-                } else {
-                    self.reg.kfp = value;
-                }
-            },
-            4 => self.reg.depth = 0,
-            5 => self.ecause = value,
-            6 => self.reg.evec = value,
-            8 => self.udmask = value,
-            9 => self.udset = value,
-            10 => self.upmask = value,
-            11 => self.upset = value,
-            12 => self.kdmask = value,
-            13 => self.kdset = value,
-            14 => self.kpmask = value,
-            15 => self.kpset = value,
-            else => {},
-        }
-    }
-
     pub fn loadRom(self: *CpuState, rom_file: []const u8) !void {
         var file = try std.fs.cwd().openFile(rom_file, .{});
         defer file.close();
@@ -1012,17 +735,9 @@ pub inline fn executeMicroOp(cpu: *CpuState, uop: MicroOp, instr: u8, trap: bool
         .ar => r.ar,
     } else 0;
 
-    const mem_data: Word = if (uop.mem_op == .read) switch (uop.mem_width) {
-        .byte => signExtend8(cpu.readByte(mem_addr)),
-        .half => cpu.readHalf(mem_addr),
-        .word => cpu.readWord(mem_addr),
-    } else 0;
-
     const alu_out: Word = executeAlu(uop.alu_op, op_a, op_b);
 
     const shifter_out: Word = executeShifter(uop.shift_mode, op_a, op_b, r.ros);
-
-    const csr_out: Word = cpu.readCsr(r.tos);
 
     const result: Word = switch (uop.result_src) {
         .op_a => op_a,
@@ -1030,8 +745,12 @@ pub inline fn executeMicroOp(cpu: *CpuState, uop: MicroOp, instr: u8, trap: bool
         .shl7_or => (op_a << 7) | (op_b & 0x7F),
         .alu => alu_out,
         .shifter => shifter_out,
-        .mem => mem_data,
-        .csr => csr_out,
+        .mem => switch (uop.mem_width) {
+            .byte => signExtend8(cpu.readByte(mem_addr)),
+            .half => cpu.readHalf(mem_addr),
+            .word => cpu.readWord(mem_addr),
+        },
+        .csr => cpu.reg.readCsr(r.tos),
     };
 
     if (uop.mem_op == .write) {
@@ -1115,7 +834,7 @@ pub inline fn executeMicroOp(cpu: *CpuState, uop: MicroOp, instr: u8, trap: bool
         },
         .ra => cpu.reg.ra = result,
         .ar => cpu.reg.ar = result,
-        .csr => cpu.writeCsr(r.tos, r.nos),
+        .csr => cpu.reg.writeCsr(r.tos, r.nos),
     }
 
     if (uop.ar_increment) {
@@ -1142,7 +861,7 @@ pub inline fn executeMicroOp(cpu: *CpuState, uop: MicroOp, instr: u8, trap: bool
     if (uop.enter_trap) {
         cpu.reg.epc = r.pc;
         cpu.reg.estatus = r.status;
-        cpu.ecause = if (trap) trap_cause else uop.ecause.toU8();
+        cpu.reg.ecause = if (trap) trap_cause else uop.ecause.toU8();
         cpu.reg.status.km = true;
         cpu.reg.status.ie = false;
     }
@@ -1195,27 +914,11 @@ inline fn executeShifter(mode: ShiftMode, value: Word, shift_amount: Word, ros: 
     };
 }
 
-inline fn signExtend6(val: u6) Word {
-    const sval: i6 = @bitCast(val);
-    const extended: SWord = sval;
-    return @bitCast(extended);
-}
-
-fn signExtend8(val: u8) Word {
-    const sval: i8 = @bitCast(val);
-    const extended: SWord = sval;
-    return @bitCast(extended);
-}
+const signExtend6 = utils.signExtend6;
+const signExtend8 = utils.signExtend8;
 
 fn getInstrMnemonic(instr: u8) []const u8 {
-    if (instr & 0x80 != 0) {
-        return "shi";
-    } else if (instr & 0xC0 == 0x40) {
-        return "push";
-    } else {
-        const opcode: Opcode = @enumFromInt(instr & 0x3F);
-        return opcode.toMnemonic();
-    }
+    return Opcode.fromByte(instr).toMnemonic();
 }
 
 fn formatImmediate(instr: u8, buf: *[32]u8) []const u8 {
@@ -1366,6 +1069,7 @@ fn runTest(rom_file: []const u8, max_cycles: usize, gpa: std.mem.Allocator) !Wor
     var cpu: *CpuState = try gpa.create(CpuState);
     defer gpa.destroy(cpu);
     cpu.* = .{
+        .log_enabled = false,
         .memory = @ptrCast(memory),
     };
 
