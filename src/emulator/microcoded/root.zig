@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const cpu = @import("microcode.zig");
+const cpu = @import("cpu.zig");
 
 pub const Word = cpu.Word;
 
