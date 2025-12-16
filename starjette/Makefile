@@ -4,7 +4,7 @@
 PYTHON := $(shell command -v python3 2>/dev/null || command -v python 2>/dev/null)
 
 # ISA CPU definition (instruction encodings and bank definitions only)
-ISA := customasm/starj_cpudef.asm
+ISA := customasm/cpudef.asm
 
 # Test kernel for the tests
 KERNEL := customasm/test_shim.asm

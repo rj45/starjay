@@ -11,7 +11,7 @@
 ; The sieve array is stored in BSS starting at SIEVE_BASE
 ; Each byte represents whether that index is composite (1) or prime (0)
 
-#include "../customasm/starj_cpudef.asm"
+#include "../customasm/cpudef.asm"
 #include "../customasm/test_shim.asm"
 
 ; Configuration - adjust for longer/shorter runs

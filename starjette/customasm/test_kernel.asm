@@ -1,25 +1,11 @@
-; Test Kernel for StarJ
-; Provides reset handler, exception handler using ecause/evec,
-; and software implementations of extended instructions.
-;
-; This kernel is designed for running tests where:
-; - syscall halts the processor with TOS as the exit code
-; - Extended instructions are implemented via macro instruction vectors
-; - All exceptions halt with the negated ecause as error code
-;
-; Usage: customasm -f binary -o test.bin starj_isa.asm test_kernel.asm test.asm
-
-; ==========================================
-; Vector Table (0x0000 - 0x00FF)
-; Reset vector and exception handler
-; ==========================================
+; WARNING: This is a AI written, mostly untested kernel for the StarJette CPU.
 
 #bank vector
 
 ; Reset vector at 0x0000
 _reset_handler:
-  li fp, 0xffff        ; initialize kernel frame pointer
-  li afp, 0xdfff       ; initialize alternate (user) frame pointer
+  li fp, 0             ; initialize kernel frame pointer
+  li afp, 0xE000       ; initialize alternate (user) frame pointer
 
   ; Set up exception vector to point to our handler
   li evec, _exception_handler
