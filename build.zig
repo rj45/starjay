@@ -7,7 +7,7 @@ pub fn build(b: *std.Build) void {
     const dvui_dep = b.dependency("dvui", .{
         .target = target,
         .optimize = optimize,
-        .backend = .raylib_zig,
+        .backend = .sdl3gpu,
     });
 
     const clap = b.dependency("clap", .{
@@ -22,7 +22,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "dvui", .module = dvui_dep.module("dvui_raylib_zig") },
+                .{ .name = "dvui", .module = dvui_dep.module("dvui_sdl3gpu") },
                 .{ .name = "clap", .module = clap.module("clap") },
             },
         }),

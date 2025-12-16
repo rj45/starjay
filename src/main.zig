@@ -28,7 +28,7 @@ fn logFn(
 }
 
 pub fn main() !void {
-    defer _ = gpa_instance.deinit();
+    defer if (gpa_instance.deinit() != .ok) @panic("Memory leak on exit!");
 
     const params = comptime clap.parseParamsComptime(
         \\-h, --help             Display this help and exit.

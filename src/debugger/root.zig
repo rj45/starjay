@@ -1,10 +1,6 @@
 const std = @import("std");
 const dvui = @import("dvui");
-const RaylibBackend =  dvui.backend;
-const raylib = RaylibBackend.raylib;
-
-const colors = @import("colors.zig").colors;
-const theme = @import("theme.zig");
+const SDLBackend =  dvui.backend;
 
 // TODO: Figure out an icon to embed here
 //const window_icon_png = @embedFile("zig-favicon.png");
@@ -18,12 +14,12 @@ pub fn main(gpa: std.mem.Allocator) !void {
         // so, attach it manually
         dvui.Backend.Common.windowsAttachConsole() catch {};
     }
-    RaylibBackend.enableRaylibLogging();
+    SDLBackend.enableSDLLogging();
 
-    // init Raylib backend (creates OS window)
+    // init SDL backend (creates OS window)
     // initWindow() means the backend calls CloseWindow for you in deinit()
-    var backend = try RaylibBackend.initWindow(.{
-        .gpa = gpa,
+    var backend = try SDLBackend.initWindow(.{
+        .allocator = gpa,
         .min_size = .{ .w = 800.0, .h = 600.0 },
         .size = .{ .w = 1400.0, .h = 900.0 },
         .vsync = vsync,
@@ -31,36 +27,42 @@ pub fn main(gpa: std.mem.Allocator) !void {
         //.icon = window_icon_png,
     });
     defer backend.deinit();
-    backend.log_events = true;
+    // backend.log_events = true;
+
+    _ = SDLBackend.c.SDL_EnableScreenSaver();
 
     // init dvui Window (maps onto a single OS window)
     var win = try dvui.Window.init(@src(), gpa, backend.backend(), .{
         // you can set the default theme here in the init options
         .theme = switch (backend.preferredColorScheme() orelse .dark) {
-            .light => theme.light,
-            .dark => theme.dark,
+            .light => dvui.Theme.builtin.adwaita_light,
+            .dark => dvui.Theme.builtin.adwaita_dark,
         },
     });
     defer win.deinit();
 
-    main_loop: while (true) {
-        raylib.beginDrawing();
+    var interrupted = false;
 
-        const nstime = win.beginWait(true);
+    main_loop: while (true) {
+        const nstime = win.beginWait(interrupted);
 
         try win.begin(nstime);
-        try backend.addAllEvents(&win);
-        backend.clear();
+        _ = try backend.addAllEvents(&win);
 
         const keep_running = dvui_frame();
         if (!keep_running) break :main_loop;
 
         const end_micros = try win.end(.{});
 
-        backend.setCursor(win.cursorRequested());
+        try backend.setCursor(win.cursorRequested());
+        try backend.textInputRect(win.textInputRequested());
 
+        // render frame to OS
+        try backend.renderPresent();
+
+        // waitTime and beginWait combine to achieve variable framerates
         const wait_event_micros = win.waitTime(end_micros);
-        backend.EndDrawingWaitEventTimeout(wait_event_micros);
+        interrupted = try backend.waitEventTimeout(wait_event_micros);
     }
 }
 

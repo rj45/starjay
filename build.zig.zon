@@ -4,17 +4,13 @@
     .fingerprint = 0xa2c40a86857ec2a4,
     .minimum_zig_version = "0.15.1",
     .dependencies = .{
-        .raylib_zig = .{
-            .url = "git+https://github.com/raylib-zig/raylib-zig.git#a4d18b2d1cf8fdddec68b5b084535fca0475f466",
-            .hash = "raylib_zig-5.6.0-dev-KE8REL5MBQAf3p497t52Xw9P7ojndIkVOWPXnLiLLw2P",
-        },
-        .dvui = .{
-            .url = "git+https://github.com/foxnne/dvui-dev.git#0ed011a2157dcb154a98cbaa7fd9f14921289368",
-            .hash = "dvui-0.4.0-dev-AQFJmWEy2AABzX_-NPzCX5-pjWfrnbuN8q86ag9FA-gi",
-        },
         .clap = .{
             .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.11.0.tar.gz",
             .hash = "clap-0.11.0-oBajB-HnAQDPCKYzwF7rO3qDFwRcD39Q0DALlTSz5H7e",
+        },
+        .dvui = .{
+            .url = "git+https://github.com/david-vanderson/dvui?ref=main#938690f9ef4fc8b47fc5aa529da50bdb549a2a80",
+            .hash = "dvui-0.4.0-dev-AQFJmeHt2QCwv7qbJ5ng2avy4SCMqTJrUCLJ4qadTwMj",
         },
     },
     .paths = .{
