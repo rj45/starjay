@@ -8,12 +8,11 @@ Vertical slices - each step produces testable functionality.
 
 Get a window on screen with basic layout structure.
 
-- [ ] Initialize dvui/Raylib backend, open window
-- [ ] Main render loop with vsync
-- [ ] Two-column layout with placeholder panels
-- [ ] Basic color constants (just enough for backgrounds)
+- [x] Initialize dvui/sdl backend, open window
+- [x] Main render loop with vsync
+- [x] Three-column layout with placeholder panels
 
-**Test:** Window opens, shows two colored rectangles side by side.
+**Test:** Window opens, shows three panes side by side.
 
 ---
 
@@ -23,10 +22,10 @@ Display bytes from memory as disassembly (no file loading yet).
 
 - [ ] Create CpuState with zeroed memory
 - [ ] Simple disassembly function (byte -> mnemonic)
-- [ ] Render address + byte + mnemonic in left panel
+- [ ] Render address + byte + mnemonic in middle panel
 - [ ] Highlight one row as "current PC"
 
-**Test:** Window shows list of `0000: 00 nop` lines, one highlighted.
+**Test:** Window shows list of `0000: 00 halt` lines, one highlighted.
 
 ---
 

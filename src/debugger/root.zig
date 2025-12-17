@@ -2,6 +2,8 @@ const std = @import("std");
 const dvui = @import("dvui");
 const SDLBackend =  dvui.backend;
 
+const sourceView = @import("source_view.zig").sourceView;
+
 // TODO: Figure out an icon to embed here
 //const window_icon_png = @embedFile("zig-favicon.png");
 
@@ -146,7 +148,45 @@ fn dvui_frame() bool {
             .background = true,
         });
         defer scroll.deinit();
+        {
+            var paned = dvui.paned(@src(), .{
+                .direction = .horizontal,
+                .collapsed_size = 0,
+                .handle_margin = 4,
+                .autofit_first = .{ .min_split = 0.8, .max_split = 1, .min_size = 50 },
+            }, .{ .expand = .both, .background = false });
+            defer paned.deinit();
 
+            if (paned.showFirst()) {
+                var leftPaned = dvui.paned(@src(), .{
+                    .direction = .horizontal,
+                    .collapsed_size = 0,
+                    .handle_margin = 4,
+                    .autofit_first = .{ .min_split = 0.3, .max_split = 0.8, .min_size = 50 },
+                }, .{ .expand = .both, .background = false });
+                defer leftPaned.deinit();
+
+                if (leftPaned.showFirst()) {
+                    var vbox = dvui.box(@src(), .{}, .{ .expand = .both, .background = true, .border = .all(1) });
+                    defer vbox.deinit();
+
+                    dvui.label(@src(), "Registers", .{}, .{});
+                }
+
+                if (leftPaned.showSecond()) {
+                    sourceView();
+                }
+            }
+
+            if (paned.showSecond()) {
+                var vbox = dvui.box(@src(), .{}, .{ .expand = .both, .background = true, .border = .all(1) });
+                defer vbox.deinit();
+
+                dvui.label(@src(), "Stacks", .{}, .{});
+            }
+
+
+        }
 
     }
 
