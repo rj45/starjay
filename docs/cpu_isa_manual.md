@@ -308,7 +308,7 @@ All instructions are 8 bits wide. There are three instruction formats:
   | 0   1 |          imm          | push <imm> | Push sign extended immediate   |
   +-------+-------+---------------+------------+--------------------------------+
   | 0   0 | 0   0 | 0   0   0   0 | halt       | Halt the processor             |
-  | 0   0 | 0   0 | 0   0   0   1 | lpw        | Load pc-rel word               |
+  | 0   0 | 0   0 | 0   0   0   1 |            |                                |
   | 0   0 | 0   0 | 0   0   1   0 | syscall    | Jump to kernel                 |
   | 0   0 | 0   0 | 0   0   1   1 | rets       | Return from kernel             |
   | 0   0 | 0   0 | 0   1   0   0 | beqz       | Branch if equal zero           |
@@ -347,13 +347,13 @@ All instructions are 8 bits wide. There are three instruction formats:
   | 0   0 | 1   0 | 0   1   1   1 | or         | Bitwise OR                     |
   | 0   0 | 1   0 | 1   0   0   0 | sub        | Subtraction                    |
   | 0   0 | 1   0 | 1   0   0   1 | clz        | Count leading zero bits        |
-  +-------+-----------+-----------+------------+--------------------------------+
+  +-------+-------+---------------+------------+--------------------------------+
   | 7   6   5   4   3   2   1   0 |          Extended Control Flow              |
-  +-------+-----------+-----------+------------+--------------------------------+
+  +-------+-------+---------------+------------+--------------------------------+
   | 0   0 | 1   0 | 1   0   1   0 | call       | Call pc-relative function      |
   | 0   0 | 1   0 | 1   0   1   1 | callp      | Call function pointer          |
-  | 0   0 | 1   0 | 1   1   0   0 | brxlt      | Branch if rx less than tos     |
-  | 0   0 | 1   0 | 1   1   0   1 | brylt      | Branch if ry less than tos     |
+  | 0   0 | 1   0 | 1   1   0   0 |            |                                |
+  | 0   0 | 1   0 | 1   1   0   1 |            |                                |
   | 0   0 | 1   0 | 1   1   1   0 |            |                                |
   | 0   0 | 1   0 | 1   1   1   1 |            |                                |
   +-------+-------+---------------+------------+--------------------------------+
@@ -365,12 +365,16 @@ All instructions are 8 bits wide. There are three instruction formats:
   | 0   0 | 1   1   0 | 0   1   1 | sh         | Store half word                |
   | 0   0 | 1   1   0 | 1   0   0 | lw         | Load word from address in tos  |
   | 0   0 | 1   1   0 | 1   0   1 | sw         | Store nos to address in tos    |
-  | 0   0 | 1   1   0 | 1   1   0 |            |                                |
-  | 0   0 | 1   1   0 | 1   1   1 |            |                                |
-  | 0   0 | 1   1   1 | r   0   0 | lnw rx/ry  | Load word at rx/ry & inc       |
-  | 0   0 | 1   1   1 | r   0   1 | snw rx/ry  | Store word at rx/ry & inc      |
-  | 0   0 | 1   1   1 | r   1   0 | lrw rx/ry  | Load word at rx/ry + tos!      |
-  | 0   0 | 1   1   1 | r   1   1 | srw rx/ry  | Store word at rx/ry + tos!     |
+  | 0   0 | 1   1   0 | 1   1   0 | lnw        | Load next word from ry and inc |
+  | 0   0 | 1   1   0 | 1   1   1 | snw        | Store next work to ry and inc  |
+  | 0   0 | 1   1   1 | 0   0   0 |            |                                |
+  | 0   0 | 1   1   1 | 0   0   1 |            |                                |
+  | 0   0 | 1   1   1 | 0   1   0 |            |                                |
+  | 0   0 | 1   1   1 | 0   1   1 |            |                                |
+  | 0   0 | 1   1   1 | 1   0   0 |            |                                |
+  | 0   0 | 1   1   1 | 1   0   1 |            |                                |
+  | 0   0 | 1   1   1 | 1   1   0 |            |                                |
+  | 0   0 | 1   1   1 | 1   1   1 |            |                                |
   +-------+-----------+-----------+------------+--------------------------------+
 ```
 
