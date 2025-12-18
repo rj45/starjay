@@ -20,10 +20,10 @@ Get a window on screen with basic layout structure.
 
 Display bytes from memory as disassembly (no file loading yet).
 
-- [ ] Create CpuState with zeroed memory
-- [ ] Simple disassembly function (byte -> mnemonic)
-- [ ] Render address + byte + mnemonic in middle panel
-- [ ] Highlight one row as "current PC"
+- [x] Create CpuState with zeroed memory
+- [x] Simple disassembly function (byte -> mnemonic)
+- [x] Render address + byte + mnemonic in middle panel
+- [x] Highlight one row as "current PC"
 
 **Test:** Window shows list of `0000: 00 halt` lines, one highlighted.
 
@@ -33,10 +33,10 @@ Display bytes from memory as disassembly (no file loading yet).
 
 Load a binary file and show its disassembly.
 
-- [ ] File menu with "Open ROM" item
-- [ ] Native file dialog
-- [ ] Load ROM bytes into memory
-- [ ] Disassembly view updates to show ROM contents
+- [x] File menu with "Open ROM" item
+- [x] Native file dialog
+- [x] Load ROM bytes into memory
+- [x] Disassembly view updates to show ROM contents
 
 **Test:** Open a .bin file, see actual instructions displayed.
 
@@ -46,16 +46,41 @@ Load a binary file and show its disassembly.
 
 Execute instructions one at a time.
 
-- [ ] "Step Into" button in toolbar
-- [ ] Wire button to `microcode.step()`
-- [ ] Update PC highlight after each step
-- [ ] Cycle counter in toolbar
+- [x] "Step Into" button in toolbar
+- [x] Wire button to `runForCycles`
+- [x] Update PC highlight after each step
+- [x] Cycle counter in toolbar
 
 **Test:** Click Step, PC moves, cycle count increments.
 
 ---
 
-## Slice 5: Registers Panel
+## Slice 5: Auto-Scroll and PC Tracking
+
+Keep current instruction visible.
+
+- [x] Track PC changes between frames
+- [x] Scroll to keep PC in view (not at edge)
+- [ ] Expand multi-byte instructions when PC is inside
+
+**Test:** Step through long program, view follows automatically.
+
+---
+
+## Slice 6: Breakpoints
+
+Set and hit breakpoints.
+
+- [x] Breakpoint column in source view
+- [x] Click to toggle breakpoint at address
+- [x] Store breakpoints in hashmap
+- [x] Visual indicator for breakpoint lines
+
+**Test:** Click to set breakpoint, see marker appear.
+
+---
+
+## Slice 7: Registers Panel
 
 Show CPU register values.
 
@@ -67,7 +92,7 @@ Show CPU register values.
 
 ---
 
-## Slice 6: Stack Panel
+## Slice 8: Stack Panel
 
 Show stack contents.
 
@@ -80,7 +105,7 @@ Show stack contents.
 
 ---
 
-## Slice 7: Listing File Support
+## Slice 9: Listing File Support
 
 Load assembler listing for source-level view.
 
@@ -90,31 +115,6 @@ Load assembler listing for source-level view.
 - [ ] Map PC to source line
 
 **Test:** Load listing, see source code with addresses and bytes.
-
----
-
-## Slice 8: Auto-Scroll and PC Tracking
-
-Keep current instruction visible.
-
-- [ ] Track PC changes between frames
-- [ ] Scroll to keep PC in view (not at edge)
-- [ ] Expand multi-byte instructions when PC is inside
-
-**Test:** Step through long program, view follows automatically.
-
----
-
-## Slice 9: Breakpoints
-
-Set and hit breakpoints.
-
-- [ ] Breakpoint column in source view
-- [ ] Click to toggle breakpoint at address
-- [ ] Store breakpoints in hashmap
-- [ ] Visual indicator for breakpoint lines
-
-**Test:** Click to set breakpoint, see marker appear.
 
 ---
 

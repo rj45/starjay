@@ -600,6 +600,8 @@ fn runForCycles(cpu: *CpuState, cycles: usize) !usize {
     cpu.stack[@subWithOverflow(cpu.reg.depth, 2)[0] & STACK_MASK] = nos;
     cpu.stack[@subWithOverflow(cpu.reg.depth, 3)[0] & STACK_MASK] = ros;
 
+    cpu.cycles += cycles;
+
     return cycle;
 }
 

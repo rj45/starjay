@@ -2,16 +2,19 @@ const std = @import("std");
 const dvui = @import("dvui");
 const debugger = @import("debugger.zig");
 
-var col_widths: [5]f32 = .{ 20.0, 40.0, 20.0, 40.0, 100.0 };
+var col_widths: [5]f32 = .{ 24.0, 40.0, 20.0, 40.0, 100.0 };
 const Word = debugger.emulator.Word;
 
-// var breakpoints = std.AutoHashMap(u16, bool).init(debugger.allocator);
+var scroll_info: dvui.ScrollInfo = .{};
+var last_scroll_addr: Word = 0;
 
 pub fn sourceView() void {
-    var vbox = dvui.scrollArea(@src(), .{}, .{ .expand = .horizontal, .background = true, .border = .all(1) });
+    var vbox = dvui.scrollArea(@src(), .{.scroll_info = &scroll_info}, .{ .expand = .horizontal, .background = true, .border = .all(1) });
     defer vbox.deinit();
 
     dvui.label(@src(), "Source Area", .{}, .{});
+
+    const pc = debugger.cpu.reg.pc;
 
     if (debugger.listing) |listing| {
         var grid = dvui.grid(@src(), .colWidths(&col_widths), .{
@@ -22,7 +25,7 @@ pub fn sourceView() void {
         defer grid.deinit();
 
         // Layout both columns equally, taking up the full width of the grid.
-        dvui.columnLayoutProportional(&.{-1, -3, -2, -3, -30 }, &col_widths, grid.data().contentRect().w);
+        dvui.columnLayoutProportional(&.{-1, -3, -2, -3, -20 }, &col_widths, grid.data().contentRect().w);
 
         var row_num: usize = 0;
 
@@ -73,44 +76,64 @@ pub fn sourceView() void {
                 }
             }
 
+            const highlight = addr == pc;
+            const cell_style: dvui.widgets.GridWidget.CellOptions = .{.background = highlight, .color_fill = if (highlight) dvui.themeGet().fill_press else null};
+
             { // breakpoint column
                 defer cell.col_num += 1;
 
-                var cell_box = grid.bodyCell(@src(), cell, .{});
+                var cell_box = grid.bodyCell(@src(), cell, cell_style);
                 defer cell_box.deinit();
-                if (dvui.button(@src(), " ", .{}, .{ .rect = .{.w = 20, .h = 20} })) {
-                    // if (breakpoints.get(addr)) |bp| {
-                    //     _ = bp;
-                    //     breakpoints.remove(addr);
-                    // } else {
-                    //     _ = breakpoints.put(addr, true);
-                    // }
+
+                if (addr == pc and last_scroll_addr != pc) {
+                    const one_fifth = scroll_info.viewport.h / 5;
+                    const top_threshold = scroll_info.viewport.y + one_fifth;
+                    const bottom_threshold = scroll_info.viewport.y + scroll_info.viewport.h - one_fifth;
+
+                    const cell_y = cell_box.data().rect.y;
+                    if (cell_y < top_threshold) {
+                        // scroll so that cell_y is one_fifth from the top
+                        scroll_info.scrollToOffset(.vertical, cell_y - one_fifth);
+                    } else if(cell_y > bottom_threshold) {
+                        // scroll so that cell_y is one_fifth from the bottom
+                        scroll_info.scrollToOffset(.vertical, cell_y - scroll_info.viewport.h + one_fifth);
+                    }
+                    last_scroll_addr = pc;
+                }
+
+                const text = if (listing.breakpoints.contains(addr))
+                    "•"
+                else " ";
+
+                if (dvui.labelClick(@src(), "{s}", .{text}, .{}, .{ .color_text = dvui.themeGet().err.fill_press })) {
+                    listing.breakpoints.put(addr, true) catch {};
                 }
             }
 
             { // address column
                 defer cell.col_num += 1;
-                var cell_box = grid.bodyCell(@src(), cell, .{});
+                var cell_box = grid.bodyCell(@src(), cell, cell_style);
                 defer cell_box.deinit();
                 dvui.label(@src(), "{x:0>4}", .{addr}, .{ });
             }
 
             { // byte column
                 defer cell.col_num += 1;
-                var cell_box = grid.bodyCell(@src(), cell, .{});
+                var cell_box = grid.bodyCell(@src(), cell, cell_style);
                 defer cell_box.deinit();
                 dvui.label(@src(), "{x:0>2}", .{dis.*.byte}, .{ });
             }
 
             { // label column
                 defer cell.col_num += 1;
-                var cell_box = grid.bodyCell(@src(), cell, .{});
+                var cell_box = grid.bodyCell(@src(), cell, cell_style);
                 defer cell_box.deinit();
+                dvui.labelNoFmt(@src(), "", .{}, .{ });
             }
 
             { // instruction column
                 defer cell.col_num += 1;
-                var cell_box = grid.bodyCell(@src(), cell, .{});
+                var cell_box = grid.bodyCell(@src(), cell, cell_style);
                 defer cell_box.deinit();
                 switch (dis.*.operand) {
                     .none => dvui.label(@src(), "{s}", .{dis.*.opcode.toMnemonic()}, .{ }),

@@ -54,6 +54,7 @@ pub const AsmListing = struct {
     instructions: []Instr,
     groups: []Group,
     blocks: []Block,
+    breakpoints: std.AutoHashMap(usize, bool),
 
     pub fn getBlockForAddress(self: *const AsmListing, address: usize) ?*const Block {
         const blocks = self.blocks;
@@ -74,6 +75,7 @@ pub fn deinit(listing: *AsmListing, alloc: std.mem.Allocator) void {
             alloc.free(lbl);
         }
     }
+    listing.*.breakpoints.deinit();
     alloc.free(listing.*.blocks);
     alloc.free(listing.*.groups);
     alloc.free(listing.*.instructions);
@@ -249,6 +251,7 @@ pub fn disassemble(memory: []Word, alloc: std.mem.Allocator) !*AsmListing {
         .instructions = try instrs.toOwnedSlice(alloc),
         .groups = try groups.toOwnedSlice(alloc),
         .blocks = try blocks.toOwnedSlice(alloc),
+        .breakpoints = std.AutoHashMap(usize, bool).init(alloc),
     };
 
     return listing;

@@ -877,6 +877,7 @@ pub fn runForCycles(cpu: *CpuState, max_cycles: usize) usize {
         step(cpu, false, 0);
         cycles += 1;
     }
+    cpu.cycles += cycles;
 
     cpu.stack[@subWithOverflow(cpu.reg.depth, 1)[0] & STACK_MASK] = cpu.reg.tos;
     cpu.stack[@subWithOverflow(cpu.reg.depth, 2)[0] & STACK_MASK] = cpu.reg.nos;

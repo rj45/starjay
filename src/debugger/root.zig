@@ -200,17 +200,14 @@ fn dvui_frame() !bool {
             // do something
         }
         if (dvui.button(@src(), "Step Into", .{}, .{})) {
-            // do something
+            _ = debugger.runForCycles(&debugger.cpu, 1);
         }
         if (dvui.button(@src(), "Step Over", .{}, .{})) {
-            // do something
+            // TODO: implement step over part
+            _ = debugger.runForCycles(&debugger.cpu, 1);
         }
-        if (dvui.button(@src(), "Snapshot", .{}, .{})) {
-            // do something
-        }
-        if (dvui.button(@src(), "Restore", .{}, .{})) {
-            // do something
-        }
+
+        dvui.label(@src(), "Cycles: {}", .{debugger.cpu.cycles}, .{.gravity_y = 0.5, .margin = .{ .x = 24 }});
     }
 
     {

@@ -180,6 +180,7 @@ pub const CpuState = struct {
     reg: Regs = .{},
     stack: [STACK_SIZE]Word = [_]Word{0} ** STACK_SIZE,
     memory: []Word,
+    cycles: usize = 0,
     halted: bool = false,
     log_enabled: bool = true,
 
