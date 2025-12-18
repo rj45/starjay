@@ -58,8 +58,8 @@ pub const AsmListing = struct {
     pub fn getBlockForAddress(self: *const AsmListing, address: usize) ?*const Block {
         const blocks = self.blocks;
         const pos = std.sort.partitionPoint(Block, blocks, address, Block.less);
-        if (pos > 0) {
-            const blk = &blocks[pos - 1];
+        if (pos < blocks.len) {
+            const blk = &blocks[pos];
             if (blk.address <= address and blk.end_address >= address) {
                 return blk;
             }
@@ -69,6 +69,11 @@ pub const AsmListing = struct {
 };
 
 pub fn deinit(listing: *AsmListing, alloc: std.mem.Allocator) void {
+    for (listing.blocks) |blk| {
+        if (blk.label) |lbl| {
+            alloc.free(lbl);
+        }
+    }
     alloc.free(listing.*.blocks);
     alloc.free(listing.*.groups);
     alloc.free(listing.*.instructions);
@@ -95,6 +100,9 @@ pub fn disassemble(memory: []Word, alloc: std.mem.Allocator) !*AsmListing {
         var offset: usize = addr;
         var immediate: isize = 0;
         var immediateValid: bool = false;
+
+        var prevImmediate: isize = 0;
+        var prevImmediateValid: bool = false;
 
         std.log.debug("Root: {x}", .{addr});
 
@@ -131,6 +139,13 @@ pub fn disassemble(memory: []Word, alloc: std.mem.Allocator) !*AsmListing {
 
             switch (opcode) {
                 .push => {
+                    if (immediateValid) {
+                        // There was two consecutive immediates, save the previous one
+                        prevImmediate = immediate;
+                        prevImmediateValid = true;
+                    } else {
+                        prevImmediateValid = false;
+                    }
                     immediate = @intCast(Opcode.pushImmediate(instrByte));
                     operand = .{.signed = @intCast(Opcode.pushImmediate(instrByte))};
                     immediateValid = true;
@@ -178,7 +193,18 @@ pub fn disassemble(memory: []Word, alloc: std.mem.Allocator) !*AsmListing {
                     immediateValid = false;
                 },
                 .popcsr => {
-                    operand = .{.csr = @enumFromInt(immediate)};
+                    const csr: CsrNum = @enumFromInt(immediate);
+                    if (prevImmediateValid) {
+                        // if popping a constant into evec or epc, assume this is a jump target
+                        if (csr == .evec or csr == .epc) {
+                            const targetAddr: usize = @bitCast(prevImmediate);
+                            try roots.insert(arena, 0, targetAddr);
+
+                            // TODO: somehow add the block address... with a second operand?
+                        }
+                    }
+
+                    operand = .{.csr = csr};
                     immediateValid = false;
                 },
                 .halt => {
@@ -212,6 +238,10 @@ pub fn disassemble(memory: []Word, alloc: std.mem.Allocator) !*AsmListing {
 
             offset += 1;
         }
+    }
+
+    for (blocks.items, 0..) |*blk, index| {
+        blk.*.label = try std.fmt.allocPrint(alloc, ".L{}", .{index});
     }
 
     const listing = try alloc.create(AsmListing);
