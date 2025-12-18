@@ -10,16 +10,16 @@ const CsrNum = emulator.CsrNum;
 pub const Operand = union(enum) {
     none,
     csr: CsrNum,
-    immediate: Word,
+    signed: SWord,
+    unsigned: Word,
     address: Word,
-    block: Word,
 };
 
 pub const Instr = struct {
     address: usize,
     byte: u8,
     opcode: Opcode,
-    immediate: ?Word,
+    operand: Operand,
 
     pub fn less(offset: usize, instr: Instr) bool {
         if (instr.address < offset) { return true; }
@@ -54,6 +54,18 @@ pub const AsmListing = struct {
     instructions: []Instr,
     groups: []Group,
     blocks: []Block,
+
+    pub fn getBlockForAddress(self: *const AsmListing, address: usize) ?*const Block {
+        const blocks = self.blocks;
+        const pos = std.sort.partitionPoint(Block, blocks, address, Block.less);
+        if (pos > 0) {
+            const blk = &blocks[pos - 1];
+            if (blk.address <= address and blk.end_address >= address) {
+                return blk;
+            }
+        }
+        return null;
+    }
 };
 
 pub fn deinit(listing: *AsmListing, alloc: std.mem.Allocator) void {
@@ -114,27 +126,25 @@ pub fn disassemble(memory: []Word, alloc: std.mem.Allocator) !*AsmListing {
         instr_loop: while (offset < progMem.len) {
             const instrByte = progMem[offset];
             const opcode: Opcode = Opcode.fromByte(instrByte);
+            var operand: Operand = .none;
             var done = false;
-
-            const imm: ?Word = switch (opcode) {
-                .push => @bitCast(@as(SWord, @intCast(Opcode.pushImmediate(instrByte)))),
-                .shi => @bitCast(@as(Word, @intCast(Opcode.shiImmediate(instrByte)))),
-                else => if (immediateValid) @bitCast(@as(SWord, @intCast(immediate))) else null,
-            };
 
             switch (opcode) {
                 .push => {
                     immediate = @intCast(Opcode.pushImmediate(instrByte));
+                    operand = .{.signed = @intCast(Opcode.pushImmediate(instrByte))};
                     immediateValid = true;
                 },
                 .shi => {
                     const moreBits: SWord = @intCast(Opcode.shiImmediate(instrByte));
+                    operand = .{.unsigned = @intCast(Opcode.shiImmediate(instrByte))};
                     immediate = (immediate << 7) | (moreBits & 0x7f);
                     immediateValid = true;
                 },
                 .beqz, .bnez, .call => {
                     if (immediateValid) {
                         const targetOffset:usize = @intCast(immediate);
+                        operand = .{.address = @truncate((offset + 1) +% targetOffset)};
                         try roots.insert(arena, 0, (offset + 1) +% targetOffset);
                     }
                     immediateValid = false;
@@ -142,6 +152,7 @@ pub fn disassemble(memory: []Word, alloc: std.mem.Allocator) !*AsmListing {
                 .callp => {
                     if (immediateValid) {
                         const absoluteAddr:usize = @intCast(immediate);
+                        operand = .{.address = @truncate(absoluteAddr)};
                         try roots.insert(arena, 0, absoluteAddr);
                     }
                     immediateValid = false;
@@ -149,6 +160,7 @@ pub fn disassemble(memory: []Word, alloc: std.mem.Allocator) !*AsmListing {
                 .pop_pc => { // AKA ret
                     if (immediateValid) {
                         const absoluteAddr:usize = @intCast(immediate);
+                        operand = .{.address = @truncate(absoluteAddr)};
                         try roots.insert(arena, 0, absoluteAddr);
                     }
                     done = true;
@@ -156,9 +168,18 @@ pub fn disassemble(memory: []Word, alloc: std.mem.Allocator) !*AsmListing {
                 .jump => {
                     if (immediateValid) {
                         const targetOffset:usize = @bitCast(immediate);
+                        operand = .{.address = @truncate((offset + 1) +% targetOffset)};
                         try roots.insert(arena, 0, (offset + 1) +% targetOffset);
                     }
                     done = true;
+                },
+                .pushcsr => {
+                    operand = .{.csr = @enumFromInt(immediate)};
+                    immediateValid = false;
+                },
+                .popcsr => {
+                    operand = .{.csr = @enumFromInt(immediate)};
+                    immediateValid = false;
                 },
                 .halt => {
                     done = true;
@@ -179,8 +200,8 @@ pub fn disassemble(memory: []Word, alloc: std.mem.Allocator) !*AsmListing {
                 try instrs.insert(alloc, pos, .{
                     .address = offset,
                     .byte = instrByte,
-                    .immediate = imm,
                     .opcode = opcode,
+                    .operand = operand,
                 });
             }
 

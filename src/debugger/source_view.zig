@@ -61,10 +61,27 @@ pub fn sourceView() void {
                 defer cell.col_num += 1;
                 var cell_box = grid.bodyCell(@src(), cell, .{});
                 defer cell_box.deinit();
-                if (dis.*.immediate) |imm| {
-                    dvui.label(@src(), "{s} {}", .{dis.*.opcode.toMnemonic(), imm}, .{ .gravity_y = 0.5 });
-                } else {
-                    dvui.label(@src(), "{s}", .{dis.*.opcode.toMnemonic()}, .{ .gravity_y = 0.5 });
+                switch (dis.*.operand) {
+                    .none => dvui.label(@src(), "{s}", .{dis.*.opcode.toMnemonic()}, .{ .gravity_y = 0.5 }),
+                    .csr => |*csr| dvui.label(@src(), "{s} {s}", .{dis.*.opcode.toMnemonic(), @tagName(csr.*)}, .{ .gravity_y = 0.5 }),
+                    .address => |*address| {
+                        const blk = listing.getBlockForAddress(address.*);
+                        if (blk) |b| {
+                            if (b.label) |lbl| {
+                                dvui.label(@src(), "{s} {s}", .{dis.*.opcode.toMnemonic(), lbl}, .{ .gravity_y = 0.5 });
+                            } else {
+                                dvui.label(@src(), "{s} 0x{x:0>4}", .{dis.*.opcode.toMnemonic(), address.*}, .{ .gravity_y = 0.5 });
+                            }
+                        } else {
+                            dvui.label(@src(), "{s} 0x{x:0>4}", .{dis.*.opcode.toMnemonic(), address.*}, .{ .gravity_y = 0.5 });
+                        }
+                    },
+                    .unsigned => |*imm| {
+                        dvui.label(@src(), "{s} 0x{x:0>4}", .{dis.*.opcode.toMnemonic(), imm.*}, .{ .gravity_y = 0.5 });
+                    },
+                    .signed => |*imm| {
+                        dvui.label(@src(), "{s} {}", .{dis.*.opcode.toMnemonic(), imm.*}, .{ .gravity_y = 0.5 });
+                    },
                 }
             }
         }
