@@ -33,12 +33,12 @@ pub fn main(gpa: std.mem.Allocator) !void {
     if (std.fs.cwd().statFile(seive_path)) |file_info|  {
         _ = file_info;
         try debugger.cpu.loadRom(seive_path);
-        try disasm.disassemble(debugger.cpu.memory, debugger.allocator);
+        debugger.listing = try disasm.disassemble(debugger.cpu.memory, debugger.allocator);
     } else |err| {
         std.log.info("Could not find seive.bin to load at startup: {any}", .{err});
     }
 
-    defer disasm.deinit(debugger.allocator);
+    defer if (debugger.listing) |l| disasm.deinit(l, debugger.allocator);
 
     // init SDL backend (creates OS window)
     // initWindow() means the backend calls CloseWindow for you in deinit()
@@ -129,7 +129,10 @@ fn dvui_frame() !bool {
                             dvui.log.debug("Could not open file dialog, got {any}", .{err});
                             break :blk;
                         };
-                        try disasm.disassemble(debugger.cpu.memory, debugger.allocator);
+                        if (debugger.listing) |old_listing| {
+                            disasm.deinit(old_listing, debugger.allocator);
+                        }
+                        debugger.listing = try disasm.disassemble(debugger.cpu.memory, debugger.allocator);
 
                         dvui.toast(@src(), .{.message = "Loaded ROM", .timeout = 10_000_000 });
                     }
@@ -179,7 +182,10 @@ fn dvui_frame() !bool {
                 };
 
                 @memcpy(debugger.cpu.memory, data);
-                try disasm.disassemble(debugger.cpu.memory, debugger.allocator);
+                if (debugger.listing) |old_listing| {
+                    disasm.deinit(old_listing, debugger.allocator);
+                }
+                debugger.listing = try disasm.disassemble(debugger.cpu.memory, debugger.allocator);
                 dvui.toast(@src(), .{.message = "Loaded ROM", .timeout = 10_000_000 });
             }
         }
@@ -208,11 +214,11 @@ fn dvui_frame() !bool {
     }
 
     {
-        var scroll = dvui.scrollArea(@src(), .{}, .{
+        var mainbox = dvui.box(@src(), .{}, .{
             .expand = .both,
             .background = true,
         });
-        defer scroll.deinit();
+        defer mainbox.deinit();
         {
             var paned = dvui.paned(@src(), .{
                 .direction = .horizontal,

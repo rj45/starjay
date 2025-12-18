@@ -2,7 +2,7 @@ const std = @import("std");
 const dvui = @import("dvui");
 const debugger = @import("debugger.zig");
 
-var col_widths: [3]f32 = .{ 20.0, 50.0, 100.0 };
+var col_widths: [4]f32 = .{ 20.0, 40.0, 20.0, 100.0 };
 
 // var breakpoints = std.AutoHashMap(u16, bool).init(debugger.allocator);
 
@@ -12,7 +12,7 @@ pub fn sourceView() void {
 
     dvui.label(@src(), "Source Area", .{}, .{});
 
-    if (debugger.disasm.disassembly) |listing| {
+    if (debugger.listing) |listing| {
         var grid = dvui.grid(@src(), .colWidths(&col_widths), .{
             .resize_rows = true,
         }, .{
@@ -21,9 +21,9 @@ pub fn sourceView() void {
         defer grid.deinit();
 
         // Layout both columns equally, taking up the full width of the grid.
-        dvui.columnLayoutProportional(&.{-1, -2,  -20 }, &col_widths, grid.data().contentRect().w);
+        dvui.columnLayoutProportional(&.{-1, -3, -2, -30 }, &col_widths, grid.data().contentRect().w);
 
-        for (listing[0..], 0..) |*dis, row_num| {
+        for (listing.instructions[0..], 0..) |*dis, row_num| {
             var cell: dvui.GridWidget.Cell = .colRow(0, row_num);
 
             const addr: u16 = @intCast(dis.*.address);
@@ -54,10 +54,17 @@ pub fn sourceView() void {
                 defer cell.col_num += 1;
                 var cell_box = grid.bodyCell(@src(), cell, .{});
                 defer cell_box.deinit();
+                dvui.label(@src(), "{x:0>2}", .{dis.*.byte}, .{ .gravity_y = 0.5 });
+            }
+
+            {
+                defer cell.col_num += 1;
+                var cell_box = grid.bodyCell(@src(), cell, .{});
+                defer cell_box.deinit();
                 if (dis.*.immediate) |imm| {
-                    dvui.label(@src(), "{s} {}", .{dis.*.instr.toMnemonic(), imm}, .{ .gravity_y = 0.5 });
+                    dvui.label(@src(), "{s} {}", .{dis.*.opcode.toMnemonic(), imm}, .{ .gravity_y = 0.5 });
                 } else {
-                    dvui.label(@src(), "{s}", .{dis.*.instr.toMnemonic()}, .{ .gravity_y = 0.5 });
+                    dvui.label(@src(), "{s}", .{dis.*.opcode.toMnemonic()}, .{ .gravity_y = 0.5 });
                 }
             }
         }
