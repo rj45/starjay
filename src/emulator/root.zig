@@ -12,3 +12,4 @@ pub const WORDBYTES = types.WORDBYTES;
 pub const Status = types.Status;
 pub const ECause = types.ECause;
 pub const Opcode = opcode.Opcode;
+pub const CpuState = types.CpuState;

@@ -1,8 +1,10 @@
 const std = @import("std");
 const dvui = @import("dvui");
 const SDLBackend =  dvui.backend;
+const debugger = @import("debugger.zig");
 
-const sourceView = @import("source_view.zig").sourceView;
+const sourceView = @import("source_view.zig");
+const disasm = debugger.disasm;
 
 // TODO: Figure out an icon to embed here
 //const window_icon_png = @embedFile("zig-favicon.png");
@@ -11,12 +13,32 @@ const vsync = true;
 var scale_val: f32 = 1.0;
 
 pub fn main(gpa: std.mem.Allocator) !void {
+    debugger.allocator = gpa;
+
     if (@import("builtin").os.tag == .windows) { // optional
         // on windows graphical apps have no console, so output goes to nowhere
         // so, attach it manually
         dvui.Backend.Common.windowsAttachConsole() catch {};
     }
     SDLBackend.enableSDLLogging();
+
+    const memory = try gpa.alloc(u16, 128 * 1024);
+    defer gpa.free(memory);
+
+    debugger.cpu = debugger.emulator.CpuState.init(memory);
+    debugger.cpu.log_enabled = false;
+
+    // if the seive.bin file exists, load it into memory at 0x0000
+    const seive_path = "starjette/examples/sieve.bin";
+    if (std.fs.cwd().statFile(seive_path)) |file_info|  {
+        _ = file_info;
+        try debugger.cpu.loadRom(seive_path);
+        try disasm.disassemble(debugger.cpu.memory, debugger.allocator);
+    } else |err| {
+        std.log.info("Could not find seive.bin to load at startup: {any}", .{err});
+    }
+
+    defer disasm.deinit(debugger.allocator);
 
     // init SDL backend (creates OS window)
     // initWindow() means the backend calls CloseWindow for you in deinit()
@@ -51,7 +73,7 @@ pub fn main(gpa: std.mem.Allocator) !void {
         try win.begin(nstime);
         _ = try backend.addAllEvents(&win);
 
-        const keep_running = dvui_frame();
+        const keep_running = try dvui_frame();
         if (!keep_running) break :main_loop;
 
         const end_micros = try win.end(.{});
@@ -69,7 +91,7 @@ pub fn main(gpa: std.mem.Allocator) !void {
 }
 
 // return true to keep running
-fn dvui_frame() bool {
+fn dvui_frame() !bool {
     var scaler = dvui.scale(@src(), .{ .scale = &scale_val }, .{ .expand = .both });
     defer scaler.deinit();
 
@@ -77,12 +99,42 @@ fn dvui_frame() bool {
         var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{ .style = .window, .background = true, .expand = .horizontal });
         defer hbox.deinit();
 
+        const wasm_file_id = hbox.widget().extendId(@src(), 0);
+
         var m = dvui.menu(@src(), .horizontal, .{});
         defer m.deinit();
 
         if (dvui.menuItemLabel(@src(), "File", .{ .submenu = true }, .{})) |r| {
             var fw = dvui.floatingMenu(@src(), .{ .from = r }, .{});
             defer fw.deinit();
+
+            if (dvui.menuItemLabel(@src(), "Open Binary ROM", .{}, .{ .expand = .horizontal }) != null) {
+                m.close();
+
+                if (dvui.backend.kind == .web) {
+                    dvui.dialogWasmFileOpen(wasm_file_id, .{ .accept = ".bin, .rom" });
+                } else if (!dvui.useTinyFileDialogs) {
+                    dvui.toast(@src(), .{ .message = "Tiny File Dilaogs disabled" });
+                } else {
+                    const filename = dvui.dialogNativeFileOpen(dvui.currentWindow().arena(), .{
+                        .title = "Load Binary ROM",
+                        .filters = &.{ "*.bin", "*.rom" },
+                        .filter_description = "ROMs",
+                    }) catch |err| blk: {
+                        dvui.log.debug("Could not open file dialog, got {any}", .{err});
+                        break :blk null;
+                    };
+                    if (filename) |f|  {
+                        debugger.cpu.loadRom(f) catch |err| blk: {
+                            dvui.log.debug("Could not open file dialog, got {any}", .{err});
+                            break :blk;
+                        };
+                        try disasm.disassemble(debugger.cpu.memory, debugger.allocator);
+
+                        dvui.toast(@src(), .{.message = "Loaded ROM", .timeout = 10_000_000 });
+                    }
+                }
+            }
 
             if (dvui.menuItemLabel(@src(), "Exit", .{}, .{ .expand = .horizontal }) != null) {
                 return false;
@@ -116,6 +168,19 @@ fn dvui_frame() bool {
             if (dvui.menuItemLabel(@src(), "Dvui Debug", .{}, .{ .expand = .horizontal }) != null) {
                 dvui.toggleDebugWindow();
                 m.close();
+            }
+        }
+
+        if (dvui.backend.kind == .web) upload: {
+            if (dvui.wasmFileUploaded(wasm_file_id)) |file| {
+                const data = file.readData(dvui.currentWindow().arena()) catch |err| {
+                    dvui.log.debug("Could not open file dialog, got {any}", .{err});
+                    break :upload;
+                };
+
+                @memcpy(debugger.cpu.memory, data);
+                try disasm.disassemble(debugger.cpu.memory, debugger.allocator);
+                dvui.toast(@src(), .{.message = "Loaded ROM", .timeout = 10_000_000 });
             }
         }
     }
@@ -174,7 +239,7 @@ fn dvui_frame() bool {
                 }
 
                 if (leftPaned.showSecond()) {
-                    sourceView();
+                    sourceView.sourceView();
                 }
             }
 
