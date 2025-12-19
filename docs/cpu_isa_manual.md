@@ -378,7 +378,11 @@ All instructions are 8 bits wide. There are three instruction formats:
   +-------+-----------+-----------+------------+--------------------------------+
 ```
 
+#### 3.2.1. Decoding Notes
 
+It's intentional that the basic ALU instructions have opcodes that start at `1010` and the extended set ALU instructions end at `1001`. This allows implementations to use 4 bits to decode the ALU operation. The `div` and `divu` instructions are expected to always be implemented in software, so those encodings could be used for other purposes in hardware implementations if desired.
+
+If the CPU is microcoded, and fusion with a leading immediate is also implemented, then the microcode ROM could be extended to have 128 entries, with the top bit being the leading immediate flag, and the next 6 bits being the instruction opcode. This would accommodate the switch from operands being `tos` and `nos` to being `imm` and `tos`, as well as going from `pop` to `replace tos` more easily.
 
 ### 3.3. Instruction Set Details
 
@@ -591,7 +595,7 @@ This instruction can also be used to read the carry flag for multi-precision ari
     llw 4  ; load a lower word
     llw 8  ; load b lower word
     over   ; duplicate a for carry
-    over   ; duplicate b for carry
+    over   ; duplicate b for carry (might need a swap after this? testing needed)
     ltu    ; calculate carry
     rot    ; stash carry
     add    ; a.low + b.low
@@ -806,7 +810,7 @@ Performs signed integer division on the top two values on the data stack and the
 
 If a division by zero is attempted, implementations are expected to raise an division by zero exception. If this instruction is emulated, the exception can be simulated by loading `ecause` with `0x40` and jumping to `evec`.
 
-Note: Division is always implemented in software as a macro instruction which may take many cycles to complete. Implementations may choose to detect and optimise common cases (such as division by powers of two) for efficiency.
+Note: Division is always implemented in software as a macro instruction which may take many cycles to complete.
 
 ##### 3.5.2. `divu` - Unsigned Divide
 
@@ -825,7 +829,7 @@ Performs unsigned integer division on the top two values on the data stack and t
 
 If a division by zero is attempted, implementations are expected to raise an division by zero exception. If this instruction is emulated, the exception can be simulated by loading `ecause` with `0x40` and jumping to `evec`.
 
-Note: Division is always implemented in software as a macro instruction which may take many cycles to complete. Implementations may choose to detect and optimise common cases (such as division by powers of two) for efficiency.
+Note: Division is always implemented in software as a macro instruction which may take many cycles to complete.
 
 ##### 3.5.3. `mul` - Multiply
 
@@ -845,7 +849,7 @@ Multiplies the top two values on the data stack and replace them with the result
 ```text
    Fmt  7   6   5   4   3   2   1   0
   +---+-------+-------+---------------+
-  | O | 0   0 | 1   0 | 0   1   1   1 |
+  | O | 0   0 | 1   0 | 0   0   1   1 |
   +---+-------+-------+---------------+
 
   temp = tos; tos = nos; nos = ros; ros = temp
@@ -858,7 +862,7 @@ Rotates the top three stack items such that the top on stack is rotated into bei
 ```text
    Fmt  7   6   5   4   3   2   1   0
   +---+-------+-------+---------------+
-  | O | 0   0 | 1   0 | 1   0   0   0 |
+  | O | 0   0 | 1   0 | 0   1   0   0 |
   +---+-------+-------+---------------+
 
   push((unsigned(nos!) >> (tos! & (WORDSIZE - 1))) & WORDMASK)
@@ -871,7 +875,7 @@ Shifts the next on stack value right logically by the number of bits specified i
 ```text
    Fmt  7   6   5   4   3   2   1   0
   +---+-------+-------+---------------+
-  | O | 0   0 | 1   0 | 1   0   0   1 |
+  | O | 0   0 | 1   0 | 0   1   0   1 |
   +---+-------+-------+---------------+
 
   push((signed(nos!) >> (tos! & (WORDSIZE - 1))) & WORDMASK)
@@ -884,7 +888,7 @@ Shifts the next on stack value right arithmetically by the number of bits specif
 ```text
    Fmt  7   6   5   4   3   2   1   0
   +---+-------+-------+---------------+
-  | O | 0   0 | 1   0 | 1   0   1   0 |
+  | O | 0   0 | 1   0 | 0   1   1   0 |
   +---+-------+-------+---------------+
 
   push((nos! << (tos! & (WORDSIZE - 1))) & WORDMASK)
@@ -897,7 +901,7 @@ Shifts the next on stack value left logically by the number of bits specified in
 ```text
    Fmt  7   6   5   4   3   2   1   0
   +---+-------+-------+---------------+
-  | O | 0   0 | 0   0 | 1   0   1   1 |
+  | O | 0   0 | 0   0 | 0   1   1   1 |
   +---+-------+-------+---------------+
 
   push(nos! | tos!)
@@ -910,7 +914,7 @@ Performs a bitwise OR operation on the top two values on the data stack which ar
 ```text
    Fmt  7   6   5   4   3   2   1   0
   +---+-------+-------+---------------+
-  | O | 0   0 | 1   0 | 1   1   0   0 |
+  | O | 0   0 | 1   0 | 1   0   0   0 |
   +---+-------+-------+---------------+
 
   push(nos! - tos!)
@@ -922,9 +926,53 @@ If wanting to subtract double-words with borrow, use the `ltu` instruction to re
 
 If wanting to negate a value, push zero onto the stack first then subtract. Reverse subtract can be done by `swap` followed by `sub`.
 
-#### 3.6. Extended Memory Instructions
+##### 3.5.10. `clz` - Count Leading Zero Bits
 
-##### 3.6.1. `lb` - Load Byte
+```text
+   Fmt  7   6   5   4   3   2   1   0
+  +---+-------+-------+---------------+
+  | O | 0   0 | 1   0 | 1   0   0   1 |
+  +---+-------+-------+---------------+
+
+  push(count_leading_zeros(tos!))
+```
+
+Counts the number of leading zero bits in the top of stack value and replaces the top of stack value with the count.
+
+This instruction is useful for optimizing the software implementation of division and multiplication, as well as for floating point normalization.
+
+#### 3.6. Extended Control Flow Instructions
+
+##### 3.6.1. `call` - Call Function
+
+```text
+   Fmt  7   6   5   4   3   2   1   0
+  +---+-------+-------+---------------+
+  | O | 0   0 | 1   0 | 1   0   1   0 |
+  +---+-------+-------+---------------+
+
+  rx = pc; pc += tos!
+```
+
+Calls a function at a pc-relative target address. The return address (the address of the instruction after the `call`) is saved to the `rx` register. The program counter is then set to the target address, which is calculated by adding the address of the next instruction to execute to the top of stack value (which is then popped).
+
+##### 3.6.2. `callp` - Call Function Pointer
+
+```text
+   Fmt  7   6   5   4   3   2   1   0
+  +---+-------+-------+---------------+
+  | O | 0   0 | 1   0 | 1   0   1   1 |
+  +---+-------+-------+---------------+
+
+  rx = pc; pc = tos!
+```
+
+Calls a function at an absolute target address. The return address (the address of the instruction after the `call`) is saved to the `rx` register. The program counter is then set to the top of stack value (which is then popped).
+
+
+#### 3.7. Extended Memory Instructions
+
+##### 3.7.1. `lb` - Load Byte
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -937,7 +985,7 @@ If wanting to negate a value, push zero onto the stack first then subtract. Reve
 
 Loads a byte from main memory. The address is taken from the top of stack value (which is then popped). The loaded byte is sign-extended and replaces the top of stack value. If zero extension is required, one can AND with 0xFF after loading.
 
-##### 3.6.2. `sb` - Store Byte
+##### 3.7.2. `sb` - Store Byte
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -950,7 +998,7 @@ Loads a byte from main memory. The address is taken from the top of stack value 
 
 Stores a byte to main memory. The address is taken from the top of stack value (which is then popped). The value to be stored is taken from the next on stack value (which is then popped). Only the least significant byte of the next on stack value is stored; the rest are ignored.
 
-##### 3.6.3. `lh` - Load Halfword
+##### 3.7.3. `lh` - Load Halfword
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -967,7 +1015,7 @@ This instruction is identical to `lw` on a 16-bit machine and implementations ca
 
 It is illegal to load a half-word from an unaligned address (that is, the least significant bit of the address is not zero). Implementations are expected to raise an exception if this occurs.
 
-##### 3.6.4. `sh` - Store Halfword
+##### 3.7.4. `sh` - Store Halfword
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -984,7 +1032,7 @@ This instruction is identical to `sw` on a 16-bit machine and implementations ca
 
 It is illegal to store a half-word to an unaligned address (that is, the least significant bit of the address is not zero). Implementations are expected to raise an exception if this occurs.
 
-##### 3.6.5. `lw` - Load Word
+##### 3.7.5. `lw` - Load Word
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -999,7 +1047,7 @@ Loads a word from main memory. The address is taken from the top of stack value 
 
 It is illegal to load a word from an unaligned address (that is, the lower 1 (16-bit) or 2 (32-bit) bits of the address are not zero). Implementations are expected to raise an exception if this occurs.
 
-##### 3.6.6. `sw` - Store Word
+##### 3.7.6. `sw` - Store Word
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -1014,7 +1062,7 @@ Stores a word to main memory. The address is taken from the top of stack value (
 
 It is illegal to store a word to an unaligned address (that is, the lower 1 (16-bit) or 2 (32-bit) bits of the address are not zero). Implementations are expected to raise an exception if this occurs.
 
-##### 3.6.7. `lnw` - Load Next Word
+##### 3.7.7. `lnw` - Load Next Word
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -1029,7 +1077,7 @@ Pushes a word from main memory onto the data stack from the address in the `ry` 
 
 It is illegal to load a word from an unaligned address (that is, the lower 1 (16-bit) or 2 (32-bit) bits of the address are not zero). Implementations are expected to raise an exception if this occurs.
 
-##### 3.6.8. `snw` - Store Next Word
+##### 3.7.8. `snw` - Store Next Word
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -1043,34 +1091,6 @@ It is illegal to load a word from an unaligned address (that is, the lower 1 (16
 Pops a word from the data stack and stores it to main memory at the address in the `ry` register. The `ry` register is then incremented by the number of bytes in a word. This can be used to implement more efficient memory copies or for loops over a block of memory.
 
 It is illegal to store a word to an unaligned address (that is, the lower 1 (16-bit) or 2 (32-bit) bits of the address are not zero). Implementations are expected to raise an exception if this occurs.
-
-#### 3.7. Extended Control Flow Instructions
-
-##### 3.7.1. `call` - Call Function
-
-```text
-   Fmt  7   6   5   4   3   2   1   0
-  +---+-------+-----------+-----------+
-  | O | 0   0 | 1   1   1 | 0   0   0 |
-  +---+-------+-----------+-----------+
-
-  rx = pc; pc += tos!
-```
-
-Calls a function at a pc-relative target address. The return address (the address of the instruction after the `call`) is saved to the `rx` register. The program counter is then set to the target address, which is calculated by adding the address of the next instruction to execute to the top of stack value (which is then popped).
-
-##### 3.7.2. `callp` - Call Function Pointer
-
-```text
-   Fmt  7   6   5   4   3   2   1   0
-  +---+-------+-----------+-----------+
-  | O | 0   0 | 1   1   1 | 0   0   1 |
-  +---+-------+-----------+-----------+
-
-  rx = pc; pc = tos!
-```
-
-Calls a function at an absolute target address. The return address (the address of the instruction after the `call`) is saved to the `rx` register. The program counter is then set to the top of stack value (which is then popped).
 
 ## 4. Calling Convention
 
