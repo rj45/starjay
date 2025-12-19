@@ -39,18 +39,6 @@ examples: $(EXAMPLE_BINS) $(EXAMPLE_HEXS) $(EXAMPLE_LISTINGS)
 $(TEST_SRCS): tests/generate_tests.py
 	$(PYTHON) tests/generate_tests.py
 
-# Build .bin from .asm (regular tests - use full kernel)
-tests/%.bin: tests/%.asm $(ISA) $(KERNEL)
-	customasm -q -f binary -o $@ $(ISA) $(KERNEL) $<
-
-# Build .hex from .asm (regular tests - use full kernel)
-tests/%.hex: tests/%.asm $(ISA) $(KERNEL)
-	customasm -q -f intelhex,addr_unit:8 -o $@ $(ISA) $(KERNEL) $<
-
-# Build _listing.txt from .asm (regular tests - use full kernel)
-tests/%_listing.txt: tests/%.asm $(ISA) $(KERNEL)
-	customasm -q -f annotated,base:16,group:2,addr_base:16,labels:true -o $@ $(ISA) $(KERNEL) $<
-
 # Build .bin from .asm (bootstrap tests - ISA only, no kernel)
 tests/bootstrap/%.bin: tests/bootstrap/%.asm $(ISA)
 	customasm -q -f binary -o $@ $(ISA) $<
@@ -63,6 +51,17 @@ tests/bootstrap/%.hex: tests/bootstrap/%.asm $(ISA)
 tests/bootstrap/%_listing.txt: tests/bootstrap/%.asm $(ISA)
 	customasm -q -f annotated,base:16,group:2,addr_base:16,labels:true -o $@ $(ISA) $<
 
+# Build .bin from .asm (regular tests - use full kernel)
+tests/%.bin: tests/%.asm $(ISA) $(KERNEL)
+		customasm -q -f binary -o $@ $(ISA) $(KERNEL) $<
+
+# Build .hex from .asm (regular tests - use full kernel)
+tests/%.hex: tests/%.asm $(ISA) $(KERNEL)
+		customasm -q -f intelhex,addr_unit:8 -o $@ $(ISA) $(KERNEL) $<
+
+# Build _listing.txt from .asm (regular tests - use full kernel)
+tests/%_listing.txt: tests/%.asm $(ISA) $(KERNEL)
+		customasm -q -f annotated,base:16,group:2,addr_base:16,labels:true -o $@ $(ISA) $(KERNEL) $<
 
 # Build .bin from .asm (regular tests - use full kernel)
 examples/%.bin: examples/%.asm $(ISA) $(KERNEL)
