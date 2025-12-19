@@ -23,6 +23,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "dvui", .module = dvui_dep.module("dvui_sdl3") },
+                .{ .name = "backend", .module = dvui_dep.module("sdl3") },
                 .{ .name = "clap", .module = clap.module("clap") },
             },
         }),

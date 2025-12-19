@@ -1,6 +1,6 @@
 const std = @import("std");
 const dvui = @import("dvui");
-const SDLBackend =  dvui.backend;
+const Backend = @import("backend");
 const debugger = @import("debugger.zig");
 
 const sourceView = @import("source_view.zig");
@@ -20,7 +20,7 @@ pub fn main(gpa: std.mem.Allocator) !void {
         // so, attach it manually
         dvui.Backend.Common.windowsAttachConsole() catch {};
     }
-    SDLBackend.enableSDLLogging();
+    Backend.enableSDLLogging();
 
     const memory = try gpa.alloc(u16, 128 * 1024);
     defer gpa.free(memory);
@@ -42,7 +42,7 @@ pub fn main(gpa: std.mem.Allocator) !void {
 
     // init SDL backend (creates OS window)
     // initWindow() means the backend calls CloseWindow for you in deinit()
-    var backend = try SDLBackend.initWindow(.{
+    var backend = try Backend.initWindow(.{
         .allocator = gpa,
         .min_size = .{ .w = 800.0, .h = 600.0 },
         .size = .{ .w = 1400.0, .h = 900.0 },
@@ -53,7 +53,7 @@ pub fn main(gpa: std.mem.Allocator) !void {
     defer backend.deinit();
     // backend.log_events = true;
 
-    _ = SDLBackend.c.SDL_EnableScreenSaver();
+    _ = Backend.c.SDL_EnableScreenSaver();
 
     // init dvui Window (maps onto a single OS window)
     var win = try dvui.Window.init(@src(), gpa, backend.backend(), .{
@@ -72,6 +72,11 @@ pub fn main(gpa: std.mem.Allocator) !void {
 
         try win.begin(nstime);
         _ = try backend.addAllEvents(&win);
+
+        // if dvui widgets might not cover the whole window, then need to clear
+        // the previous frame's render
+        _ = Backend.c.SDL_SetRenderDrawColor(backend.renderer, 0, 0, 0, 255);
+        _ = Backend.c.SDL_RenderClear(backend.renderer);
 
         const keep_running = try dvui_frame();
         if (!keep_running) break :main_loop;
