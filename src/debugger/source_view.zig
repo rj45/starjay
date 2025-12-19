@@ -106,7 +106,11 @@ pub fn sourceView() void {
                 else " ";
 
                 if (dvui.labelClick(@src(), "{s}", .{text}, .{}, .{ .color_text = dvui.themeGet().err.fill_press })) {
-                    listing.breakpoints.put(addr, true) catch {};
+                    if (listing.breakpoints.contains(addr)) {
+                        _ = listing.breakpoints.remove(addr);
+                    } else {
+                        listing.breakpoints.put(addr, true) catch {};
+                    }
                 }
             }
 

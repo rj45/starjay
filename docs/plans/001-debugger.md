@@ -80,11 +80,25 @@ Set and hit breakpoints.
 
 ---
 
-## Slice 7: Registers Panel
+## Slice 7: Run and Pause
+
+Continuous execution with breakpoint stops.
+
+- [x] "Run" button (executes many cycles per frame)
+- [x] "Pause" button (stops execution)
+- [x] Check breakpoints during run loop
+- [x] Stop on breakpoint hit
+- [x] RUNNING/HALTED status indicator
+
+**Test:** Set breakpoint, click Run, execution stops at breakpoint.
+
+---
+
+## Slice 8: Registers Panel
 
 Show CPU register values.
 
-- [ ] Registers panel in right column (PC, RA, AR, FP)
+- [ ] Registers panel in right column (PC, FP, RX, RY)
 - [ ] Read values from CpuState
 - [ ] Values update after stepping
 
@@ -92,7 +106,7 @@ Show CPU register values.
 
 ---
 
-## Slice 8: Stack Panel
+## Slice 9: Stack Panel
 
 Show stack contents.
 
@@ -105,7 +119,7 @@ Show stack contents.
 
 ---
 
-## Slice 9: Listing File Support
+## Slice 10: Listing File Support
 
 Load assembler listing for source-level view.
 
@@ -115,20 +129,6 @@ Load assembler listing for source-level view.
 - [ ] Map PC to source line
 
 **Test:** Load listing, see source code with addresses and bytes.
-
----
-
-## Slice 10: Run and Pause
-
-Continuous execution with breakpoint stops.
-
-- [ ] "Run" button (executes many cycles per frame)
-- [ ] "Pause" button (stops execution)
-- [ ] Check breakpoints during run loop
-- [ ] Stop on breakpoint hit
-- [ ] RUNNING/HALTED status indicator
-
-**Test:** Set breakpoint, click Run, execution stops at breakpoint.
 
 ---
 

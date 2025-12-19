@@ -12,6 +12,8 @@ const disasm = debugger.disasm;
 const vsync = true;
 var scale_val: f32 = 1.0;
 
+const cycles_per_frame: u64 = 10000;
+
 pub fn main(gpa: std.mem.Allocator) !void {
     debugger.allocator = gpa;
 
@@ -88,6 +90,20 @@ pub fn main(gpa: std.mem.Allocator) !void {
 
         // render frame to OS
         try backend.renderPresent();
+
+        // run the CPU for a fixed number of cycles per frame
+        if (debugger.running and !debugger.cpu.halted) {
+            for (0..cycles_per_frame) |_| {
+                _ = debugger.runForCycles(&debugger.cpu, 1);
+                const pc = debugger.cpu.reg.pc;
+                if (debugger.listing) |listing| {
+                    if (listing.breakpoints.contains(pc)) {
+                        debugger.running = false;
+                        break;
+                    }
+                }
+            }
+        }
 
         // waitTime and beginWait combine to achieve variable framerates
         const wait_event_micros = win.waitTime(end_micros);
@@ -201,8 +217,11 @@ fn dvui_frame() !bool {
         var toolbar = dvui.box(@src(), .{ .dir = .horizontal }, .{ .style = .control, .background = true, .expand = .horizontal });
         defer toolbar.deinit();
 
-        if (dvui.button(@src(), "Run", .{}, .{ .style = .highlight })) {
-            // do something
+        const run_label = if (debugger.running) "Pause" else "Run";
+        const run_color: dvui.Theme.Style.Name = if (debugger.running) .err else .highlight;
+
+        if (dvui.button(@src(), run_label, .{}, .{ .style = run_color })) {
+            debugger.running = !debugger.running;
         }
         if (dvui.button(@src(), "Step Into", .{}, .{})) {
             _ = debugger.runForCycles(&debugger.cpu, 1);
