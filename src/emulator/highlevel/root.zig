@@ -11,3 +11,8 @@ pub fn main(rom_file: []const u8, max_cycles: usize, quiet: bool, gpa: std.mem.A
     std.debug.print("errorLevel: {}\n", .{errorLevel});
     std.process.exit(@truncate(errorLevel));
 }
+
+test {
+    // Run all tests in submodules
+    @import("std").testing.refAllDecls(@This());
+}

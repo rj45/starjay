@@ -66,8 +66,8 @@ pub const ECause = enum(u3) {
 pub const RegNum = enum(u2) {
     pc = 0,
     fp = 1,
-    ra = 2,
-    ar = 3,
+    rx = 2,
+    ry = 3,
 };
 
 /// CSR (Control/Status Register) numbers
@@ -95,8 +95,8 @@ pub const Regs = struct {
     pc: Word = 0,
     ufp: Word = 0,
     kfp: Word = 0,
-    ra: Word = 0,
-    ar: Word = 0,
+    rx: Word = 0,
+    ry: Word = 0,
 
     // Stack cache
     tos: Word = 0,

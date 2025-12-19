@@ -1846,6 +1846,39 @@ def main():
     # Shift immediate
     generate_shi_tests()
 
+    # clz (count leading zeros)
+    generate_unary_op_test(
+        "clz",
+        [
+            (0x0000, 16),     # All zeros = 16 leading zeros
+            (0x0001, 15),     # Only LSB set
+            (0x0002, 14),     # Bit 1 set
+            (0x0004, 13),     # Bit 2 set
+            (0x0008, 12),     # Bit 3 set
+            (0x0010, 11),     # Bit 4 set
+            (0x0020, 10),     # Bit 5 set
+            (0x0040, 9),      # Bit 6 set
+            (0x0080, 8),      # Bit 7 set
+            (0x0100, 7),      # Bit 8 set
+            (0x0200, 6),      # Bit 9 set
+            (0x0400, 5),      # Bit 10 set
+            (0x0800, 4),      # Bit 11 set
+            (0x1000, 3),      # Bit 12 set
+            (0x2000, 2),      # Bit 13 set
+            (0x4000, 1),      # Bit 14 set
+            (0x8000, 0),      # MSB set = 0 leading zeros
+            (0xFFFF, 0),      # All ones = 0 leading zeros
+            (0x00FF, 8),      # Lower byte all ones
+            (0xFF00, 0),      # Upper byte all ones
+            (0x0F00, 4),      # Upper nibble of lower byte
+            (0x00F0, 8),      # Lower nibble of upper byte of lower byte
+            (0x5555, 1),      # Alternating bits starting with 0
+            (0xAAAA, 0),      # Alternating bits starting with 1
+            (0x0003, 14),     # Two LSBs set
+            (0x7FFF, 1),      # All but MSB set
+        ],
+    )
+
     print("Tests generated successfully.")
 
 

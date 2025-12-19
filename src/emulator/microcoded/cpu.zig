@@ -20,7 +20,7 @@ const STACK_MASK = types.STACK_MASK;
 const USER_HIGH_WATER = types.USER_HIGH_WATER;
 const KERNEL_HIGH_WATER = types.KERNEL_HIGH_WATER;
 
-pub const OpASrc = enum(u3) { tos, nos, ros, fp, ra, ar, pc, zero };
+pub const OpASrc = enum(u3) { tos, nos, ros, fp, rx, ry, pc, zero };
 pub const OpBSrc = enum(u3) { tos, nos, ros, imm7, zero, wordbytes };
 pub const ResultSrc = enum(u3) {
     op_a,
@@ -31,13 +31,13 @@ pub const ResultSrc = enum(u3) {
     mem,
     csr,
 };
-pub const AluOp = enum(u3) { add, sub, and_op, or_op, xor_op, lt, ltu };
+pub const AluOp = enum(u3) { add, sub, and_op, or_op, xor_op, lt, ltu, clz };
 pub const ShiftMode = enum(u2) { sll, srl, sra, fsl };
 pub const MemOp = enum(u2) { none, read, write };
 pub const MemWidth = enum(u2) { byte, half, word };
-pub const MemAddr = enum(u2) { tos, fp_rel, ar };
+pub const MemAddr = enum(u2) { tos, fp_rel, ry };
 pub const MemWData = enum(u1) { nos, tos };
-pub const Dest = enum(u3) { none, tos, fp, ra, ar, csr };
+pub const Dest = enum(u3) { none, tos, fp, rx, ry, csr };
 pub const StackMode = enum(u3) { hold, push, pop, pop2, pop3, swap, rot };
 pub const PcSrc = enum(u3) { next, rel, abs, evec, epc, hold, macro };
 pub const BranchCond = enum(u2) { always, if_nos_zero, if_nos_nzero };
@@ -263,7 +263,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
 
         // push_ra: push return address
         .push_ra => .{
-            .op_a = .ra,
+            .op_a = .rx,
             .result_src = .op_a,
             .dest = .tos,
             .stack_mode = .push,
@@ -271,7 +271,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
 
         // push_ar: push address register
         .push_ar => .{
-            .op_a = .ar,
+            .op_a = .ry,
             .result_src = .op_a,
             .dest = .tos,
             .stack_mode = .push,
@@ -298,7 +298,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
         .pop_ra => .{
             .op_a = .tos,
             .result_src = .op_a,
-            .dest = .ra,
+            .dest = .rx,
             .stack_mode = .pop,
             .min_depth = 1,
         },
@@ -307,7 +307,7 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
         .pop_ar => .{
             .op_a = .tos,
             .result_src = .op_a,
-            .dest = .ar,
+            .dest = .ry,
             .stack_mode = .pop,
             .min_depth = 1,
         },
@@ -331,24 +331,24 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .min_depth = 1,
         },
 
-        // add_ra: RA += TOS
-        .add_ra => .{
-            .op_a = .ra,
+        // add_rx: RX += TOS
+        .add_rx => .{
+            .op_a = .rx,
             .op_b = .tos,
             .result_src = .alu,
             .alu_op = .add,
-            .dest = .ra,
+            .dest = .rx,
             .stack_mode = .pop,
             .min_depth = 1,
         },
 
-        // add_ar: AR += TOS
-        .add_ar => .{
-            .op_a = .ar,
+        // add_ar: RY += TOS
+        .add_ry => .{
+            .op_a = .ry,
             .op_b = .tos,
             .result_src = .alu,
             .alu_op = .add,
-            .dest = .ar,
+            .dest = .ry,
             .stack_mode = .pop,
             .min_depth = 1,
         },
@@ -401,8 +401,6 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .enter_trap = true,
             .min_depth = 2,
         },
-
-        .ext_reserved_22, .ext_reserved_23, .ext_reserved_25, .ext_reserved_26 => illegal_instr,
 
         // mul: multiply, produces TOS=high, NOS=low
         .mul => .{
@@ -473,7 +471,18 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .min_depth = 2,
         },
 
-        .ext_reserved_2D, .ext_reserved_2E, .ext_reserved_2F => illegal_instr,
+        // clz: count leading zeros
+        .clz => .{
+            .op_a = .tos,
+            .op_b = .zero,
+            .result_src = .alu,
+            .alu_op = .clz,
+            .dest = .tos,
+            .stack_mode = .hold,
+            .min_depth = 1,
+        },
+
+        .reserved_2C, .reserved_2D, .reserved_2E, .reserved_2F => illegal_instr,
 
         // lb: load byte (sign-extended)
         .lb => .{
@@ -535,49 +544,49 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .min_depth = 2,
         },
 
-        // lnw: load next word via AR, then AR += WORDBYTES
+        // lnw: load next word via RY, then RY += WORDBYTES
         .lnw => .{
             .result_src = .mem,
             .mem_op = .read,
             .mem_width = .word,
-            .mem_addr = .ar,
+            .mem_addr = .ry,
             .dest = .tos,
             .stack_mode = .push,
             .ar_increment = true,
         },
 
-        // snw: store next word via AR, then AR += WORDBYTES
+        // snw: store next word via RY, then RY += WORDBYTES
         .snw => .{
             .mem_op = .write,
             .mem_width = .word,
-            .mem_addr = .ar,
+            .mem_addr = .ry,
             .mem_wdata = .tos,
             .stack_mode = .pop,
             .ar_increment = true,
             .min_depth = 1,
         },
 
-        // call: relative call, saves PC to RA
+        // call: relative call, saves PC to RX
         .call => .{
             .op_a = .pc,
             .result_src = .op_a,
-            .dest = .ra,
+            .dest = .rx,
             .pc_src = .rel,
             .stack_mode = .pop,
             .min_depth = 1,
         },
 
-        // callp: absolute call (function pointer), saves PC to RA
+        // callp: absolute call (function pointer), saves PC to RX
         .callp => .{
             .op_a = .pc,
             .result_src = .op_a,
-            .dest = .ra,
+            .dest = .rx,
             .pc_src = .abs,
             .stack_mode = .pop,
             .min_depth = 1,
         },
 
-        .ext_reserved_3A, .ext_reserved_3B, .ext_reserved_3C, .ext_reserved_3D, .ext_reserved_3E, .ext_reserved_3F => illegal_instr,
+        .reserved_38, .reserved_39, .reserved_3A, .reserved_3B, .reserved_3C, .reserved_3D, .reserved_3E, .reserved_3F => illegal_instr,
     };
 }
 
@@ -604,8 +613,8 @@ pub inline fn executeMicroOp(cpu: *CpuState, uop: MicroOp, instr: u8, trap: bool
         .nos => r.nos,
         .ros => r.ros,
         .fp => r.fp(),
-        .ra => r.ra,
-        .ar => r.ar,
+        .rx => r.rx,
+        .ry => r.ry,
         .pc => r.pc,
         .zero => 0,
     };
@@ -622,7 +631,7 @@ pub inline fn executeMicroOp(cpu: *CpuState, uop: MicroOp, instr: u8, trap: bool
     const mem_addr: Word = if (uop.mem_op != .none) switch (uop.mem_addr) {
         .tos => r.tos,
         .fp_rel => r.fp() +% r.tos,
-        .ar => r.ar,
+        .ry => r.ry,
     } else 0;
 
     const alu_out: Word = executeAlu(uop.alu_op, op_a, op_b);
@@ -722,13 +731,13 @@ pub inline fn executeMicroOp(cpu: *CpuState, uop: MicroOp, instr: u8, trap: bool
                 cpu.reg.ufp = result;
             }
         },
-        .ra => cpu.reg.ra = result,
-        .ar => cpu.reg.ar = result,
+        .rx => cpu.reg.rx = result,
+        .ry => cpu.reg.ry = result,
         .csr => cpu.reg.writeCsr(r.tos, r.nos),
     }
 
     if (uop.ar_increment) {
-        cpu.reg.ar = r.ar +% WORDBYTES;
+        cpu.reg.ry = r.ry +% WORDBYTES;
     }
 
     const branch_taken: bool = switch (uop.branch_cond) {
@@ -777,6 +786,7 @@ inline fn executeAlu(op: AluOp, a: Word, b: Word) Word {
         .xor_op => a ^ b,
         .lt => if (sa < sb) 1 else 0,
         .ltu => if (a < b) 1 else 0,
+        .clz => @as(Word, @clz(a)),
     };
 }
 
@@ -998,77 +1008,77 @@ fn runTest(rom_file: []const u8, max_cycles: usize, gpa: std.mem.Allocator) !Wor
 ///////////////////////////////////////////////////////
 
 test "bootstrap push instruction" {
-    const value = try runTest("starj/tests/bootstrap/boot_00_push.bin", 10, std.testing.allocator);
+    const value = try runTest("starjette/tests/bootstrap/boot_00_push.bin", 10, std.testing.allocator);
     try std.testing.expect(value == 7);
 }
 
 test "bootstrap shi instruction" {
-    const value = try runTest("starj/tests/bootstrap/boot_01_push_shi.bin", 10, std.testing.allocator);
+    const value = try runTest("starjette/tests/bootstrap/boot_01_push_shi.bin", 10, std.testing.allocator);
     try std.testing.expect(value == 0xABCD);
 }
 
 test "bootstrap xor instruction" {
-    const value = try runTest("starj/tests/bootstrap/boot_02_xor.bin", 10, std.testing.allocator);
+    const value = try runTest("starjette/tests/bootstrap/boot_02_xor.bin", 10, std.testing.allocator);
     try std.testing.expect(value == 2);
 }
 
 test "bootstrap bnez not taken instruction" {
-    const value = try runTest("starj/tests/bootstrap/boot_03_bnez_not_taken.bin", 20, std.testing.allocator);
+    const value = try runTest("starjette/tests/bootstrap/boot_03_bnez_not_taken.bin", 20, std.testing.allocator);
     try std.testing.expect(value == 99);
 }
 
 test "bootstrap bnez taken instruction" {
-    const value = try runTest("starj/tests/bootstrap/boot_04_bnez_taken.bin", 20, std.testing.allocator);
+    const value = try runTest("starjette/tests/bootstrap/boot_04_bnez_taken.bin", 20, std.testing.allocator);
     try std.testing.expect(value == 99);
 }
 
 test "bootstrap add instruction" {
-    const value = try runTest("starj/tests/bootstrap/boot_05_add.bin", 20, std.testing.allocator);
+    const value = try runTest("starjette/tests/bootstrap/boot_05_add.bin", 20, std.testing.allocator);
     try std.testing.expect(value == 0xFF);
 }
 
 test "bootstrap beqz instruction" {
-    const value = try runTest("starj/tests/bootstrap/boot_06_beqz.bin", 20, std.testing.allocator);
+    const value = try runTest("starjette/tests/bootstrap/boot_06_beqz.bin", 20, std.testing.allocator);
     try std.testing.expect(value == 99);
 }
 
 test "bootstrap halt instruction" {
-    const value = try runTest("starj/tests/bootstrap/boot_08_halt.bin", 20, std.testing.allocator);
+    const value = try runTest("starjette/tests/bootstrap/boot_08_halt.bin", 20, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "bootstrap jump instruction" {
-    const value = try runTest("starj/tests/bootstrap/boot_09_jump.bin", 40, std.testing.allocator);
+    const value = try runTest("starjette/tests/bootstrap/boot_09_jump.bin", 40, std.testing.allocator);
     try std.testing.expect(value == 9);
 }
 
 test "bootstrap push/pop fp instruction" {
-    const value = try runTest("starj/tests/bootstrap/boot_10_push_pop_fp.bin", 40, std.testing.allocator);
+    const value = try runTest("starjette/tests/bootstrap/boot_10_push_pop_fp.bin", 40, std.testing.allocator);
     try std.testing.expect(value == 5);
 }
 
 test "bootstrap push/pop afp instruction" {
-    const value = try runTest("starj/tests/bootstrap/boot_11_push_pop_afp.bin", 40, std.testing.allocator);
+    const value = try runTest("starjette/tests/bootstrap/boot_11_push_pop_afp.bin", 40, std.testing.allocator);
     try std.testing.expect(value == 5);
 }
 
 test "bootstrap push/pop evec instruction" {
-    const value = try runTest("starj/tests/bootstrap/boot_12_push_pop_evec.bin", 40, std.testing.allocator);
+    const value = try runTest("starjette/tests/bootstrap/boot_12_push_pop_evec.bin", 40, std.testing.allocator);
     try std.testing.expect(value == 5);
 }
 
 test "bootstrap push/pop ecause instruction" {
-    const value = try runTest("starj/tests/bootstrap/boot_13_push_pop_ecause.bin", 40, std.testing.allocator);
+    const value = try runTest("starjette/tests/bootstrap/boot_13_push_pop_ecause.bin", 40, std.testing.allocator);
     try std.testing.expect(value == 5);
 }
 
 test "bootstrap div macro vector" {
-    const value = try runTest("starj/tests/bootstrap/boot_14_div_vector.bin", 40, std.testing.allocator);
+    const value = try runTest("starjette/tests/bootstrap/boot_14_div_vector.bin", 40, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "bootstrap divu macro vector" {
-    const value = try runTest("starj/tests/bootstrap/boot_15_divu_vector.bin", 40, std.testing.allocator);
+    const value = try runTest("starjette/tests/bootstrap/boot_15_divu_vector.bin", 40, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
@@ -1077,151 +1087,156 @@ test "bootstrap divu macro vector" {
 ///////////////////////////////////////////////////////
 
 test "add instruction" {
-    const value = try runTest("starj/tests/add.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/add.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "swap instruction" {
-    const value = try runTest("starj/tests/swap.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/swap.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "add <reg> instruction" {
-    const value = try runTest("starj/tests/add_reg.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/add_reg.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "and instruction" {
-    const value = try runTest("starj/tests/and.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/and.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "beqz instruction" {
-    const value = try runTest("starj/tests/beqz.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/beqz.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "bnez instruction" {
-    const value = try runTest("starj/tests/bnez.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/bnez.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "call/ret instructions" {
-    const value = try runTest("starj/tests/call_ret.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/call_ret.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "callp instructions" {
-    const value = try runTest("starj/tests/callp.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/callp.bin", 200, std.testing.allocator);
+    try std.testing.expect(value == 1);
+}
+
+test "clz instruction" {
+    const value = try runTest("starjette/tests/clz.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "drop instructions" {
-    const value = try runTest("starj/tests/drop.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/drop.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "dup instructions" {
-    const value = try runTest("starj/tests/dup.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/dup.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "fsl instructions" {
-    const value = try runTest("starj/tests/fsl.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/fsl.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "llw slw instructions" {
-    const value = try runTest("starj/tests/llw_slw.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/llw_slw.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "lw sw instructions" {
-    const value = try runTest("starj/tests/lw_sw.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/lw_sw.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "lh sh instructions" {
-    const value = try runTest("starj/tests/lh_sh.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/lh_sh.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "lb sb instructions" {
-    const value = try runTest("starj/tests/lb_sb.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/lb_sb.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "lnw snw instructions" {
-    const value = try runTest("starj/tests/lnw_snw.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/lnw_snw.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "lt instruction" {
-    const value = try runTest("starj/tests/lt.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/lt.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "ltu instruction" {
-    const value = try runTest("starj/tests/ltu.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/ltu.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "mul instruction" {
-    const value = try runTest("starj/tests/mul.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/mul.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "or instruction" {
-    const value = try runTest("starj/tests/or.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/or.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "over instruction" {
-    const value = try runTest("starj/tests/over.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/over.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "push/pop <reg> instructions" {
-    const value = try runTest("starj/tests/push_pop_reg.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/push_pop_reg.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "rot instruction" {
-    const value = try runTest("starj/tests/rot.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/rot.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "shi instruction" {
-    const value = try runTest("starj/tests/shi.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/shi.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "sll instruction" {
-    const value = try runTest("starj/tests/sll.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/sll.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "srl instruction" {
-    const value = try runTest("starj/tests/srl.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/srl.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "sra instruction" {
-    const value = try runTest("starj/tests/sra.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/sra.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "sub instruction" {
-    const value = try runTest("starj/tests/sub.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/sub.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "xor instruction" {
-    const value = try runTest("starj/tests/xor.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/xor.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }
 
 test "call deep instruction" {
-    const value = try runTest("starj/tests/call_deep.bin", 200, std.testing.allocator);
+    const value = try runTest("starjette/tests/call_deep.bin", 200, std.testing.allocator);
     try std.testing.expect(value == 1);
 }

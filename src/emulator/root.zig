@@ -14,3 +14,8 @@ pub const ECause = types.ECause;
 pub const CsrNum = types.CsrNum;
 pub const Opcode = opcode.Opcode;
 pub const CpuState = types.CpuState;
+
+test {
+    // Run all tests in submodules
+    @import("std").testing.refAllDecls(@This());
+}

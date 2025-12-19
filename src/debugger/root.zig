@@ -47,7 +47,7 @@ pub fn main(gpa: std.mem.Allocator) !void {
         .min_size = .{ .w = 800.0, .h = 600.0 },
         .size = .{ .w = 1400.0, .h = 900.0 },
         .vsync = vsync,
-        .title = "Starj Fantasy Console",
+        .title = "StarJay Fantasy Console",
         //.icon = window_icon_png,
     });
     defer backend.deinit();
