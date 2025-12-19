@@ -98,9 +98,9 @@ Continuous execution with breakpoint stops.
 
 Show CPU register values.
 
-- [ ] Registers panel in right column (PC, FP, RX, RY)
-- [ ] Read values from CpuState
-- [ ] Values update after stepping
+- [x] Registers panel in right column (PC, FP, RX, RY)
+- [x] Read values from CpuState
+- [x] Values update after stepping
 
 **Test:** Step through code, watch register values change.
 
@@ -110,10 +110,10 @@ Show CPU register values.
 
 Show stack contents.
 
-- [ ] Stack panel below registers
-- [ ] Display TOS, NOS, ROS from registers
+- [x] Stack panel below registers
+- [x] Display TOS, NOS, ROS from registers
 - [ ] Display depth counter
-- [ ] Show spilled values from stack memory
+- [x] Show spilled values from stack memory
 
 **Test:** Step through `push` instructions, see stack grow.
 

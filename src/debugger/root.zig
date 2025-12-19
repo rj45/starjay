@@ -9,6 +9,9 @@ const disasm = debugger.disasm;
 // TODO: Figure out an icon to embed here
 //const window_icon_png = @embedFile("zig-favicon.png");
 
+const WORDSIZE = debugger.emulator.WORDSIZE;
+const SWord = debugger.emulator.SWord;
+
 const vsync = true;
 var scale_val: f32 = 1.0;
 
@@ -254,7 +257,7 @@ fn dvui_frame() !bool {
                     .direction = .horizontal,
                     .collapsed_size = 0,
                     .handle_margin = 4,
-                    .autofit_first = .{ .min_split = 0.3, .max_split = 0.8, .min_size = 50 },
+                    .autofit_first = .{ .min_split = 0.25, .max_split = 0.8, .min_size = 100 },
                 }, .{ .expand = .both, .background = false });
                 defer leftPaned.deinit();
 
@@ -262,7 +265,96 @@ fn dvui_frame() !bool {
                     var vbox = dvui.box(@src(), .{}, .{ .expand = .both, .background = true, .border = .all(1) });
                     defer vbox.deinit();
 
-                    dvui.label(@src(), "Registers", .{}, .{});
+                    dvui.label(@src(), "Registers", .{}, .{.margin = .{ .h = 8 }});
+
+                    dvui.label(@src(), "pc: 0x{x:0>4}", .{debugger.cpu.reg.pc}, .{});
+                    dvui.label(@src(), "fp: 0x{x:0>4}", .{debugger.cpu.reg.fp()}, .{});
+                    dvui.label(@src(), "rx: 0x{x:0>4}", .{debugger.cpu.reg.rx}, .{});
+                    dvui.label(@src(), "ry: 0x{x:0>4}", .{debugger.cpu.reg.ry}, .{});
+
+                    dvui.label(@src(), "CSRs", .{}, .{.margin = .{ .y = 16, .h = 8 }});
+                    dvui.label(@src(), "status: th = {}, ie = {}, km = {}", .{
+                        @intFromBool(debugger.cpu.reg.status.th),
+                        @intFromBool(debugger.cpu.reg.status.ie),
+                        @intFromBool(debugger.cpu.reg.status.km),
+                    }, .{});
+                    dvui.label(@src(), "estatus: th = {}, ie = {}, km = {}", .{
+                        @intFromBool(debugger.cpu.reg.estatus.th),
+                        @intFromBool(debugger.cpu.reg.estatus.ie),
+                        @intFromBool(debugger.cpu.reg.estatus.km),
+                    }, .{});
+                    dvui.label(@src(), "epc: 0x{x:0>4}", .{debugger.cpu.reg.epc}, .{});
+                    dvui.label(@src(), "afp: 0x{x:0>4}", .{debugger.cpu.reg.afp()}, .{});
+                    dvui.label(@src(), "depth: 0x{x:0>4}", .{debugger.cpu.reg.depth}, .{});
+                    dvui.label(@src(), "ecause: 0x{x:0>4}", .{debugger.cpu.reg.ecause}, .{});
+                    dvui.label(@src(), "evec: 0x{x:0>4}", .{debugger.cpu.reg.evec}, .{});
+
+                    dvui.label(@src(), "Data Stack", .{}, .{.margin = .{ .y = 16, .h = 8 }});
+                    if (debugger.cpu.reg.depth > 0) {
+                        var stack_area = dvui.scrollArea(@src(), .{}, .{ .expand = .horizontal, .background = true});
+                        defer stack_area.deinit();
+
+                        var colWidths = [_]f32{40.0, 70.0, 70.0, 70.0};
+                        var grid = dvui.grid(@src(), .colWidths(&colWidths), .{
+                            .resize_rows = true,
+                        }, .{
+                            .expand = .both,
+                        });
+                        defer grid.deinit();
+
+                        var row_num: usize = 0;
+                        for (0..debugger.cpu.reg.depth) |offset| {
+                            var cell: dvui.GridWidget.Cell = .colRow(0, row_num);
+                            row_num += 1;
+
+                            const value = if (offset == 0) debugger.cpu.reg.tos
+                                        else if (offset == 1) debugger.cpu.reg.nos
+                                        else if (offset == 2) debugger.cpu.reg.ros
+                                        else debugger.cpu.stack[debugger.cpu.reg.depth - 1 - offset];
+
+                            { // label
+                                defer cell.col_num += 1;
+                                var cell_box = grid.bodyCell(@src(), cell, .{});
+                                defer cell_box.deinit();
+                                if (offset == 0) {
+                                    dvui.label(@src(), "tos", .{}, .{ });
+                                } else if (offset == 1) {
+                                    dvui.label(@src(), "nos", .{}, .{ });
+                                } else if (offset == 2) {
+                                    dvui.label(@src(), "ros", .{}, .{ });
+                                } else {
+                                    dvui.label(@src(), "{}", .{offset+1}, .{ });
+                                }
+                            }
+
+                            { // hex
+                                defer cell.col_num += 1;
+                                var cell_box = grid.bodyCell(@src(), cell, .{});
+                                defer cell_box.deinit();
+                                if (WORDSIZE == 16) {
+                                    dvui.label(@src(), "0x{x:0<4}", .{value}, .{ });
+                                } else {
+                                    dvui.label(@src(), "0x{x:0<8}", .{value}, .{ });
+                                }
+
+                            }
+
+                            { // unsigned
+                                defer cell.col_num += 1;
+                                var cell_box = grid.bodyCell(@src(), cell, .{});
+                                defer cell_box.deinit();
+                                dvui.label(@src(), "{}", .{value}, .{ });
+                            }
+
+                            { // signed
+                                defer cell.col_num += 1;
+                                var cell_box = grid.bodyCell(@src(), cell, .{});
+                                defer cell_box.deinit();
+                                const signed_val: SWord = @bitCast(value);
+                                dvui.label(@src(), "{}", .{signed_val}, .{ });
+                            }
+                        }
+                    }
                 }
 
                 if (leftPaned.showSecond()) {
@@ -274,7 +366,7 @@ fn dvui_frame() !bool {
                 var vbox = dvui.box(@src(), .{}, .{ .expand = .both, .background = true, .border = .all(1) });
                 defer vbox.deinit();
 
-                dvui.label(@src(), "Stacks", .{}, .{});
+                dvui.label(@src(), "Frame Stack", .{}, .{});
             }
 
 

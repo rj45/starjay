@@ -895,6 +895,16 @@ pub fn runForCycles(cpu: *CpuState, max_cycles: usize) usize {
     return cycles;
 }
 
+pub inline fn microOpFor(byte: u8) MicroOp {
+    if ((byte & 0x80) != 0) {
+        return microcode_rom[65];
+    } else if ((byte & 0xC0) == 0x40) {
+        return microcode_rom[64];
+    } else {
+        return microcode_rom[byte & 0x3F];
+    }
+}
+
 inline fn step(cpu: *CpuState, irq: bool, irq_num: u4) void {
     if (cpu.halted) return;
 
@@ -902,12 +912,7 @@ inline fn step(cpu: *CpuState, irq: bool, irq_num: u4) void {
     const fetched_instr = cpu.readByte(cpu.reg.pc);
     cpu.reg.pc +%= 1;
 
-    const fetched_uop = if ((fetched_instr & 0x80) != 0)
-        microcode_rom[65]
-    else if ((fetched_instr & 0xC0) == 0x40)
-        microcode_rom[64]
-    else
-        microcode_rom[fetched_instr & 0x3F];
+    const fetched_uop = microOpFor(fetched_instr);
 
     const interrupt: bool = irq and cpu.reg.status.ie;
     const underflow: bool = cpu.reg.depth < fetched_uop.min_depth;
