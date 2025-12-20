@@ -8,9 +8,13 @@ StarJette is designed to be a "progressive complexity" implementation in hardwar
 
 The instruction set architecture could be used equally well as a 16 bit machine or 32 bit machine. It is a little-endian architecture where the smallest addressable unit is a byte (8 bits). Multi-byte values are aligned to their size (e.g., 16-bit values are aligned to even addresses, 32-bit values to addresses divisible by 4). All instructions are 8 bits wide, with no alignment requirements (jumping into the middle of a word is legal).
 
-Credit: This architecture is inspired by the Zylin ZPU which borrows the macro instruction idea as well as the encoding of immediates. RISC-V is also a heavy inspiration for many of the instruction mnemonics and semantics, including but not limited to the flag-less idea, using `ltu` for carry, and the CSR system. And of course many ideas are borrowed from Chuck Moore's designs, especially the F18A and MuP21. 
+## 1.2. Acknowledgements and Inspirations
 
-### 1.2. Notation
+This architecture is inspired by the Zylin ZPU which borrows the macro instruction idea as well as the encoding of immediates. RISC-V is also a heavy inspiration for many of the instruction mnemonics and semantics, including but not limited to avoiding flags (like carry, overflow, etc), using `ltu` for carry, and the CSR system. And of course many ideas are borrowed from Chuck Moore's designs, especially the F18A and MuP21. 
+
+There are probably many more inspirations that I am forgetting, but thanks to all the designers of stack machines and RISC architectures that came before me!
+
+### 1.3. Notation
 
 - `tos` - Top of Stack - The value on the top of the data stack
 - `nos` - Next on Stack - The value at the second position of the data stack
@@ -36,7 +40,7 @@ Credit: This architecture is inspired by the Zylin ZPU which borrows the macro i
 - `~` - Bitwise NOT operation
 - Other standard arithmetic and logical operators (`+`, `-`, `*`, `/`, `&`, `|`, etc.) have their usual meanings.
 
-### 1.3. Stacks
+### 1.4. Stacks
 
 StarJette has two stacks:
 
@@ -328,9 +332,9 @@ All instructions are 8 bits wide. There are three instruction formats:
   | 0   0 | 0   0 | 1   1   1   0 | xor        | Bitwise XOR                    |
   | 0   0 | 0   0 | 1   1   1   1 | fsl        | Double word funnel shift left  |
   +-------+-------+-------+-------+------------+--------------------------------+
-  | 0   0 | 0   1 | 0   0 | <reg> | rel  <reg> | Add register to top of stack   |
-  | 0   0 | 0   1 | 0   1 | <reg> | pop  <reg> | Set register to top of stack   |
-  | 0   0 | 0   1 | 1   0 | <reg> | add  <reg> | Add tos to register            |
+  | 0   0 | 0   1 | 0   0 | <reg> | rel <reg>  | Add register to top of stack   |
+  | 0   0 | 0   1 | 0   1 | <reg> | pop <reg>  | Set register to top of stack   |
+  | 0   0 | 0   1 | 1   0 | <reg> | add <reg>  | Add tos to register            |
   | 0   0 | 0   1 | 1   1 | 0   0 | pushcsr    | Push CSR to stack              |
   | 0   0 | 0   1 | 1   1 | 0   1 | popcsr     | Pop CSR from stack             |
   +-------+-------+-------+-------+------------+--------------------------------+
