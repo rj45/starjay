@@ -158,7 +158,12 @@ pub fn disassemble(memory: []Word, alloc: std.mem.Allocator) !*AsmListing {
                     immediate = (immediate << 7) | (moreBits & 0x7f);
                     immediateValid = true;
                 },
-                .beqz, .bnez, .call => {
+                .rel_pc => { // used with callp to do pc-relative addressing
+                    if (immediateValid) {
+                        immediate += @bitCast(offset);
+                    }
+                },
+                .beqz, .bnez => {
                     if (immediateValid) {
                         const targetOffset:usize = @intCast(immediate);
                         operand = .{.address = @truncate((offset + 1) +% targetOffset)};

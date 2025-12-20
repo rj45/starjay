@@ -9,9 +9,9 @@
   ; shi       => 0b1_???????
   ; push imm  => 0b01_??????
   halt        => 0b00_00_0000
-  illegal     => 0b00_00_0001
+  rets        => 0b00_00_0001
   syscall     => 0b00_00_0010
-  rets        => 0b00_00_0011
+  callp       => 0b00_00_0011
   beqz        => 0b00_00_0100
   bnez        => 0b00_00_0101
   swap        => 0b00_00_0110
@@ -24,13 +24,13 @@
   and         => 0b00_00_1101
   xor         => 0b00_00_1110
   fsl         => 0b00_00_1111
-  ; push reg  => 0b00_01_00??
+  ; rel reg   => 0b00_01_00??
   ; pop reg   => 0b00_01_01??
   ; add reg   => 0b00_01_10??
   pushcsr     => 0b00_01_1100
   popcsr      => 0b00_01_1101
-  llw         => 0b00_01_1110
-  slw         => 0b00_01_1111
+  lw          => 0b00_01_1110
+  sw          => 0b00_01_1111
 
   ; Extended instruction set
   div         => 0b00_10_0000
@@ -43,26 +43,12 @@
   or          => 0b00_10_0111
   sub         => 0b00_10_1000
   clz         => 0b00_10_1001
-  call        => 0b00_10_1010
-  callp       => 0b00_10_1011
-  res0        => 0b00_10_1100
-  res1        => 0b00_10_1101
-  res2        => 0b00_10_1110
-  res3        => 0b00_10_1111
-  lb          => 0b00_110_000
-  sb          => 0b00_110_001
-  lh          => 0b00_110_010
-  sh          => 0b00_110_011
-  lw          => 0b00_110_100
-  sw          => 0b00_110_101
-  lnw         => 0b00_110_110
-  snw         => 0b00_110_111
-  res4        => 0b00_111_010
-  res5        => 0b00_111_011
-  res6        => 0b00_111_100
-  res7        => 0b00_111_101
-  res8        => 0b00_111_110
-  res9        => 0b00_111_111
+  lb          => 0b00_10_1010
+  sb          => 0b00_10_1011
+  lh          => 0b00_10_1100
+  sh          => 0b00_10_1101
+  lnw         => 0b00_10_1110
+  snw         => 0b00_10_1111
 }
 
 #subruledef reg {
@@ -146,13 +132,18 @@
     0b01`2 @ (imm >> 14)`6 @ 0b1`1 @ ((imm >> 7) & 0x7F)`7 @ 0b1`1 @ (imm & 0x7F)`7
   }
 
-  push {reg:reg} => 0b00_01_00`6 @ reg`2
+  rel  {reg:reg} => 0b00_01_00`6 @ reg`2
   pop  {reg:reg} => 0b00_01_01`6 @ reg`2
   add  {reg:reg} => 0b00_01_10`6 @ reg`2
 
   add {reg:reg}, {imm} => asm {
     push {imm}
     add {reg}
+  }
+
+  push {reg:reg} => asm {
+    push 0
+    rel {reg}
   }
 
   push {csr:csr} => {
@@ -182,7 +173,8 @@
 
   call {label} => asm {
     push_pcrel {label}
-    call
+    rel pc
+    callp
   }
 
   add {imm} => asm {
@@ -328,9 +320,19 @@
     fsl
   }
 
+  llw => asm {
+    rel fp
+    lw
+  }
+
   llw {imm} => asm {
     push {imm}
     llw
+  }
+
+  slw => asm {
+    rel fp
+    sw
   }
 
   slw {imm} => asm {
@@ -386,7 +388,12 @@
   }
 
   ret ra => asm {
-    push ra
+    push rx
+    pop pc
+  }
+
+  ret rx => asm {
+    push rx
     pop pc
   }
 

@@ -35,7 +35,7 @@ pub const AluOp = enum(u3) { add, sub, and_op, or_op, xor_op, lt, ltu, clz };
 pub const ShiftMode = enum(u2) { sll, srl, sra, fsl };
 pub const MemOp = enum(u2) { none, read, write };
 pub const MemWidth = enum(u2) { byte, half, word };
-pub const MemAddr = enum(u2) { tos, fp_rel, ry };
+pub const MemAddr = enum(u1) { tos, ry };
 pub const MemWData = enum(u1) { nos, tos };
 pub const Dest = enum(u3) { none, tos, fp, rx, ry, csr };
 pub const StackMode = enum(u3) { hold, push, pop, pop2, pop3, swap, rot };
@@ -43,7 +43,7 @@ pub const PcSrc = enum(u3) { next, rel, abs, evec, epc, hold, macro };
 pub const BranchCond = enum(u2) { always, if_nos_zero, if_nos_nzero };
 pub const TrapCheck = enum(u1) { none, th_trap };
 
-pub const MicroOp = packed struct(u43) {
+pub const MicroOp = packed struct(u42) {
     // OPERAND SELECTION
     op_a: OpASrc = .tos,
     op_b: OpBSrc = .zero,
@@ -115,8 +115,11 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .ecause = .halt_trap,
         },
 
-        // reserved_01: illegal instruction
-        .reserved_01 => illegal_instr,
+        // rets: return from exception
+        .rets => .{
+            .pc_src = .epc,
+            .exit_trap = true,
+        },
 
         // syscall: trap to exception handler
         .syscall => .{
@@ -125,10 +128,14 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .ecause = .syscall,
         },
 
-        // rets: return from exception
-        .rets => .{
-            .pc_src = .epc,
-            .exit_trap = true,
+        // callp: absolute call (function pointer), saves PC to RX
+        .callp => .{
+            .op_a = .pc,
+            .result_src = .op_a,
+            .dest = .rx,
+            .pc_src = .abs,
+            .stack_mode = .pop,
+            .min_depth = 1,
         },
 
         // beqz: branch if NOS == 0
@@ -245,36 +252,48 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .min_depth = 3,
         },
 
-        // push_pc: push program counter
-        .push_pc => .{
+        // rel_pc: tos += pc
+        .rel_pc => .{
             .op_a = .pc,
-            .result_src = .op_a,
+            .op_b = .tos,
+            .result_src = .alu,
+            .alu_op = .add,
             .dest = .tos,
-            .stack_mode = .push,
+            .stack_mode = .hold,
+            .min_depth = 1,
         },
 
-        // push_fp: push frame pointer
-        .push_fp => .{
+        // rel_fp: tos += fp
+        .rel_fp => .{
             .op_a = .fp,
-            .result_src = .op_a,
+            .op_b = .tos,
+            .result_src = .alu,
+            .alu_op = .add,
             .dest = .tos,
-            .stack_mode = .push,
+            .stack_mode = .hold,
+            .min_depth = 1,
         },
 
-        // push_ra: push return address
-        .push_ra => .{
+        // rel_rx: tos += rx
+        .rel_rx => .{
             .op_a = .rx,
-            .result_src = .op_a,
+            .op_b = .tos,
+            .result_src = .alu,
+            .alu_op = .add,
             .dest = .tos,
-            .stack_mode = .push,
+            .stack_mode = .hold,
+            .min_depth = 1,
         },
 
-        // push_ar: push address register
-        .push_ar => .{
+        // rel_ry: tos += ry
+        .rel_ry => .{
             .op_a = .ry,
-            .result_src = .op_a,
+            .op_b = .tos,
+            .result_src = .alu,
+            .alu_op = .add,
             .dest = .tos,
-            .stack_mode = .push,
+            .stack_mode = .hold,
+            .min_depth = 1,
         },
 
         // pop_pc: pop to program counter (return)
@@ -294,8 +313,8 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .min_depth = 1,
         },
 
-        // pop_ra: pop to return address
-        .pop_ra => .{
+        // pop_rx: pop to rx
+        .pop_rx => .{
             .op_a = .tos,
             .result_src = .op_a,
             .dest = .rx,
@@ -303,8 +322,8 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .min_depth = 1,
         },
 
-        // pop_ar: pop to address register
-        .pop_ar => .{
+        // pop_ry: pop to ry
+        .pop_ry => .{
             .op_a = .tos,
             .result_src = .op_a,
             .dest = .ry,
@@ -368,22 +387,22 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .min_depth = 2,
         },
 
-        // llw: load local word (fp-relative)
-        .llw => .{
+        // lw: load word
+        .lw => .{
             .result_src = .mem,
             .mem_op = .read,
             .mem_width = .word,
-            .mem_addr = .fp_rel,
+            .mem_addr = .tos,
             .dest = .tos,
             .stack_mode = .hold,
             .min_depth = 1,
         },
 
-        // slw: store local word (fp-relative)
-        .slw => .{
+        // sw: store word
+        .sw => .{
             .mem_op = .write,
             .mem_width = .word,
-            .mem_addr = .fp_rel,
+            .mem_addr = .tos,
             .stack_mode = .pop2,
             .min_depth = 2,
         },
@@ -482,8 +501,6 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .min_depth = 1,
         },
 
-        .reserved_2C, .reserved_2D, .reserved_2E, .reserved_2F => illegal_instr,
-
         // lb: load byte (sign-extended)
         .lb => .{
             .result_src = .mem,
@@ -524,26 +541,6 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .min_depth = 2,
         },
 
-        // lw: load word
-        .lw => .{
-            .result_src = .mem,
-            .mem_op = .read,
-            .mem_width = .word,
-            .mem_addr = .tos,
-            .dest = .tos,
-            .stack_mode = .hold,
-            .min_depth = 1,
-        },
-
-        // sw: store word
-        .sw => .{
-            .mem_op = .write,
-            .mem_width = .word,
-            .mem_addr = .tos,
-            .stack_mode = .pop2,
-            .min_depth = 2,
-        },
-
         // lnw: load next word via RY, then RY += WORDBYTES
         .lnw => .{
             .result_src = .mem,
@@ -566,27 +563,10 @@ fn generateMicrocode(opcode: Opcode) MicroOp {
             .min_depth = 1,
         },
 
-        // call: relative call, saves PC to RX
-        .call => .{
-            .op_a = .pc,
-            .result_src = .op_a,
-            .dest = .rx,
-            .pc_src = .rel,
-            .stack_mode = .pop,
-            .min_depth = 1,
-        },
-
-        // callp: absolute call (function pointer), saves PC to RX
-        .callp => .{
-            .op_a = .pc,
-            .result_src = .op_a,
-            .dest = .rx,
-            .pc_src = .abs,
-            .stack_mode = .pop,
-            .min_depth = 1,
-        },
-
-        .reserved_38, .reserved_39, .reserved_3A, .reserved_3B, .reserved_3C, .reserved_3D, .reserved_3E, .reserved_3F => illegal_instr,
+        .reserved_30, .reserved_31, .reserved_32, .reserved_33,
+        .reserved_34, .reserved_35, .reserved_36, .reserved_37,
+        .reserved_38, .reserved_39, .reserved_3A, .reserved_3B,
+        .reserved_3C, .reserved_3D, .reserved_3E, .reserved_3F => illegal_instr,
     };
 }
 
@@ -630,7 +610,6 @@ pub inline fn executeMicroOp(cpu: *CpuState, uop: MicroOp, instr: u8, trap: bool
 
     const mem_addr: Word = if (uop.mem_op != .none) switch (uop.mem_addr) {
         .tos => r.tos,
-        .fp_rel => r.fp() +% r.tos,
         .ry => r.ry,
     } else 0;
 

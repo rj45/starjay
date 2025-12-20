@@ -93,6 +93,16 @@ fn runForCycles(cpu: *CpuState, cycles: usize) !usize {
                 }
                 return Error.Halt;
             },
+            .callp => {
+                read = 1;
+                stackop = .pop1;
+                result = nos;
+                if (cpu.log_enabled) {
+                    std.debug.print("{x:0>4}: {x:0>2} CALLP to {x}, return address {x}\n", .{ cpu.reg.pc - 1, ir, tos, cpu.reg.pc });
+                }
+                cpu.reg.rx = cpu.reg.pc;
+                cpu.reg.pc = tos;
+            },
             .beqz => {
                 read = 2;
                 stackop = .pop2;
@@ -207,20 +217,20 @@ fn runForCycles(cpu: *CpuState, cycles: usize) !usize {
                 const shifted = value << @truncate(tos & 0x1f);
                 result = @as(Word, @truncate(shifted >> 16));
             },
-            .push_pc, .push_fp, .push_ra, .push_ar => {
-                stackop = .push;
+            .rel_pc, .rel_fp, .rel_rx, .rel_ry => {
+                stackop = .replace;
                 const reg: RegNum = @enumFromInt(ir & 3);
                 switch (reg) {
-                    .pc => result = cpu.reg.pc,
-                    .fp => result = cpu.reg.fp(),
-                    .rx => result = cpu.reg.rx,
-                    .ry => result = cpu.reg.ry,
+                    .pc => result = tos + cpu.reg.pc,
+                    .fp => result = tos + cpu.reg.fp(),
+                    .rx => result = tos + cpu.reg.rx,
+                    .ry => result = tos + cpu.reg.ry,
                 }
                 if (cpu.log_enabled) {
-                    std.debug.print("{x:0>4}: {x:0>2} PUSH {s} = {}\n", .{ cpu.reg.pc - 1, ir, @tagName(reg), result });
+                    std.debug.print("{x:0>4}: {x:0>2} REL {s} = {}\n", .{ cpu.reg.pc - 1, ir, @tagName(reg), result });
                 }
             },
-            .pop_pc, .pop_fp, .pop_ra, .pop_ar => {
+            .pop_pc, .pop_fp, .pop_rx, .pop_ry => {
                 read = 1;
                 stackop = .pop1;
                 result = nos;
@@ -293,32 +303,30 @@ fn runForCycles(cpu: *CpuState, cycles: usize) !usize {
                 }
                 cpu.reg.writeCsr(tos, nos);
             },
-            .llw => {
+            .lw => {
                 read = 1;
                 stackop = .replace;
-                const addr = @addWithOverflow(cpu.reg.fp(), tos)[0];
-                if ((addr) & 1 == 1) {
-                    std.log.err("Unaligned LLW from fp+{} = {x}\n", .{ tos, addr });
+                if (cpu.log_enabled) {
+                    std.debug.print("{x:0>4}: {x:0>2} LW from {x}\n", .{ cpu.reg.pc - 1, ir, tos });
+                }
+                if ((tos & (WORDBYTES-1)) != 0) {
+                    std.log.err("Unaligned LW from {x}", .{tos});
                     return Error.UnalignedAccess;
                 }
-                result = cpu.memory[addr >> 1];
-                if (cpu.log_enabled) {
-                    std.debug.print("{x:0>4}: {x:0>2} LLW from fp+{} = {}\n", .{ cpu.reg.pc - 1, ir, tos, result });
-                }
+                result = cpu.readWord(tos);
             },
-            .slw => {
+            .sw => {
                 read = 2;
                 stackop = .pop2;
                 result = ros;
-                const addr = @addWithOverflow(cpu.reg.fp(), tos)[0];
                 if (cpu.log_enabled) {
-                    std.debug.print("{x:0>4}: {x:0>2} SLW to fp+{} = {}\n", .{ cpu.reg.pc - 1, ir, tos, nos });
+                    std.debug.print("{x:0>4}: {x:0>2} SW to {x} = {}\n", .{ cpu.reg.pc - 1, ir, tos, nos });
                 }
-                if ((addr) & 1 == 1) {
-                    std.log.err("Unaligned SLW from fp+{} = {x}\n", .{ tos, addr });
+                if ((tos & (WORDBYTES-1)) != 0) {
+                    std.log.err("Unaligned SW to {x}", .{tos});
                     return Error.UnalignedAccess;
                 }
-                cpu.memory[addr >> 1] = nos;
+                cpu.writeWord(tos, nos);
             },
             .div => {
                 // TODO: this should always jump to macro vector; implement after exceptions are implemented
@@ -423,26 +431,6 @@ fn runForCycles(cpu: *CpuState, cycles: usize) !usize {
                     std.debug.print("{x:0>4}: {x:0>2} CLZ {} = {}\n", .{ cpu.reg.pc - 1, ir, tos, result });
                 }
             },
-            .call => {
-                read = 1;
-                stackop = .pop1;
-                result = nos;
-                if (cpu.log_enabled) {
-                    std.debug.print("{x:0>4}: {x:0>2} CALL to {x}, return address {x}\n", .{ cpu.reg.pc - 1, ir, cpu.reg.pc + tos, cpu.reg.pc });
-                }
-                cpu.reg.rx = cpu.reg.pc;
-                cpu.reg.pc = @addWithOverflow(cpu.reg.pc, tos)[0];
-            },
-            .callp => {
-                read = 1;
-                stackop = .pop1;
-                result = nos;
-                if (cpu.log_enabled) {
-                    std.debug.print("{x:0>4}: {x:0>2} CALLP to {x}, return address {x}\n", .{ cpu.reg.pc - 1, ir, tos, cpu.reg.pc });
-                }
-                cpu.reg.rx = cpu.reg.pc;
-                cpu.reg.pc = tos;
-            },
             .lb => {
                 read = 1;
                 stackop = .replace;
@@ -464,7 +452,7 @@ fn runForCycles(cpu: *CpuState, cycles: usize) !usize {
                 read = 1;
                 stackop = .replace;
                 if (cpu.log_enabled) {
-                    std.debug.print("{x:0>4}: {x:0>2} LW from {x}\n", .{ cpu.reg.pc - 1, ir, tos });
+                    std.debug.print("{x:0>4}: {x:0>2} LH from {x}\n", .{ cpu.reg.pc - 1, ir, tos });
                 }
                 if ((tos & ((WORDBYTES/2)-1)) != 0) {
                     std.log.err("Unaligned LW from {x}", .{tos});
@@ -477,38 +465,13 @@ fn runForCycles(cpu: *CpuState, cycles: usize) !usize {
                 stackop = .pop2;
                 result = ros;
                 if (cpu.log_enabled) {
-                    std.debug.print("{x:0>4}: {x:0>2} SW to {x} = {}\n", .{ cpu.reg.pc - 1, ir, tos, nos });
+                    std.debug.print("{x:0>4}: {x:0>2} SH to {x} = {}\n", .{ cpu.reg.pc - 1, ir, tos, nos });
                 }
                 if ((tos & ((WORDBYTES/2)-1)) != 0) {
                     std.log.err("Unaligned SH to {x}", .{tos});
                     return Error.UnalignedAccess;
                 }
                 cpu.writeHalf(tos, nos);
-            },
-            .lw => {
-                read = 1;
-                stackop = .replace;
-                if (cpu.log_enabled) {
-                    std.debug.print("{x:0>4}: {x:0>2} LW from {x}\n", .{ cpu.reg.pc - 1, ir, tos });
-                }
-                if ((tos & (WORDBYTES-1)) != 0) {
-                    std.log.err("Unaligned LW from {x}", .{tos});
-                    return Error.UnalignedAccess;
-                }
-                result = cpu.readWord(tos);
-            },
-            .sw => {
-                read = 2;
-                stackop = .pop2;
-                result = ros;
-                if (cpu.log_enabled) {
-                    std.debug.print("{x:0>4}: {x:0>2} SW to {x} = {}\n", .{ cpu.reg.pc - 1, ir, tos, nos });
-                }
-                if ((tos & (WORDBYTES-1)) != 0) {
-                    std.log.err("Unaligned SW to {x}", .{tos});
-                    return Error.UnalignedAccess;
-                }
-                cpu.writeWord(tos, nos);
             },
             .lnw => {
                 stackop = .push;

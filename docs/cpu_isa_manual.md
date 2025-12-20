@@ -8,6 +8,8 @@ StarJette is designed to be a "progressive complexity" implementation in hardwar
 
 The instruction set architecture could be used equally well as a 16 bit machine or 32 bit machine. It is a little-endian architecture where the smallest addressable unit is a byte (8 bits). Multi-byte values are aligned to their size (e.g., 16-bit values are aligned to even addresses, 32-bit values to addresses divisible by 4). All instructions are 8 bits wide, with no alignment requirements (jumping into the middle of a word is legal).
 
+Credit: This architecture is inspired by the Zylin ZPU which borrows the macro instruction idea as well as the encoding of immediates. RISC-V is also a heavy inspiration for many of the instruction mnemonics and semantics, including but not limited to the flag-less idea, using `ltu` for carry, and the CSR system. And of course many ideas are borrowed from Chuck Moore's designs, especially the F18A and MuP21. 
+
 ### 1.2. Notation
 
 - `tos` - Top of Stack - The value on the top of the data stack
@@ -308,9 +310,9 @@ All instructions are 8 bits wide. There are three instruction formats:
   | 0   1 |          imm          | push <imm> | Push sign extended immediate   |
   +-------+-------+---------------+------------+--------------------------------+
   | 0   0 | 0   0 | 0   0   0   0 | halt       | Halt the processor             |
-  | 0   0 | 0   0 | 0   0   0   1 |            |                                |
+  | 0   0 | 0   0 | 0   0   0   1 | rets       | Return from kernel             |
   | 0   0 | 0   0 | 0   0   1   0 | syscall    | Jump to kernel                 |
-  | 0   0 | 0   0 | 0   0   1   1 | rets       | Return from kernel             |
+  | 0   0 | 0   0 | 0   0   1   1 | callp      | Call function pointer in tos   |
   | 0   0 | 0   0 | 0   1   0   0 | beqz       | Branch if equal zero           |
   | 0   0 | 0   0 | 0   1   0   1 | bnez       | Branch if not equal zero       |
   +-------+-------+---------------+------------+--------------------------------+
@@ -326,14 +328,14 @@ All instructions are 8 bits wide. There are three instruction formats:
   | 0   0 | 0   0 | 1   1   1   0 | xor        | Bitwise XOR                    |
   | 0   0 | 0   0 | 1   1   1   1 | fsl        | Double word funnel shift left  |
   +-------+-------+-------+-------+------------+--------------------------------+
-  | 0   0 | 0   1 | 0   0 | <reg> | push <reg> | Push register to stack         |
-  | 0   0 | 0   1 | 0   1 | <reg> | pop  <reg> | Pop register from stack        |
+  | 0   0 | 0   1 | 0   0 | <reg> | rel  <reg> | Add register to top of stack   |
+  | 0   0 | 0   1 | 0   1 | <reg> | pop  <reg> | Set register to top of stack   |
   | 0   0 | 0   1 | 1   0 | <reg> | add  <reg> | Add tos to register            |
   | 0   0 | 0   1 | 1   1 | 0   0 | pushcsr    | Push CSR to stack              |
   | 0   0 | 0   1 | 1   1 | 0   1 | popcsr     | Pop CSR from stack             |
   +-------+-------+-------+-------+------------+--------------------------------+
-  | 0   0 | 0   1 | 1   1 | 1   0 | llw        | Load local (fp-relative) word  |
-  | 0   0 | 0   1 | 1   1 | 1   1 | slw        | Store local (fp-relative) word |
+  | 0   0 | 0   1 | 1   1 | 1   0 | lw         | Load word from address in tos  |
+  | 0   0 | 0   1 | 1   1 | 1   1 | sw         | Store nos to address in tos    |
   +-------+-------+-------+-------+------------+--------------------------------+
   | 7   6   5   4   3   2   1   0 |              Extended ALU Ops               |
   +-------+-------+---------------+------------+--------------------------------+
@@ -348,25 +350,23 @@ All instructions are 8 bits wide. There are three instruction formats:
   | 0   0 | 1   0 | 1   0   0   0 | sub        | Subtraction                    |
   | 0   0 | 1   0 | 1   0   0   1 | clz        | Count leading zero bits        |
   +-------+-------+---------------+------------+--------------------------------+
-  | 7   6   5   4   3   2   1   0 |          Extended Control Flow              |
-  +-------+-------+---------------+------------+--------------------------------+
-  | 0   0 | 1   0 | 1   0   1   0 | call       | Call pc-relative function      |
-  | 0   0 | 1   0 | 1   0   1   1 | callp      | Call function pointer          |
-  | 0   0 | 1   0 | 1   1   0   0 |            |                                |
-  | 0   0 | 1   0 | 1   1   0   1 |            |                                |
-  | 0   0 | 1   0 | 1   1   1   0 |            |                                |
-  | 0   0 | 1   0 | 1   1   1   1 |            |                                |
-  +-------+-------+---------------+------------+--------------------------------+
   | 7   6   5   4   3   2   1   0 |            Extended Memory Ops              |
-  +-------+-----------+-----------+------------+--------------------------------+
-  | 0   0 | 1   1   0 | 0   0   0 | lb         | Load sign extended byte        |
-  | 0   0 | 1   1   0 | 0   0   1 | sb         | Store byte                     |
-  | 0   0 | 1   1   0 | 0   1   0 | lh         | Load sign extended half word   |
-  | 0   0 | 1   1   0 | 0   1   1 | sh         | Store half word                |
-  | 0   0 | 1   1   0 | 1   0   0 | lw         | Load word from address in tos  |
-  | 0   0 | 1   1   0 | 1   0   1 | sw         | Store nos to address in tos    |
-  | 0   0 | 1   1   0 | 1   1   0 | lnw        | Load next word from ry and inc |
-  | 0   0 | 1   1   0 | 1   1   1 | snw        | Store next work to ry and inc  |
+  +-------+-------+---------------+------------+--------------------------------+
+  | 0   0 | 1   0 | 1   0   1   0 | lb         | Load sign extended byte        |
+  | 0   0 | 1   0 | 1   0   1   1 | sb         | Store byte                     |
+  | 0   0 | 1   0 | 1   1   0   0 | lh         | Load sign extended half word   |
+  | 0   0 | 1   0 | 1   1   0   1 | sh         | Store half word                |
+  | 0   0 | 1   0 | 1   1   1   0 | lnw        | Load next word from ry and inc |
+  | 0   0 | 1   0 | 1   1   1   1 | snw        | Store next work to ry and inc  |
+  +-------+-------+---+-----------+------------+--------------------------------+
+  | 0   0 | 1   1   0 | 0   0   0 |            |                                |
+  | 0   0 | 1   1   0 | 0   0   1 |            |                                |
+  | 0   0 | 1   1   0 | 0   1   0 |            |                                |
+  | 0   0 | 1   1   0 | 0   1   1 |            |                                |
+  | 0   0 | 1   1   0 | 1   0   0 |            |                                |
+  | 0   0 | 1   1   0 | 1   0   1 |            |                                |
+  | 0   0 | 1   1   0 | 1   1   0 |            |                                |
+  | 0   0 | 1   1   0 | 1   1   1 |            |                                |
   | 0   0 | 1   1   1 | 0   0   0 |            |                                |
   | 0   0 | 1   1   1 | 0   0   1 |            |                                |
   | 0   0 | 1   1   1 | 0   1   0 |            |                                |
@@ -436,8 +436,7 @@ Implementations may choose to optimise `push` (or `push` + `shi` chains) by fusi
 
 Halt the processor, or raise a halt exception if the `th` bit in the `status` register is set.
 
-
-##### 3.4.4. `?` - Reserved Instruciton
+##### 3.4.4. `rets` - Return from Kernel
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -445,9 +444,13 @@ Halt the processor, or raise a halt exception if the `th` bit in the `status` re
   | O | 0   0 | 0   0 | 0   0   0   1 |
   +---+-------+-------+---------------+
 
+  pc = epc; status = estatus
 ```
 
-Instruction reserved for later use. Raises an illegal instruction exception for now.
+Returns from a kernel exception (interrupt, exception, breakpoint or syscall). The following procedure is performed:
+
+1. Set the `pc` register to the value in the `epc` register.
+2. Restore the `status` register from the `estatus` register.
 
 ##### 3.4.5. `syscall` - System Call
 
@@ -471,7 +474,7 @@ Causes a system call exception. The following procedure happens:
 
 Care should be taken to avoid this instruction (or anything that may cause an exception) until the `epc` and `estatus` registers have been saved, or they will be clobbered.
 
-##### 3.4.6. `rets` - Return from Kernel
+##### 3.4.6. `callp` - Call Function Pointer
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -479,13 +482,12 @@ Care should be taken to avoid this instruction (or anything that may cause an ex
   | O | 0   0 | 0   0 | 0   0   1   1 |
   +---+-------+-------+---------------+
 
-  pc = epc; status = estatus
+  rx = pc; pc = tos!
 ```
 
-Returns from a kernel exception (interrupt, exception, breakpoint or syscall). The following procedure is performed:
+Calls a function at an absolute target address. The return address (the address of the instruction after the `callp`) is saved to the `rx` register. The program counter is then set to the top of stack value (which is then popped).
 
-1. Set the `pc` register to the value in the `epc` register.
-2. Restore the `status` register from the `estatus` register.
+A `pc`-relative `call` pseudo-instruction can be implemented with `push offset; rel pc; callp`.
 
 ##### 3.4.7. `beqz` - Branch if Equal to Zero
 
@@ -682,7 +684,7 @@ Shifts the double word formed by concatenating the third on stack and next on st
 
 This operation can be used to implement a left shift, right shift, and arithmetic right shift.
 
-##### 3.4.19. `push <reg>` - Push Register
+##### 3.4.19. `rel <reg>` - Relative Register
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -690,10 +692,19 @@ This operation can be used to implement a left shift, right shift, and arithmeti
   | O | 0   0 | 0   1 | 0   0 | <reg> |
   +---+-------+-------+-------+-------+
 
-  push(<reg>)
+  tos += <reg>
 ```
 
-Pushes the specified register to the stack.
+Makes the top of stack relative to the specified register by adding the register value to it.
+
+The following pseudo-instructions are defined using `rel`:
+- `llw` - Load Local Word - `rel fp; lw`
+- `llh` - Load Local Half - `rel fp; lh`
+- `llb` - Load Local Byte - `rel fp; lb`
+- `slw` - Store Local Word - `rel fp; sw`
+- `slh` - Store Local Half - `rel fp; sh`
+- `slb` - Store Local Byte - `rel fp; sb`
+- `call` - Call `pc`-relative - `rel pc; call`
 
 See the section 2 for the list of available registers and their numbers.
 
@@ -941,9 +952,9 @@ Counts the number of leading zero bits in the top of stack value and replaces th
 
 This instruction is useful for optimizing the software implementation of division and multiplication, as well as for floating point normalization.
 
-#### 3.6. Extended Control Flow Instructions
+#### 3.6. Extended Memory Instructions
 
-##### 3.6.1. `call` - Call Function
+##### 3.6.1. `lb` - Load Byte
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -951,12 +962,12 @@ This instruction is useful for optimizing the software implementation of divisio
   | O | 0   0 | 1   0 | 1   0   1   0 |
   +---+-------+-------+---------------+
 
-  rx = pc; pc += tos!
+  push(sign_extend(mem:byte[tos!] & 0xFF, 8))
 ```
 
-Calls a function at a pc-relative target address. The return address (the address of the instruction after the `call`) is saved to the `rx` register. The program counter is then set to the target address, which is calculated by adding the address of the next instruction to execute to the top of stack value (which is then popped).
+Loads a byte from main memory. The address is taken from the top of stack value (which is then popped). The loaded byte is sign-extended and replaces the top of stack value. If zero extension is required, one can AND with 0xFF after loading.
 
-##### 3.6.2. `callp` - Call Function Pointer
+##### 3.6.2. `sb` - Store Byte
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
@@ -964,47 +975,18 @@ Calls a function at a pc-relative target address. The return address (the addres
   | O | 0   0 | 1   0 | 1   0   1   1 |
   +---+-------+-------+---------------+
 
-  rx = pc; pc = tos!
-```
-
-Calls a function at an absolute target address. The return address (the address of the instruction after the `call`) is saved to the `rx` register. The program counter is then set to the top of stack value (which is then popped).
-
-
-#### 3.7. Extended Memory Instructions
-
-##### 3.7.1. `lb` - Load Byte
-
-```text
-   Fmt  7   6   5   4   3   2   1   0
-  +---+-------+-----------+-----------+
-  | O | 0   0 | 1   1   0 | 0   0   0 |
-  +---+-------+-----------+-----------+
-
-  push(sign_extend(mem:byte[tos!] & 0xFF, 8))
-```
-
-Loads a byte from main memory. The address is taken from the top of stack value (which is then popped). The loaded byte is sign-extended and replaces the top of stack value. If zero extension is required, one can AND with 0xFF after loading.
-
-##### 3.7.2. `sb` - Store Byte
-
-```text
-   Fmt  7   6   5   4   3   2   1   0
-  +---+-------+-----------+-----------+
-  | O | 0   0 | 1   1   0 | 0   0   1 |
-  +---+-------+-----------+-----------+
-
   mem:byte[tos!] = nos!
 ```
 
 Stores a byte to main memory. The address is taken from the top of stack value (which is then popped). The value to be stored is taken from the next on stack value (which is then popped). Only the least significant byte of the next on stack value is stored; the rest are ignored.
 
-##### 3.7.3. `lh` - Load Halfword
+##### 3.6.3. `lh` - Load Halfword
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
-  +---+-------+-----------+-----------+
-  | O | 0   0 | 1   1   0 | 0   1   0 |
-  +---+-------+-----------+-----------+
+  +---+-------+-------+---------------+
+  | O | 0   0 | 1   0 | 1   1   0   0 |
+  +---+-------+-------+---------------+
 
   push(sign_extend(mem:half[tos!] & 0xFFFF, 16))
 ```
@@ -1015,13 +997,13 @@ This instruction is identical to `lw` on a 16-bit machine and implementations ca
 
 It is illegal to load a half-word from an unaligned address (that is, the least significant bit of the address is not zero). Implementations are expected to raise an exception if this occurs.
 
-##### 3.7.4. `sh` - Store Halfword
+##### 3.6.4. `sh` - Store Halfword
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
-  +---+-------+-----------+-----------+
-  | O | 0   0 | 1   1   0 | 0   1   1 |
-  +---+-------+-----------+-----------+
+  +---+-------+-------+---------------+
+  | O | 0   0 | 1   0 | 1   1   0   1 |
+  +---+-------+-------+---------------+
 
   mem:half[tos!] = nos!
 ```
@@ -1032,43 +1014,13 @@ This instruction is identical to `sw` on a 16-bit machine and implementations ca
 
 It is illegal to store a half-word to an unaligned address (that is, the least significant bit of the address is not zero). Implementations are expected to raise an exception if this occurs.
 
-##### 3.7.5. `lw` - Load Word
+##### 3.6.5. `lnw` - Load Next Word
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
-  +---+-------+-----------+-----------+
-  | O | 0   0 | 1   1   0 | 1   0   0 |
-  +---+-------+-----------+-----------+
-
-  push(mem[tos!])
-```
-
-Loads a word from main memory. The address is taken from the top of stack value which is popped and the result pushed on the top of the stack.
-
-It is illegal to load a word from an unaligned address (that is, the lower 1 (16-bit) or 2 (32-bit) bits of the address are not zero). Implementations are expected to raise an exception if this occurs.
-
-##### 3.7.6. `sw` - Store Word
-
-```text
-   Fmt  7   6   5   4   3   2   1   0
-  +---+-------+-----------+-----------+
-  | O | 0   0 | 1   1   0 | 1   0   1 |
-  +---+-------+-----------+-----------+
-
-  mem[tos!] = nos!
-```
-
-Stores a word to main memory. The address is taken from the top of stack value (which is then popped). The value to be stored is taken from the next on stack value (which is then popped).
-
-It is illegal to store a word to an unaligned address (that is, the lower 1 (16-bit) or 2 (32-bit) bits of the address are not zero). Implementations are expected to raise an exception if this occurs.
-
-##### 3.7.7. `lnw` - Load Next Word
-
-```text
-   Fmt  7   6   5   4   3   2   1   0
-  +---+-------+-----------+-----------+
-  | O | 0   0 | 1   1   0 | 1   1   0 |
-  +---+-------+-----------+-----------+
+  +---+-------+-------+---------------+
+  | O | 0   0 | 1   0 | 1   1   1   0 |
+  +---+-------+-------+---------------+
 
   push(mem[ry]); ry += WORDBYTES
 ```
@@ -1077,13 +1029,13 @@ Pushes a word from main memory onto the data stack from the address in the `ry` 
 
 It is illegal to load a word from an unaligned address (that is, the lower 1 (16-bit) or 2 (32-bit) bits of the address are not zero). Implementations are expected to raise an exception if this occurs.
 
-##### 3.7.8. `snw` - Store Next Word
+##### 3.6.6. `snw` - Store Next Word
 
 ```text
    Fmt  7   6   5   4   3   2   1   0
-  +---+-------+-----------+-----------+
-  | O | 0   0 | 1   1   0 | 1   1   1 |
-  +---+-------+-----------+-----------+
+  +---+-------+-------+---------------+
+  | O | 0   0 | 1   0 | 1   1   1   1 |
+  +---+-------+-------+---------------+
 
   mem[ry] = tos!; ry += WORDBYTES
 ```
