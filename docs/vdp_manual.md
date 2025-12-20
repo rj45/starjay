@@ -1,7 +1,7 @@
 # StarJeet VDP Manual
 
 **Caution!**
-This manual is at a very rough draft stage and is very incomplete. Many stats and figures are wrong, and many statements are factually incorrect. Bare this in mind as you read through this document.
+This manual is at a very rough draft stage and is very incomplete. Many stats and figures are wrong, and many statements are factually incorrect. Bear this in mind as you read through this document.
 **Caution!**
 
 ## 1.1. Introduction

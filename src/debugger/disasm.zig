@@ -160,7 +160,7 @@ pub fn disassemble(memory: []Word, alloc: std.mem.Allocator) !*AsmListing {
                 },
                 .rel_pc => { // used with callp to do pc-relative addressing
                     if (immediateValid) {
-                        immediate += @bitCast(offset);
+                        immediate += @bitCast(offset + 1);
                     }
                 },
                 .beqz, .bnez => {
