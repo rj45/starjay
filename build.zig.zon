@@ -12,6 +12,10 @@
             .url = "git+https://github.com/david-vanderson/dvui?ref=main#938690f9ef4fc8b47fc5aa529da50bdb549a2a80",
             .hash = "dvui-0.4.0-dev-AQFJmeHt2QCwv7qbJ5ng2avy4SCMqTJrUCLJ4qadTwMj",
         },
+        .spsc_queue = .{
+            .url = "git+https://github.com/freref/spsc-queue#3ce8a39c53b026ef42eb569e66bc04c6356869e8",
+            .hash = "spsc_queue-0.0.0-AVEoh1VJAAAANyL-T7uKYvwDBTU9R0i42Avs_Bp-43wr",
+        },
     },
     .paths = .{
         "build.zig",

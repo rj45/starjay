@@ -9,8 +9,8 @@ const disasm = debugger.disasm;
 // TODO: Figure out an icon to embed here
 //const window_icon_png = @embedFile("zig-favicon.png");
 
-const WORDSIZE = debugger.emulator.WORDSIZE;
-const SWord = debugger.emulator.SWord;
+const WORDSIZE = debugger.emulator.cpu.WORDSIZE;
+const SWord = debugger.emulator.cpu.SWord;
 
 const vsync = true;
 var scale_val: f32 = 1.0;
@@ -30,7 +30,7 @@ pub fn main(gpa: std.mem.Allocator) !void {
     const memory = try gpa.alloc(u16, 128 * 1024);
     defer gpa.free(memory);
 
-    debugger.cpu = debugger.emulator.CpuState.init(memory);
+    debugger.cpu = debugger.emulator.cpu.CpuState.init(memory);
     debugger.cpu.log_enabled = false;
 
     // if the seive.bin file exists, load it into memory at 0x0000

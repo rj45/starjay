@@ -3,7 +3,7 @@ const dvui = @import("dvui");
 const debugger = @import("debugger.zig");
 
 var col_widths: [5]f32 = .{ 24.0, 40.0, 20.0, 40.0, 100.0 };
-const Word = debugger.emulator.Word;
+const Word = debugger.emulator.cpu.Word;
 
 var scroll_info: dvui.ScrollInfo = .{};
 var last_scroll_addr: Word = 0;

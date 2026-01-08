@@ -2,9 +2,9 @@ const std = @import("std");
 
 const clap = @import("clap");
 
-const emulator = @import("emulator/root.zig");
-const hl_emu = @import("emulator/highlevel/root.zig");
-const ll_emu = @import("emulator/microcoded/root.zig");
+const emulator = @import("emulator/cpu/root.zig");
+const hl_emu = @import("emulator/cpu/highlevel/root.zig");
+const ll_emu = @import("emulator/cpu/microcoded/root.zig");
 const debugger = @import("debugger/root.zig");
 
 var gpa_instance = std.heap.GeneralPurposeAllocator(.{}){};

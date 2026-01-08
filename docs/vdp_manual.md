@@ -6,63 +6,102 @@ This manual is at a very rough draft stage and is very incomplete. Many stats an
 
 ## 1.1. Introduction
 
-The StarJeet Video Display Processor (VDP) is responsible for rendering graphics to the display. It supports a sprite-based graphics system with a resolution of 640x360 pixels and 24-bit color depth. The VDP is designed to be simple yet flexible in that everything is a sprite, and sprites are tilemaps. So, text modes can be achieved by using sprite's tilemaps as text buffers, complete with smooth scrolling. You could also build GUIs with sprites. In theory, hundreds of sprites can be on screen at the same time.
+The StarJeet Video Display Processor (VDP) is responsible for rendering graphics to the display. The VDP is designed to be simple in that everything is a sprite, and sprites are tilemaps. This simple design provides sprites, tilemaps and even text modes and GUIs with one simple primitive.
+
+### 1.2. Acknowledgements and Inspirations
+
+This design is heavily inspired by the Neo Geo's VDP, with some ideas taken from the NES, SNES and Gameboy PPUs, as well as the Amiga.
 
 ### 1.2. Feature List
 
-- Similar to the NeoGeo in how it functions, with some nods to the SNES and Gameboy.
-- Everything (including the text modes) are sprites.
-- Sprites are drawn to a double buffered line-buffer, where the next line's data is drawn into one buffer while the other buffer is being drawn to the screen and cleared.
-- Sprites are an NxM rectangle (where N, M <= 32) of tiles from a 128x8, 64x16 or 32x32 tilemap of 8x8 pixel tiles.
-- Tile maps, tile pixel data, sprite attributes, and palettes are all stored in VRAM.
-- Tile pixel data is stored as 4 bits per pixel (16 colors per tile), with each tile being 8x8 pixels (32 bytes per tile).
-- Text mode is achived by setting up two sprites per line, one for the upper half of the character pointed at a tile pixel set for that half, and one for the lower half pointed at the lower half of the character pixel data, and then pointing all the sprites at the same tilemap. The tilemap then becomes the text buffer.
-- Sprites have indepenently defined tilemap address, tile pixel data address, position, size, palette, and attributes (priority, flip, visibility).
-- Resolution is 640x360, 24-bit color (16 palettes of 16 colors each, 256 total colors on screen at once).
-- Up to 256 sprites can be drawn at once, with a limit of between 368 and 680 total tiles drawn per line.
-- Actual display resolution is 1280x720, with each pixel being drawn twice horizontally and vertically.
-  - The line buffer is 2048 pixels wide with a configurable offset, and allowing sprites to be drawn at any position therein, allowing sub-pixel positioning. Note: this functionality may be removed.
-- Sprites can be drawn with horizontal and vertical flipping.
+**These are preliminary and subject to change.**
+
+- 640x360 effective resolution with 512 colors of 24 bits each
+    - 1280x720 actual display resolution -- pixels are doubled when drawn.
+- Up to 512 sprites.
+- Each sprite can be any arbitrary NxM rectangle of tiles from a tilemap.
+- Sprite X/Y coordinates are given at the 1280x720 resolution, allowing sub-pixel positioning.
+    - Note: This feature may be removed, but is currently implemented and working.
+- Tilemaps can be from 32 up to 256 tiles in width.
+    - The formula for tilemap width is (1 << (a+4))+(1 << (b+4)) where a and b can be 0-3.
+    - This allows several useful widths including 80 and 160 for textmodes.
+- Tilemap height is arbitrary up to 512 tiles.
+- Designed to work well with SDRAM and its RAS/CAS latencies.
+    - Tile sets are stored row-major such that one row of all tiles in the set is a single SDRAM "page" or "row"
+    - This allows a SDRAM row to be activated and random access limited to that row, and the row for the tilemap for that sprite.
+    - Unfortunately this limits a tile set to be 256 tiles (could be revisited in the future).
+    - The design is pipelined to allow multiple requests to SDRAM to be in flight at once.
+- Each sprite can configure its own tilemap and tile set pointers in main memory.
+- Each tile can use up to 16 colors from up to 32 palettes, yielding 512 colors.
+    - The palette is double buffered and the buffers may be swapped to give more colors.
+- Utilizes a line buffer, rather than a frame buffer, to draw up to 512 sprites per line.
+    - Double buffered: one is displayed and cleared while the other buffer is drawn.
+    - Sprites have the entire scanline including hblank to be drawn on the linebuffer.
+    - Up to 4 doubled pixels, half a tile, can be drawn per clock cycle.
+- Tiles per scanline is anywhere from 300 up to 720 depending on number of sprites and memory latencies.
+- A text mode with 8x16 (or 8x12) font may be done by setting up 2 sprites per text line:
+    - Two sprites each text line, one for each half of the font
+    - Both sprites point at the same tilemap but different tile sets
+    - The tilemap becomes the text buffer with character in lower 8 bits and attributes in the upper 8 bits.
+
         
 ## 2.1. Tilemaps
 
 - Tilemap cells are 16 bits wide, with the following format:
-  - Bits 0-9: Tile Index (0-1023)
-  - Bits 10-13: Palette Index (0-15)
-  - Bit 14: Horizontal Flip
-  - Bit 15: Vertical Flip
+    - `[7:0]`: Tile Index (0-255)
+    - `[12:8]`: Palette Index (0-31)
+    - `[13:14]`: Unused (potentially a tile permutation value)
+    - `[15]`: Horizontal (X) Flip
+- The width of a tilemap is given by `(1 << (a+4)) + (1 << (b+4))` where `a` and `b` can be `0`-`3`.
+- The height can be arbitrary from 1 to 512 tiles.
+- Tilemaps can be stored anywhere in main memory, but the start address has a granularity of 1024 bytes.
+    - These pointers may overlap if desired.
+- Each sprite can specify its own tilemap start address.
   
-## 3.1. Tile Pixel Data
+## 3.1. Tile Sets
 
 - Each tile is 8x8 pixels, with each pixel represented by 4 bits (16 colors).
-- Tile pixel data is stored in VRAM starting at a specified address, with each tile occupying 32 bytes (8 rows x 4 bytes per row).
-- Tiles are indexed from 0 to 1023.
+- Tile pixel data is stored in main memory starting at a specified address, with each tile occupying 32 bytes (8 rows x 4 bytes per row).
+- Tiles are stored in row-major format:
+    - 8 rows of 256 tiles of 8 pixels of 4 bits per pixel
+    - This limits random access of memory to a single 1 KB block, which is a typical row size for SDRAM
+- Tile set sets may be stored anywhere in main memory, with an alignment/granularity of 1 KB.
+    - These pointers can overlap if desired, allowing tilesets to share rows.
+- Each sprite has its own independent tile set pointer.
 
 ## 4.1. Sprite Attributes
 
-Each sprite is defined by a set of attributes stored in a specific address range in VRAM. Each sprite attribute entry is 6 words (12 bytes) long, with the following format:
+Each sprite is defined by a set of attributes stored in a specific address range in VRAM, which is mapped into the IO space of main memory. There are 512 entries. 
 
-- 16 bit tilemap y and height:
-    - Bits 0-5: Tilemap Y (0-63)
-    - Bits 6-11: Height in tiles - 1 (0-63)
-    - Bit 12-13: Tilemap size (00=64x64, 01=128x32, 10=256x16, 11=reserved)
-    - Bit 14: X Flip
-    - Bit 15: Y Flip
-- 16 bits screen y position
-    - Bits 0-3: sub-pixel Y (0-15)
-    - Bits 4-15: pixel Y (-2048 to 2047)
-- 16 bit sprite x and width:
-    - Bits 0-7: Tilemap X (0-255)
-    - Bits 8-15: Width in tiles - 1 (0-255)
-- 16 bits screen x position
-    - Bits 0-3: sub-pixel X (0-15)
-    - Bits 4-15: pixel X (-2048 to 2047)
-- 16 bit tilemap page (in units of 4096 bytes)
-- 16 bit tile pixel data address (in units of 4096 bytes)
+Each entry is 9 words (18 bytes) long, with the following format:
 
-There are 256 such sprite entries, however there is a limit to how many sprite-tiles that can be drawn on a single line. Somewhere between 368 and 680 tiles may be drawn per line. In order to get closer to the 680 tiles per line, one must ensure the tilemap data and tile pixel data are inseparate memory devices and can be read simultaneously. Additionally, one must use as few sprites as possible.
+- Tilemap Y and height:
+    - `[7:0]` - Sprite tilemap Y position
+    - `[15:8]` - Sprite height in tiles
+- Screen Y position in 12.4 fixed point format:
+    - `[3:0]` - Fraction part (ignored when drawing)
+    - `[15:4]` - Signed sprite Y position @ 720 lines per screen.
+- Tilemap X and width:
+    - `[7:0]` - Sprite width
+    - `[15:8]` - Sprite tilemap X position
+- Screen X position in 12.4 fixed point format:
+    - `[3:0]` - Fraction part (ignored when drawing)
+    - `[15:4]` - Signed sprite X position @ 1280 positions per line.
+- Bits `[25:10]` of the tilemap address
+- Bits `[25:10]` of the tile set address
+- Screen Y velocity in 12.4 fixed point (added to screen Y once per frame)
+- Screen X velocity in 12.4 fixed point (added to screen X once per frame)
+- Misc extra bits:
+    - `[15:14]` - `a` value of tilemap width
+    - `[13:12]` - `b` value of tilemap width (see tilemap section for formula)
+    - `[11:10]` - Unused
+    - `[9]` - Draw flipped in Y direction
+    - `[8]` - Draw flipped in X direction
+    - `[7:6]` - Upper 2 bits(`[27:26]`) of tilemap address
+    - `[5:4]` - Upper 2 bits(`[27:26]`) of tile set address
+    - `[3:0]` - Unused
 
-Sprites are drawn in order from lowest to highest index, so higher index sprites can be drawn over top of lower index sprites in the line buffer.
+Sprites are drawn in order from lowest to highest index, so higher index sprites will be drawn over top of lower index sprites in the line buffer.
 
 ## 5.1. Theory of Operation
 

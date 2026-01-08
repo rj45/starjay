@@ -15,6 +15,11 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const spsc_queue = b.dependency("spsc_queue", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     const exe = b.addExecutable(.{
         .name = "starjay",
         .root_module = b.createModule(.{
@@ -25,6 +30,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "dvui", .module = dvui_dep.module("dvui_sdl3") },
                 .{ .name = "backend", .module = dvui_dep.module("sdl3") },
                 .{ .name = "clap", .module = clap.module("clap") },
+                .{ .name = "spsc_queue", .module = spsc_queue.module("spsc_queue") },
             },
         }),
     });

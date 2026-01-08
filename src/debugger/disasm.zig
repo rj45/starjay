@@ -2,10 +2,10 @@ const std = @import("std");
 
 pub const emulator = @import("../emulator/root.zig");
 
-const SWord = emulator.SWord;
-const Word = emulator.Word;
-const Opcode = emulator.Opcode;
-const CsrNum = emulator.CsrNum;
+const SWord = emulator.cpu.SWord;
+const Word = emulator.cpu.Word;
+const Opcode = emulator.cpu.Opcode;
+const CsrNum = emulator.cpu.CsrNum;
 
 pub const Operand = union(enum) {
     none,
