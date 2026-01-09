@@ -2,6 +2,7 @@ const std = @import("std");
 const dvui = @import("dvui");
 const Backend = @import("backend");
 const debugger = @import("debugger.zig");
+const vdp = @import("../emulator/vdp/root.zig");
 
 const sourceView = @import("source_view.zig");
 const disasm = debugger.disasm;
@@ -17,7 +18,7 @@ var scale_val: f32 = 1.0;
 
 const cycles_per_frame: u64 = 10000;
 
-pub fn main(gpa: std.mem.Allocator) !void {
+pub fn main(gpa: std.mem.Allocator, show_vdp: bool) !void {
     debugger.allocator = gpa;
 
     if (@import("builtin").os.tag == .windows) { // optional
@@ -70,13 +71,26 @@ pub fn main(gpa: std.mem.Allocator) !void {
     });
     defer win.deinit();
 
+    if (show_vdp) {
+        vdp.open_vdp_window(gpa) catch |err| {
+            std.log.err("Could not open VDP window: {any}", .{err});
+        };
+    }
+    defer if (show_vdp) vdp.destroy_vdp_window();
+
     var interrupted = false;
 
     main_loop: while (true) {
         const nstime = win.beginWait(interrupted);
 
         try win.begin(nstime);
-        _ = try backend.addAllEvents(&win);
+        if (show_vdp) {
+            if (!try vdp.process_events(&backend, &win)) {
+                break :main_loop;
+            }
+        } else {
+            _ = try backend.addAllEvents(&win);
+        }
 
         // if dvui widgets might not cover the whole window, then need to clear
         // the previous frame's render
@@ -90,6 +104,10 @@ pub fn main(gpa: std.mem.Allocator) !void {
 
         try backend.setCursor(win.cursorRequested());
         try backend.textInputRect(win.textInputRequested());
+
+        if (show_vdp) {
+            vdp.render_vdp_frame();
+        }
 
         // render frame to OS
         try backend.renderPresent();

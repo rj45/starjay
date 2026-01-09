@@ -6,6 +6,7 @@ const emulator = @import("emulator/cpu/root.zig");
 const hl_emu = @import("emulator/cpu/highlevel/root.zig");
 const ll_emu = @import("emulator/cpu/microcoded/root.zig");
 const debugger = @import("debugger/root.zig");
+const vdp = @import("emulator/vdp/root.zig");
 
 var gpa_instance = std.heap.GeneralPurposeAllocator(.{}){};
 const gpa = gpa_instance.allocator();
@@ -36,6 +37,7 @@ pub fn main() !void {
     const params = comptime clap.parseParamsComptime(
         \\-h, --help             Display this help and exit.
         \\-d, --debugger         Show debugger GUI window.
+        \\-v, --vdp              Show VDP window.
         \\-r, --rom <str>        Load ROM file.
         \\-l, --llemu            Use low-level emulator (default is high-level).
         \\-q, --quiet            Suppress non-error output.
@@ -63,8 +65,10 @@ pub fn main() !void {
     }
 
     if (res.args.debugger != 0) {
-        try debugger.main(gpa);
+        try debugger.main(gpa, res.args.vdp != 0);
         return;
+    } else if (res.args.vdp != 0) {
+        try vdp.main(gpa);
     }
 
     if (res.args.rom) |rom| {
