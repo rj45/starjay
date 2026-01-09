@@ -3,11 +3,19 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const sdl2 = b.option(bool, "sdl2", "Build for SDL2 instead of SDL3") orelse false;
+    const sdl3 = !sdl2;
 
-    const dvui_dep = b.dependency("dvui", .{
+    // const backend:  = if (sdl3) .sdl3 else .sdl2;
+
+    const dvui_dep = if (sdl3) b.dependency("dvui", .{
         .target = target,
         .optimize = optimize,
-        .backend = .sdl3,
+        .backend =  .sdl3,
+    }) else b.dependency("dvui", .{
+        .target = target,
+        .optimize = optimize,
+        .backend = .sdl2,
     });
 
     const clap = b.dependency("clap", .{
@@ -27,8 +35,8 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "dvui", .module = dvui_dep.module("dvui_sdl3") },
-                .{ .name = "backend", .module = dvui_dep.module("sdl3") },
+                .{ .name = "dvui", .module = if (sdl3) dvui_dep.module("dvui_sdl3") else dvui_dep.module("dvui_sdl2") },
+                .{ .name = "backend", .module = if (sdl3) dvui_dep.module("sdl3") else dvui_dep.module("sdl2") },
                 .{ .name = "clap", .module = clap.module("clap") },
                 .{ .name = "spsc_queue", .module = spsc_queue.module("spsc_queue") },
             },
