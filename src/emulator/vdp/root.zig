@@ -15,6 +15,7 @@ const content_width = 1280;
 const content_height = 720;
 
 var window: *c.SDL_Window = undefined;
+var window_surface: *c.SDL_Surface = undefined;
 var surface: *c.SDL_Surface = undefined;
 var vdp: VdpState = undefined;
 
@@ -139,10 +140,6 @@ pub fn render_vdp_frame() void {
     const srcrect: c.SDL_Rect = .{ .x = 0, .y = 0, .w = content_width, .h = content_height };
     const dstrect: c.SDL_Rect = .{ .x = 0, .y = 0, .w = window_w, .h = window_h };
 
-    const window_surface = c.SDL_GetWindowSurface(window);
-
-    std.debug.assert(window_surface != null);
-
     if (SDLBackend.sdl3) {
         _ = c.SDL_BlitSurfaceScaled(surface, &srcrect, window_surface, &dstrect, c.SDL_SCALEMODE_NEAREST);
     } else {
@@ -170,6 +167,7 @@ pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
         };
         // Lock aspect ratio during resize
         _ = c.SDL_SetWindowAspectRatio(window, aspect_ratio, aspect_ratio);
+        window_surface = c.SDL_GetWindowSurface(window);
         if (vsync) {
             _ = c.SDL_SetWindowSurfaceVSync(window, 1);
         }
@@ -182,6 +180,7 @@ pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
             std.debug.print("Failed to open window: {s}\n", .{c.SDL_GetError()});
             return error.BackendError;
         };
+        window_surface = c.SDL_GetWindowSurface(window);
         _ = c.SDL_SetHint(c.SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
         surface = c.SDL_CreateRGBSurfaceWithFormat(0, content_width, content_height, 32, c.SDL_PIXELFORMAT_ARGB8888) orelse {
             std.debug.print("Failed to create surface: {s}\n", .{c.SDL_GetError()});
