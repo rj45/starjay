@@ -124,13 +124,7 @@ fn getWindowFromEvent(event: *const c.SDL_Event) ?*c.SDL_Window {
 
 
 pub fn render_vdp_frame() void {
-    // _ = c.SDL_LockSurface(surface);
-
-    // vdp.frame_buffer.pixels = @ptrCast(@alignCast(surface.pixels.?));
-
     vdp.emulate_frame();
-
-    // _ = c.SDL_UnlockSurface(surface);
 
     var window_w: c_int = 0;
     var window_h: c_int = 0;

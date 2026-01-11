@@ -12,7 +12,7 @@ pub const Cycle = u64;
 const CYCLES_PER_SCANLINE: Cycle = 1440; // 1280 plus h-blank
 const SCANLINES_PER_SCREEN: u16 = 741;
 
-const palette_data = loadHex(u24, "palette.hex");
+const palette_data = loadHex(u32, "palette.hex");
 const tile_map_data = loadHex(u16, "tilemap.hex");
 const tile_set_data = loadHex(u16, "tiles.hex");
 const sprite_data = loadHex(u108, "sprites.hex");
@@ -34,24 +34,25 @@ sy: u16,
 
 frame_buffer: FrameBuffer,
 
+line_buffer: [256]u128,
+
 pub fn init(self: *VdpState, allocator: std.mem.Allocator, frame_buffer: FrameBuffer) void {
     _ = allocator;
     self.* = VdpState{
         .cycle = 0,
         .sy = 0,
         .frame_buffer = frame_buffer,
+        .line_buffer = .{0} ** 256,
     };
 }
 
 pub fn emulate_line(self: *VdpState) void {
     if (self.sy < self.frame_buffer.height) {
-        var line_buffer: [256]u128 = .{0} ** 256;
-
         const screen_offset: usize = self.frame_buffer.pitch * @as(usize, self.sy);
         const tile_y = (self.sy >> 1) & 7; // each row drawn twice (vertical doubling)
         const tilemap_y = (self.sy >> 4) & 31; // 16 scanlines per tilemap row (8 tile rows × 2)
 
-        const tile_set_offset = 2 * 256 * tile_y; // tiles stored in row-major, two words each tile
+        const tile_set_offset = tile_y << 9; // tiles stored in row-major, two words each tile
 
         var linebuffer_x: usize = 0;
 
@@ -63,21 +64,27 @@ pub fn emulate_line(self: *VdpState) void {
             for (0..2) |i| {
                 const tile_pixels = tile_set_data[tile_address+i];
                 const combined_pixels = splitPixelsCombinePalette(tilemap_entry.palette_index, tile_pixels);
-                line_buffer[linebuffer_x] = combined_pixels;
+                self.line_buffer[linebuffer_x] = combined_pixels;
                 linebuffer_x += 1;
             }
         }
 
-        for (0..self.frame_buffer.width>>3) |x| {
-            const pixel_data: @Vector(8, u16) = @bitCast(line_buffer[x]);
-            for (0..8) |subpixel| {
-                const framebuffer_x = x * 8 + subpixel;
-                if (framebuffer_x >= self.frame_buffer.width) break;
-                const pixel_value = pixel_data[subpixel];
-                const rgb = palette_data[pixel_value];
-                const argb: u32 = (0xFF << 24) | @as(u32, rgb);
-                self.frame_buffer.pixels[screen_offset + framebuffer_x] = argb;
+        for (0..self.frame_buffer.width >> 3) |x| {
+            const pixel_data: @Vector(8, u16) = @bitCast(self.line_buffer[x]);
+
+            // Gather RGB values from palette (indexed lookups are inherently scalar)
+            var rgb_values: @Vector(8, u32) = undefined;
+            inline for (0..8) |i| {
+                rgb_values[i] = palette_data[pixel_data[i]];
             }
+
+            // SIMD: Add alpha channel to all 8 pixels at once
+            const alpha_mask: @Vector(8, u32) = @splat(0xFF000000);
+            const argb_values = rgb_values | alpha_mask;
+
+            // Store all 8 pixels at once
+            const dest_ptr: *[8]u32 = @ptrCast(self.frame_buffer.pixels + screen_offset + (x << 3));
+            dest_ptr.* = argb_values;
         }
     }
 
