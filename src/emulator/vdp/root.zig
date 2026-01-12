@@ -13,11 +13,15 @@ pub const c = SDLBackend.c;
 const vsync = true;
 const content_width = 1280;
 const content_height = 720;
+const frame_time_ns: u64 = 16_627_502; // ~60 FPS
 
 var window: *c.SDL_Window = undefined;
 var window_surface: *c.SDL_Surface = undefined;
 var surface: *c.SDL_Surface = undefined;
 var vdp: VdpState = undefined;
+
+var run_time: std.time.Timer = undefined;
+var frame_count: u64 = 0;
 
 pub fn main(allocator: std.mem.Allocator) !void {
     if (@import("builtin").os.tag == .windows) { // optional
@@ -25,6 +29,8 @@ pub fn main(allocator: std.mem.Allocator) !void {
         dvui.Backend.Common.windowsAttachConsole() catch {};
     }
     SDLBackend.enableSDLLogging();
+
+    run_time = try std.time.Timer.start();
 
     // app_init is a stand-in for what your application is already doing to set things up
     try open_vdp_window(allocator);
@@ -124,20 +130,26 @@ fn getWindowFromEvent(event: *const c.SDL_Event) ?*c.SDL_Window {
 
 
 pub fn render_vdp_frame() void {
-    vdp.emulate_frame();
+    const expected_frames = run_time.read() / frame_time_ns;
+    if (frame_count < expected_frames) {
+        while (frame_count < expected_frames) {
+            vdp.emulate_frame((expected_frames - frame_count) > 1);
+            frame_count += 1;
+        }
 
-    var window_w: c_int = 0;
-    var window_h: c_int = 0;
+        var window_w: c_int = 0;
+        var window_h: c_int = 0;
 
-    _ = c.SDL_GetWindowSizeInPixels(window, &window_w, &window_h);
+        _ = c.SDL_GetWindowSizeInPixels(window, &window_w, &window_h);
 
-    const srcrect: c.SDL_Rect = .{ .x = 0, .y = 0, .w = content_width, .h = content_height };
-    const dstrect: c.SDL_Rect = .{ .x = 0, .y = 0, .w = window_w, .h = window_h };
+        const srcrect: c.SDL_Rect = .{ .x = 0, .y = 0, .w = content_width, .h = content_height };
+        const dstrect: c.SDL_Rect = .{ .x = 0, .y = 0, .w = window_w, .h = window_h };
 
-    if (SDLBackend.sdl3) {
-        _ = c.SDL_BlitSurfaceScaled(surface, &srcrect, window_surface, &dstrect, c.SDL_SCALEMODE_NEAREST);
-    } else {
-        _ = c.SDL_BlitScaled(surface, &srcrect, window_surface, @constCast(&dstrect));
+        if (SDLBackend.sdl3) {
+            _ = c.SDL_BlitSurfaceScaled(surface, &srcrect, window_surface, &dstrect, c.SDL_SCALEMODE_NEAREST);
+        } else {
+            _ = c.SDL_BlitScaled(surface, &srcrect, window_surface, @constCast(&dstrect));
+        }
     }
 
     _ = c.SDL_UpdateWindowSurface(window);

@@ -116,8 +116,8 @@ pub fn init(self: *VdpState, allocator: std.mem.Allocator, frame_buffer: FrameBu
     }
 }
 
-pub fn emulate_line(self: *VdpState) void {
-    if (self.sy < self.frame_buffer.height) {
+pub fn emulate_line(self: *VdpState, skip: bool) void {
+    if (self.sy < self.frame_buffer.height and !skip) {
         // The following 3 phases occur simultaneously in hardware per scanline.
         // Since we are emulating on a sequential machine, we do them sequentially here.
 
@@ -241,10 +241,10 @@ pub fn emulate_line(self: *VdpState) void {
     self.cycle += CYCLES_PER_SCANLINE;
 }
 
-pub fn emulate_frame(self: *VdpState) void {
+pub fn emulate_frame(self: *VdpState, skip: bool) void {
     self.sy = 0;
     for (0..SCANLINES_PER_SCREEN) |_| {
-        self.emulate_line();
+        self.emulate_line(skip);
     }
 }
 
