@@ -12,12 +12,12 @@ pub const TilemapEntry = packed struct(u16) {
 };
 
 pub const FixedPoint = packed union {
-    value: u16,
+    value: i16,
     fp: Parts,
 
     const Parts = packed struct(u16) {
         f: u4,
-        i: u12,
+        i: i12,
     };
 };
 
@@ -40,7 +40,7 @@ pub const SpriteXWidth = packed struct(u36) {
 
 pub const SpriteAddr = packed struct(u36) {
     tile_bitmap_addr: u18,
-    tilemap_addr_lo: u18,
+    tilemap_addr: u18,
 };
 
 pub const SpriteVelocity = packed struct(u36) {
@@ -51,7 +51,7 @@ pub const SpriteVelocity = packed struct(u36) {
 
 pub const ActiveTilemapAddr = packed struct(u36) {
     tilemap_addr: u27,
-    tile_count_lo: u8,
+    tile_count: u8,
     x_flip: bool,
 };
 

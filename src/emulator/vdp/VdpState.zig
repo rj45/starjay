@@ -6,6 +6,12 @@ const std = @import("std");
 
 const types = @import("types.zig");
 const TilemapEntry = types.TilemapEntry;
+const SpriteYHeight = types.SpriteYHeight;
+const SpriteXWidth = types.SpriteXWidth;
+const SpriteAddr = types.SpriteAddr;
+const SpriteVelocity = types.SpriteVelocity;
+const ActiveTilemapAddr = types.ActiveTilemapAddr;
+const ActiveBitmapAddr = types.ActiveBitmapAddr;
 
 pub const Cycle = u64;
 
@@ -15,7 +21,6 @@ const SCANLINES_PER_SCREEN: u16 = 741;
 const palette_data = loadHex(u32, "palette.hex");
 const tile_map_data = loadHex(u16, "tilemap.hex");
 const tile_set_data = loadHex(u16, "tiles.hex");
-const sprite_data = loadHex(u108, "sprites.hex");
 
 pub const VdpState = @This();
 
@@ -36,6 +41,16 @@ frame_buffer: FrameBuffer,
 
 line_buffer: [256]u128,
 
+sprite_y_height: [512]SpriteYHeight,
+sprite_x_width: [512]SpriteXWidth,
+sprite_addr: [512]SpriteAddr,
+sprite_velocity: [512]SpriteVelocity,
+
+active_tilemap_addr: [512]ActiveTilemapAddr,
+active_bitmap_addr: [512]ActiveBitmapAddr,
+active_count: u16,
+initial_delay: u16,
+
 pub fn init(self: *VdpState, allocator: std.mem.Allocator, frame_buffer: FrameBuffer) void {
     _ = allocator;
     self.* = VdpState{
@@ -43,34 +58,157 @@ pub fn init(self: *VdpState, allocator: std.mem.Allocator, frame_buffer: FrameBu
         .sy = 0,
         .frame_buffer = frame_buffer,
         .line_buffer = .{0} ** 256,
+        .sprite_addr = undefined,
+        .sprite_velocity = undefined,
+        .sprite_x_width = undefined,
+        .sprite_y_height = undefined,
+        .active_bitmap_addr = undefined,
+        .active_tilemap_addr = undefined,
+        .active_count = 0,
+        .initial_delay = 3*60,
     };
+
+    for (0..512) |i| {
+        // my lame attempt at pseudo-randomness (doesn't work, but the pattern is pretty)
+        const i_32: u32 = @truncate(i);
+        const x_vel_32: u32 = (((((i_32 + ((i_32 / 32)*13) +% 0x811c9dc5) & 0xffffffff) *% 0x01000193) & 0xffffffff) % 32);
+        const x_vel_u16: u15 = @truncate(x_vel_32);
+        const x_vel_i16: i16 = @as(i16, x_vel_u16) - 16;
+
+        const y_vel_32: u32 = (((((i_32 + ((i_32 / 32)*13) + 512 +% 0x811c9dc5) & 0xffffffff) *% 0x01000193) & 0xffffffff) % 32);
+        const y_vel_u16: u15 = @truncate(y_vel_32);
+        const y_vel_i16: i16 = @as(i16, y_vel_u16) - 16;
+
+        const i_mod_32: u11 = @truncate(i % 32);
+        const i_div_32: u11 = @truncate(i / 32);
+
+        self.sprite_addr[i] = .{
+            .tile_bitmap_addr = 0,
+            .tilemap_addr = 0,
+        };
+
+        self.sprite_velocity[i] = SpriteVelocity{
+            .x_velocity = .{
+                .value = x_vel_i16,
+            },
+            .y_velocity = .{
+                .value = y_vel_i16,
+            },
+            .unused = 0,
+        };
+
+        self.sprite_x_width[i] = SpriteXWidth{
+            .screen_x = .{ .fp = .{.i = @as(i12, (i_mod_32*17)+384), .f = 0} },
+            .tilemap_x = @truncate(i_mod_32),
+            .width = 1,
+            .x_flip = false,
+            .y_flip = false,
+            .unused = 0,
+        };
+
+        self.sprite_y_height[i] = SpriteYHeight{
+            .screen_y = .{ .fp = .{.i = @as(i12, (i_div_32 * 33)+104), .f = 0} },
+            .tilemap_y = @truncate(i_div_32*2),
+            .height = 2,
+            .tilemap_size_b = 0,
+            .tilemap_size_a = 0,
+        };
+    }
 }
 
 pub fn emulate_line(self: *VdpState) void {
     if (self.sy < self.frame_buffer.height) {
-        const screen_offset: usize = self.frame_buffer.pitch * @as(usize, self.sy);
-        const tile_y = (self.sy >> 1) & 7; // each row drawn twice (vertical doubling)
-        const tilemap_y = (self.sy >> 4) & 31; // 16 scanlines per tilemap row (8 tile rows × 2)
+        // The following 3 phases occur simultaneously in hardware per scanline.
+        // Since we are emulating on a sequential machine, we do them sequentially here.
 
-        const tile_set_offset = tile_y << 9; // tiles stored in row-major, two words each tile
+        // Phase 1: Scan sprites looking for ones on the current line
+        const sy: i32 = @intCast(self.sy);
+        self.active_count = 0;
+        for (0..512) |i| {
+            const sprite_yh: SpriteYHeight = self.sprite_y_height[i];
 
-        var linebuffer_x: usize = 0;
+            const sprite_top: i32 = @intCast(sprite_yh.screen_y.fp.i);
+            const sprite_tile_height: i32 = @intCast(sprite_yh.height);
+            const sprite_height: i32 = sprite_tile_height << 4; // height in tiles × 16 pixels
+            const sprite_bottom = sprite_top + sprite_height;
 
-        for (0..32) |tm_x| {
-            const tilemap_index = @as(usize, tilemap_y) * 32 + tm_x;
-            const tilemap_entry: TilemapEntry = @bitCast(tile_map_data[tilemap_index]);
-            const tile_address = tile_set_offset + (@as(usize, tilemap_entry.tile_index) << 1);
+            if (sy >= sprite_top and sy < sprite_bottom) {
+                const sprite_xw: SpriteXWidth = self.sprite_x_width[i];
+                const sprite_addr: SpriteAddr = self.sprite_addr[i];
 
-            for (0..2) |i| {
-                const tile_pixels = tile_set_data[tile_address+i];
-                const combined_pixels = splitPixelsCombinePalette(tilemap_entry.palette_index, tile_pixels);
-                self.line_buffer[linebuffer_x] = combined_pixels;
-                linebuffer_x += 1;
+                const sprite_line_y = sy - sprite_top;
+
+                const sprite_offset_y:u32 = @bitCast(if (sprite_xw.y_flip)
+                    (sprite_height - 1 - sprite_line_y)
+                else sprite_line_y);
+
+                std.debug.assert(sprite_yh.tilemap_size_a == 0);
+                std.debug.assert(sprite_yh.tilemap_size_b == 0);
+
+                const sprite_tilemap_y = (sprite_offset_y >> 4) + @as(u32, sprite_yh.tilemap_y);
+                const tilemap_offset_y = (sprite_tilemap_y << (@as(u5, sprite_yh.tilemap_size_a)+4)) +
+                    (sprite_tilemap_y << (@as(u5, sprite_yh.tilemap_size_b)+4));
+                const tile_row:u18 = @truncate((sprite_offset_y & 0xE) << 8);
+
+                const trunc_tilemap_offset_y: u32 = @bitCast(tilemap_offset_y);
+                const tilemap_addr: u32 = (@as(u32, sprite_addr.tilemap_addr) << 9) + trunc_tilemap_offset_y + @as(u32, sprite_xw.tilemap_x);
+                self.active_tilemap_addr[self.active_count] = ActiveTilemapAddr{
+                    .tilemap_addr = @truncate(tilemap_addr),
+                    .tile_count = sprite_xw.width,
+                    .x_flip = sprite_xw.x_flip,
+                };
+
+                if (tilemap_addr >= tile_map_data.len) {
+                    std.debug.print("About to crash: sprite: {}/{}, {}/{}\n", .{i, self.active_count, tilemap_addr, tile_map_data.len});
+                    std.debug.print("trunc_tilemap_offset_y: {}\n", .{trunc_tilemap_offset_y});
+                    std.debug.print("tilemap_offset_y: {}\n", .{tilemap_offset_y});
+                    std.debug.print("sprite_tilemap_y: {}\n", .{sprite_tilemap_y});
+                    std.debug.print("sprite_offset_y: {}\n", .{sprite_offset_y});
+                }
+
+                self.active_bitmap_addr[self.active_count] = ActiveBitmapAddr{
+                    .tile_bitmap_addr = @as(u18, sprite_addr.tile_bitmap_addr) + @as(u18, tile_row),
+                    .lb_addr = @bitCast(sprite_xw.screen_x.fp.i),
+                    .unused = 0,
+                };
+
+                self.active_count += 1;
             }
         }
 
+        // Phase 2: Render sprite tiles to line buffer
+        const screen_offset: usize = self.frame_buffer.pitch * @as(usize, self.sy);
+
+        for (0..self.active_count) |sprite_index| {
+            const tilemap_addr: ActiveTilemapAddr = self.active_tilemap_addr[sprite_index];
+            const bitmap_addr: ActiveBitmapAddr = self.active_bitmap_addr[sprite_index];
+
+            var lb_x = @as(usize, bitmap_addr.lb_addr);
+
+            for (0..tilemap_addr.tile_count) |tile_index| {
+                const tilemap_index = @as(usize, tilemap_addr.tilemap_addr) + @as(usize, tile_index);
+                const tilemap_entry: TilemapEntry = @bitCast(tile_map_data[tilemap_index]);
+                const tile_address = @as(usize, bitmap_addr.tile_bitmap_addr) +
+                    (@as(usize, tilemap_entry.tile_index) << 1);
+
+                for (0..2) |i| {
+                    const tile_pixels = tile_set_data[tile_address+i];
+                    const combined_pixels = splitPixelsCombinePalette(tilemap_entry.palette_index, tile_pixels);
+
+                    const linebuffer_u16: [*]u16 = @alignCast(@ptrCast(&self.line_buffer[0]));
+
+                    inline for (0..8) |j| {
+                        linebuffer_u16[(lb_x+j) & 2047] = combined_pixels[j];
+                    }
+                    lb_x += 8;
+                }
+            }
+        }
+
+        // Phase 3: Write line buffer to screen
         for (0..self.frame_buffer.width >> 3) |x| {
             const pixel_data: @Vector(8, u16) = @bitCast(self.line_buffer[x]);
+            self.line_buffer[x] = 0; // Clear line buffer for next use
 
             // Gather RGB values from palette (indexed lookups are inherently scalar)
             var rgb_values: @Vector(8, u32) = undefined;
@@ -85,6 +223,17 @@ pub fn emulate_line(self: *VdpState) void {
             // Store all 8 pixels at once
             const dest_ptr: *[8]u32 = @ptrCast(self.frame_buffer.pixels + screen_offset + (x << 3));
             dest_ptr.* = argb_values;
+        }
+    } else if (self.sy == self.frame_buffer.height) {
+        if (self.initial_delay > 0) {
+            self.initial_delay -= 1;
+        } else {
+            // Update sprite positions at the end of the visible frame
+            for (0..512) |i| {
+                const sprite_vel = self.sprite_velocity[i];
+                self.sprite_x_width[i].screen_x.value +%= sprite_vel.x_velocity.value;
+                self.sprite_y_height[i].screen_y.value +%= sprite_vel.y_velocity.value;
+            }
         }
     }
 
@@ -124,7 +273,7 @@ fn loadHex(comptime T: type, comptime path: []const u8) HexArray(T, path) {
 
 /// Splits a 16 bit tile bitmap data (4 pixels of 4bits each) into 8 u16 pixels,
 /// combining each with the given 5-bit palette index shifted left by 4 bits.
-fn splitPixelsCombinePalette(palette: u5, pixels: u16) u128 {
+fn splitPixelsCombinePalette(palette: u5, pixels: u16) @Vector(8, u16) {
     const paletteSplat: @Vector(8, u16) = @splat(palette);
     const paletteShifted = paletteSplat << @splat(4);
 
@@ -133,9 +282,7 @@ fn splitPixelsCombinePalette(palette: u5, pixels: u16) u128 {
     const mask: @Vector(8, u16) = @splat(0x000F);
     const pixelMasked = (pixelSplat >> shifts) & mask;
 
-    const combined: @Vector(8, u16) = paletteShifted | pixelMasked;
-
-    return @bitCast(combined);
+    return paletteShifted | pixelMasked;
 }
 
 test "zero inputs produce zero output" {
