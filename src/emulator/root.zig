@@ -1,4 +1,4 @@
-pub const cpu = @import("cpu/root.zig");
+pub const cpu = @import("starjette/root.zig");
 
 test {
     // Run all tests in submodules

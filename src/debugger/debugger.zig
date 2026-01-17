@@ -10,4 +10,4 @@ pub var cpu: emulator.cpu.CpuState = undefined;
 pub var listing: ?*disasm.AsmListing = null;
 pub var running: bool = false;
 
-pub const runForCycles = @import("../emulator/cpu/microcoded/cpu.zig").runForCycles;
+pub const runForCycles = @import("../emulator/starjette/microcoded/cpu.zig").runForCycles;

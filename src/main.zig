@@ -2,9 +2,9 @@ const std = @import("std");
 
 const clap = @import("clap");
 
-const emulator = @import("emulator/cpu/root.zig");
-const hl_emu = @import("emulator/cpu/highlevel/root.zig");
-const ll_emu = @import("emulator/cpu/microcoded/root.zig");
+const emulator = @import("emulator/starjette/root.zig");
+const hl_emu = @import("emulator/starjette/highlevel/root.zig");
+const ll_emu = @import("emulator/starjette/microcoded/root.zig");
 const debugger = @import("debugger/root.zig");
 const vdp = @import("emulator/vdp/root.zig");
 

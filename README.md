@@ -14,6 +14,8 @@ If you have rust installed, this can be as simple as:
 cargo install customasm
 ```
 
+You also need zig installed. See [`https://ziglang.org/download/`](https://ziglang.org/download/), 0.15.x is required until all dependecies support 0.16.x.
+
 ## Building
 
 ```bash
