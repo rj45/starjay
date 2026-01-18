@@ -286,20 +286,21 @@ fn splitPixelsCombinePalette(palette: u5, pixels: u16) @Vector(8, u16) {
 }
 
 test "zero inputs produce zero output" {
-    try std.testing.expectEqual(@as(u128, 0), splitPixelsCombinePalette(0, 0));
+    const expected: @Vector(8, u16) = @splat(0);
+    try std.testing.expectEqual(expected, splitPixelsCombinePalette(0, 0));
 }
 
 test "palette-only: pixels=0 isolates palette contribution" {
     // palette=31 (0b11111), shifted left 4 → 0x1F0 per element
     // 8 elements of 0x1F0 as u128
     const expected: @Vector(8, u16) = @splat(0x1F0);
-    try std.testing.expectEqual(@as(u128, @bitCast(expected)), splitPixelsCombinePalette(31, 0));
+    try std.testing.expectEqual(expected, splitPixelsCombinePalette(31, 0));
 }
 
 test "pixels-only: palette=0 isolates pixel extraction" {
     // pixels=0xFFFF → each nibble is 0xF, duplicated
     const expected: @Vector(8, u16) = @splat(0x000F);
-    try std.testing.expectEqual(@as(u128, @bitCast(expected)), splitPixelsCombinePalette(0, 0xFFFF));
+    try std.testing.expectEqual(expected, splitPixelsCombinePalette(0, 0xFFFF));
 }
 
 test "distinct nibbles verify correct extraction order" {
@@ -335,13 +336,13 @@ test "palette and pixel bits don't overlap" {
     // palette=31 (max), pixels=0xFFFF (max)
     // Each element should be 0x1FF = (31 << 4) | 0xF
     const expected: @Vector(8, u16) = @splat(0x1FF);
-    try std.testing.expectEqual(@as(u128, @bitCast(expected)), splitPixelsCombinePalette(31, 0xFFFF));
+    try std.testing.expectEqual(expected, splitPixelsCombinePalette(31, 0xFFFF));
 }
 
 test "palette single bit verifies shift amount" {
     // palette=1, pixels=0 → each element should be 0x010
     const expected: @Vector(8, u16) = @splat(0x010);
-    try std.testing.expectEqual(@as(u128, @bitCast(expected)), splitPixelsCombinePalette(1, 0));
+    try std.testing.expectEqual(expected, splitPixelsCombinePalette(1, 0));
 }
 
 test "adjacent pairs are identical (duplication correctness)" {
