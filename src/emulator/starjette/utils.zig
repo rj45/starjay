@@ -19,7 +19,7 @@ pub inline fn signExtend8(val: u8) Word {
 }
 
 /// Sign-extend a 16-bit value to Word width.
-pub inline fn signExtend16(val: u8) Word {
+pub inline fn signExtend16(val: u16) Word {
     const sval: i16 = @bitCast(val);
     const extended: SWord = sval;
     return @bitCast(extended);

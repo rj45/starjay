@@ -5,6 +5,7 @@ const clap = @import("clap");
 const emulator = @import("emulator/starjette/root.zig");
 const hl_emu = @import("emulator/starjette/highlevel/root.zig");
 const ll_emu = @import("emulator/starjette/microcoded/root.zig");
+const riscv_emu = @import("emulator/riscv/root.zig");
 const debugger = @import("debugger/root.zig");
 const vdp = @import("emulator/vdp/root.zig");
 
@@ -40,6 +41,7 @@ pub fn main() !void {
         \\-v, --vdp              Show VDP window.
         \\-r, --rom <str>        Load ROM file.
         \\-l, --llemu            Use low-level emulator (default is high-level).
+        \\-5, --riscv            Use RISC-V CPU core.
         \\-q, --quiet            Suppress non-error output.
         \\
     );
@@ -73,7 +75,9 @@ pub fn main() !void {
 
     if (res.args.rom) |rom| {
         const quiet = res.args.quiet != 0;
-        if (res.args.llemu != 0) {
+        if (res.args.riscv != 0) {
+            try riscv_emu.main(rom, 100000000, quiet, gpa);
+        } else if (res.args.llemu != 0) {
             try ll_emu.main(rom, 100000000, quiet, gpa);
         } else {
             try hl_emu.main(rom, 100000000, quiet, gpa);

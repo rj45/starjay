@@ -6,18 +6,20 @@
 const std = @import("std");
 
 const root = @import("root.zig");
+
+const Bus = @import("../device/Bus.zig");
+
 const types = root.types;
 
 pub const Word = types.Word;
 pub const SWord = types.SWord;
 pub const WORDBYTES = types.WORDBYTES;
-pub const RAM_IMAGE_OFFSET = types.RAM_IMAGE_OFFSET;
 pub const Regs = types.Regs;
 
 pub const CpuState = @This();
 
 reg: Regs = .{},
-memory: []Word,
+bus: Bus,
 cycles: usize = 0,
 halted: bool = false,
 log_enabled: bool = true,
@@ -25,67 +27,14 @@ log_enabled: bool = true,
 var console_scratch: [8192]u8 = undefined;
 var console_fifo:std.Deque(u8) = std.Deque(u8).initBuffer(&console_scratch);
 
-pub fn init(memory: []Word) CpuState {
+pub fn init(bus: Bus) CpuState {
     return .{
-        .memory = memory,
+        .bus = bus,
     };
 }
 
 pub fn reset(self: *CpuState) void {
     self.reg = .{};
-    self.reg = .{};
-    for (self.stack) |*slot| {
-        slot.* = 0;
-    }
-}
-
-pub inline fn readByte(self: *const CpuState, addr: Word) u8 {
-    const mem: []align(4) u8 = @ptrCast(self.memory);
-    const phys = self.translateDataAddr(addr);
-    if (phys / WORDBYTES < self.memory.len) {
-        return mem[phys];
-    }
-    return 0;
-}
-
-pub inline fn readHalf(self: *const CpuState, addr: Word) Word {
-    const mem: []align(4) u16 = @ptrCast(self.memory);
-    const phys = self.translateDataAddr(addr);
-    if (phys / WORDBYTES < self.memory.len) {
-        return mem[phys/2];
-    }
-    return 0;
-}
-
-pub inline fn readWord(self: *const CpuState, addr: Word) Word {
-    const phys = self.translateDataAddr(addr);
-    if (phys / WORDBYTES < self.memory.len) {
-        return self.memory[phys / WORDBYTES];
-    }
-    return 0;
-}
-
-pub inline fn writeByte(self: *CpuState, addr: Word, value: Word) void {
-    const mem: []align(4) u8 = @ptrCast(self.memory);
-    const phys = self.translateDataAddr(addr);
-    if (phys / WORDBYTES < self.memory.len) {
-        mem[phys] = @truncate(value);
-    }
-}
-
-pub inline fn writeHalf(self: *CpuState, addr: Word, value: Word) void {
-    const mem: []align(4) u16 = @ptrCast(self.memory);
-    const phys = self.translateDataAddr(addr);
-    if (phys / WORDBYTES < self.memory.len) {
-        mem[phys / 2] = @truncate(value);
-    }
-}
-
-pub inline fn writeWord(self: *CpuState, addr: Word, value: Word) void {
-    const phys = self.translateDataAddr(addr);
-    if (phys / WORDBYTES < self.memory.len) {
-        self.memory[phys / WORDBYTES] = value;
-    }
 }
 
 inline fn translateDataAddr(self: *const CpuState, vaddr: Word) usize {
@@ -93,31 +42,33 @@ inline fn translateDataAddr(self: *const CpuState, vaddr: Word) usize {
     return @intCast(vaddr);
 }
 
-pub fn loadRom(self: *CpuState, rom_file: []const u8) !void {
-    var file = try std.fs.cwd().openFile(rom_file, .{});
-    defer file.close();
+pub fn run(self: *CpuState, max_cycles: usize, fail_on_all_faults: bool) !Word {
+    const start = try std.time.Instant.now();
+    const initial_cycles = self.cycles;
+    const errval = self.runForCycles(max_cycles, fail_on_all_faults);
+    const cycles = self.cycles - initial_cycles;
+    const elapsed = (try std.time.Instant.now()).since(start);
+    const cycles_per_sec = if (elapsed > 0)
+        @as(f64, @floatFromInt(cycles)) / (@as(f64, @floatFromInt(elapsed)) / 1_000_000_000.0)
+    else
+        0.0;
+    std.debug.print("Execution completed in {d} cycles, elapsed time: {d} ms, {d:.2} cycles/sec\n", .{
+        cycles,
+        elapsed / 1_000_000,
+        cycles_per_sec,
+    });
 
-    const file_size = try file.getEndPos();
-
-    for (self.memory) |*word| {
-        word.* = 0;
-    }
-
-    std.log.info("Load {} bytes as rom", .{file_size});
-    _ = try file.readAll(@ptrCast(self.memory));
+    return errval;//self.reg.regs[10]; // a0
 }
 
-pub fn step(self: *CpuState, cycles: u64, fail_on_all_faults: bool) void {
-    const ramSize = @as(Word, self.memory.len*4);
-
+pub fn runForCycles(self: *CpuState, cycles: u64, fail_on_all_faults: bool) Word {
+    // FIXME: This can be quite slow, as it can cause a syscall.
     const t:i64 = std.time.microTimestamp();
-    self.reg.timerl = @as(Word, t & 0xFFFFFFFF);
-    self.reg.timerh = @as(Word, t >> 32);
-
-    // u8, u16 and u32  access
-    var image1 = std.mem.bytesAsSlice(u8, @ptrCast(self.memory));
-    var image2 = std.mem.bytesAsSlice(u16, image1);
-    var image4 = std.mem.bytesAsSlice(Word, image1);
+    const tu: u64 = @bitCast(t);
+    const tl: Word = @truncate(tu & 0xFFFFFFFF);
+    const th: Word = @truncate(tu >> 32);
+    self.reg.timerl = tl;
+    self.reg.timerh = th;
 
     // Handle Timer interrupt.
     if ((self.reg.timerh > self.reg.timermatchh or (self.reg.timerh == self.reg.timermatchh and self.reg.timerl > self.reg.timermatchl)) and (self.reg.timermatchh != 0 or self.reg.timermatchl != 0)) {
@@ -137,49 +88,50 @@ pub fn step(self: *CpuState, cycles: u64, fail_on_all_faults: bool) void {
         var trap: Word = 0; // If positive, is a trap or interrupt.  If negative, is fatal error.
         var rval: Word = 0;
 
-        // Increment both wall-clock and instruction count time.  (NOTE: Not strictly needed to run Linux)
-        self.reg.cyclel +%= 1;
-        if (self.reg.cyclel == 0) {
-            self.reg.cycleh +%= 1;
-        }
+        self.cycles += 1;
 
         var pc: Word = self.reg.pc;
-        const ofs_pc = pc -% RAM_IMAGE_OFFSET;
 
-        if (ofs_pc >= ramSize) {
-            trap = 1 + 1; // Handle access violation on instruction read.
-        } else if (ofs_pc & 3 != 0) {
+         if (pc & 3 != 0) {
             trap = 1 + 0; //Handle PC-misaligned access
         } else {
-            ir = image4[ofs_pc / 4];
+            const fetch = self.bus.access(.{
+                .cycle = @truncate(self.cycles),
+                .address = pc,
+                .bytes = 0b1111,
+                .write = false,
+            });
+            self.cycles += fetch.duration-1; // minus 1 because we are presuming a pipelined fetch
+
+            if (!fetch.valid) {
+                trap = 1 + 1; // Instruction access fault.
+                ir = 0x13; // NOP
+            } else {
+                ir = fetch.data;
+            }
+
             var rdid = (ir >> 7) & 0x1f;
 
             switch (ir & 0x7f) {
                 0b0110111 => rval = (ir & 0xfffff000), // LUI
                 0b0010111 => rval = pc +% (ir & 0xfffff000), // AUIPC
                 0b1101111 => { // JAL
-                    var reladdy: SWord = @as(SWord, ((ir & 0x80000000) >> 11) | ((ir & 0x7fe00000) >> 20) | ((ir & 0x00100000) >> 9) | ((ir & 0x000ff000)));
-                    if ((reladdy & 0x00100000) != 0) {
-                        reladdy = @as(SWord, @as(Word, reladdy) | 0xffe00000); // Sign extension.
-                    }
+                    const reladdy  = signExtend(((ir & 0x80000000) >> 11) | ((ir & 0x7fe00000) >> 20) | ((ir & 0x00100000) >> 9) | ((ir & 0x000ff000)), 21);
                     rval = pc + 4;
                     pc = pc +% @as(Word, reladdy - 4);
                 },
                 0b1100111 => { // JALR
-                    const imm: Word = ir >> 20;
-                    var imm_se: SWord = @as(SWord, imm);
-                    if (imm & 0x800 != 0) {
-                        imm_se = @as(SWord, imm | 0xfffff000);
-                    }
+                    const imm: Word = signExtend(ir >> 20, 12);
                     rval = pc + 4;
-                    const newpc: Word = ((self.reg.regs[(ir >> 15) & 0x1f] +% @as(Word, imm_se)) & ~@as(Word, 1)) - 4;
+                    const newpc: Word = ((self.reg.regs[(ir >> 15) & 0x1f] +% imm) & ~@as(Word, 1)) - 4;
                     pc = newpc;
                 },
                 0b1100011 => { // Branch
-                    var immm4: Word = ((ir & 0xf00) >> 7) | ((ir & 0x7e000000) >> 20) | ((ir & 0x80) << 4) | ((ir >> 31) << 12);
-                    if (immm4 & 0x1000 != 0) immm4 |= 0xffffe000;
-                    const rs1: SWord = @as(SWord, self.reg.regs[(ir >> 15) & 0x1f]);
-                    const rs2: SWord = @as(SWord, self.reg.regs[(ir >> 20) & 0x1f]);
+                    var immm4: Word = signExtend(((ir & 0xf00) >> 7) | ((ir & 0x7e000000) >> 20) | ((ir & 0x80) << 4) | ((ir >> 31) << 12), 13);
+                    const rs1u: Word = self.reg.regs[(ir >> 15) & 0x1f];
+                    const rs1: SWord = @bitCast(rs1u);
+                    const rs2u: Word = self.reg.regs[(ir >> 20) & 0x1f];
+                    const rs2: SWord = @bitCast(rs2u);
                     immm4 = pc +% (immm4 -% 4);
                     rdid = 0;
 
@@ -198,10 +150,10 @@ pub fn step(self: *CpuState, cycles: u64, fail_on_all_faults: bool) void {
                             if (rs1 >= rs2) pc = immm4;
                         }, //BGE
                         0b110 => {
-                            if (@as(Word, rs1) < @as(Word, rs2)) pc = immm4;
+                            if (rs1u < rs2u) pc = immm4;
                         }, //BLTU
                         0b111 => {
-                            if (@as(Word, rs1) >= @as(Word, rs2)) pc = immm4;
+                            if (rs1u >= rs2u) pc = immm4;
                         }, //BGEU
                         else => {
                             trap = (2 + 1);
@@ -210,83 +162,79 @@ pub fn step(self: *CpuState, cycles: u64, fail_on_all_faults: bool) void {
                 },
                 0b0000011 => { // Load
                     const rs1: Word = self.reg.regs[(ir >> 15) & 0x1f];
-                    const imm: Word = ir >> 20;
-                    var imm_se: SWord = @as(SWord, imm);
-                    if (imm & 0x800 != 0) {
-                        imm_se = @as(SWord, imm | 0xfffff000);
+                    const imm: Word = signExtend(ir >> 20, 12);
+                    const rsval: Word = rs1 +% imm;
+
+                    var bytemask: u4 = 0;
+                    switch ((ir >> 12) & 0x7) {
+                        //LB, LH, LW, LBU, LHU
+                        0b000, 0b100 => bytemask = 0b0001,
+                        0b001, 0b101 => bytemask = 0b0011,
+                        0b010 => bytemask = 0b1111,
+                        else => trap = (2 + 1),
                     }
-                    var rsval: Word = @as(Word, @as(SWord, rs1) + imm_se);
 
-                    rsval -%= RAM_IMAGE_OFFSET;
+                    const result: Bus.Transaction = self.bus.access(.{
+                        .cycle = @truncate(self.cycles),
+                        .address = rsval,
+                        .bytes = bytemask,
+                        .write = false,
+                    });
 
-                    if (rsval >= ramSize - 3) {
-                        rsval +%= RAM_IMAGE_OFFSET;
+                    self.cycles += result.duration;
 
-                        if (rsval >= 0x10000000 and rsval < 0x12000000) { // UART, CLNT
-                            if (rsval == 0x1100bffc) { // https://chromitem-soc.readthedocs.io/en/latest/clint.html
-                                rval = self.reg.timerh;
-                            } else if (rsval == 0x1100bff8) {
-                                rval = self.reg.timerl;
-                            } else {
-                                rval = handle_control_load(rsval);
-                            }
-                        } else {
-                            trap = (5 + 1);
-                            rval = rsval;
-                        }
+                    if (!result.valid) {
+                        trap = (5 + 1); // Load access fault.
+                        rval = rsval;
                     } else {
-
                         switch ((ir >> 12) & 0x7) {
                             //LB, LH, LW, LBU, LHU
-                            0b000 => rval = @as(Word, @as(SWord, @as(i8, image1[rsval]))),
-                            0b001 => rval = @as(Word, @as(SWord, @as(i16, image2[rsval / 2]))),
-                            0b010 => rval = image4[rsval / 4],
-                            0b100 => rval = image1[rsval],
-                            0b101 => rval = image2[rsval / 2],
+                            0b000 => rval = signExtend(result.data, 8),
+                            0b001 => rval = signExtend(result.data, 16),
+                            0b010, 0b100, 0b101 => rval = result.data,
                             else => trap = (2 + 1),
                         }
                     }
+
+                    // UART is at  0x10000000
+                    // CLINT is at 0x11000000
+                    // SYSCON is at 0x11100000
                 },
                 0b0100011 => { // Store
                     const rs1: Word = self.reg.regs[(ir >> 15) & 0x1f];
                     const rs2: Word = self.reg.regs[(ir >> 20) & 0x1f];
-                    var addy: Word = ((ir >> 7) & 0x1f) | ((ir & 0xfe000000) >> 20);
+                    const addy: Word = rs1 +% signExtend(((ir >> 7) & 0x1f) | ((ir & 0xfe000000) >> 20), 12);
 
-                    if (addy & 0x800 != 0) {
-                        addy |= 0xfffff000;
-                    }
-
-                    addy +%= rs1 -% RAM_IMAGE_OFFSET;
                     rdid = 0;
 
-                    if (addy >= ramSize - 3) {
-                        addy +%= RAM_IMAGE_OFFSET;
-                        if (addy >= 0x10000000 and addy < 0x12000000) {
-                            // Should be stuff like SYSCON, 8250, CLNT
-                            if (addy == 0x11004004) { //CLNT
-                                self.reg.timermatchh = rs2;
-                            } else if (addy == 0x11004000) { //CLNT
-                                self.reg.timermatchl = rs2;
-                            } else if (addy == 0x11100000) { //SYSCON (reboot, poweroff, etc.)
-                                self.reg.pc = pc + 4;
-                                return @as(SWord, rs2); // NOTE: PC will be PC of Syscon.
-                            } else {
-                                if (handle_control_store(addy, rs2) > 0) {
-                                    return @as(SWord, rs2);
-                                }
-                            }
-                        } else {
-                            trap = (7 + 1); // Store access fault.
-                            rval = addy;
-                        }
-                    } else {
-                        switch ((ir >> 12) & 0x7) {
-                            //SB, SH, SW
-                            0b000 => image1[addy] = @as(u8, @truncate(rs2 & 0xFF)),
-                            0b001 => image2[addy / 2] = @as(u16, @truncate(rs2)),
-                            0b010 => image4[addy / 4] = rs2,
-                            else => trap = (2 + 1),
-                        }
+                    if (addy == 0x11100000) { //SYSCON (reboot, poweroff, etc.)
+                        self.reg.pc = pc + 4;
+                        return rs2; // NOTE: PC will be PC of Syscon.
+                    }
+
+                    const bytemask: u4 = switch ((ir >> 12) & 0x7) {
+                        //SB, SH, SW
+                        0b000 => 0b0001,
+                        0b001 => 0b0011,
+                        0b010 => 0b1111,
+                        else => brk: {
+                            trap = (2 + 1);
+                            break :brk 0;
+                        },
+                    };
+
+                    const result = self.bus.access(.{
+                        .cycle = @truncate(self.cycles),
+                        .address = addy,
+                        .bytes = bytemask,
+                        .data = rs2,
+                        .write = true,
+                    });
+                    self.cycles += result.duration;
+
+                    if (!result.valid) {
+                        trap = (7 + 1); // Store access fault.
+                        rval = addy;
                     }
                 },
                 0b0010011, 0b0110011 => { // Op-immediate, Op
@@ -305,33 +253,37 @@ pub fn step(self: *CpuState, cycles: u64, fail_on_all_faults: bool) void {
                     if (is_reg and (ir & 0x02000000 != 0)) {
                         switch ((ir >> 12) & 7) { //0x02000000 = RV32M
                             0b000 => rval = rs1 *% rs2, // MUL
-                            0b001 => rval = @as(Word, (@as(i64, @as(SWord, rs1)) *% @as(i64, @as(SWord, rs2)) >> 32) & 0xFFFFFFFF), // MULH
-                            0b010 => rval = @as(Word, ((@as(i64, @as(SWord, rs1)) *% @as(i64, rs2)) >> 32) & 0xFFFFFFFF), // MULHSU
-                            0b011 => rval = @as(Word, (@as(u64, rs1) *% @as(u64, rs2)) >> 32), // MULHU
+                            0b001 => rval = @as(Word, @truncate(@as(u64, @bitCast((@as(i64, @as(SWord, @bitCast(rs1))) *% @as(i64, @as(SWord, @bitCast(rs2))) >> 32) & 0xFFFFFFFF)))), // MULH
+                            0b010 => rval = @as(Word, @truncate(@as(u64, @bitCast(((@as(i64, @as(SWord, @bitCast(rs1))) *% @as(i64, rs2)) >> 32) & 0xFFFFFFFF)))), // MULHSU
+                            0b011 => rval = @as(Word, @truncate((@as(u64, rs1) *% @as(u64, rs2)) >> 32)), // MULHU
                             0b100 => { // DIV
+                                self.cycles += 31; // DIV takes longer
                                 if (rs2 == 0) {
-                                    rval = @as(Word, @as(SWord, -1));
+                                    rval = 0xffffffff; // FIXME: Is this right? Should it throw an exception?
                                 } else {
-                                    rval = @as(Word, @divTrunc(@as(SWord, rs1), @as(SWord, rs2)));
+                                    rval = @as(Word, @bitCast(@divTrunc(@as(SWord, @bitCast(rs1)), @as(SWord, @bitCast(rs2)))));
                                 }
                             },
                             0b101 => { // DIVU
+                                self.cycles += 31; // DIV takes longer
                                 if (rs2 == 0) {
-                                    rval = 0xffffffff;
+                                    rval = 0xffffffff; // FIXME: Is this right? Should it throw an exception?
                                 } else {
                                     rval = @divFloor(rs1, rs2);
                                 }
                             },
                             0b110 => { // REM
+                                self.cycles += 31; // DIV takes longer
                                 if (rs2 == 0) {
-                                    rval = rs1;
+                                    rval = rs1; // FIXME: Is this right? Should it throw an exception?
                                 } else {
-                                    rval = @as(Word, @mod(@as(SWord, rs1), @as(SWord, rs2)));
+                                    rval = @as(Word, @bitCast(@mod(@as(SWord, @bitCast(rs1)), @as(SWord, @bitCast(rs2)))));
                                 }
                             },
                             0b111 => { // REMU
+                                self.cycles += 31; // DIV takes longer
                                 if (rs2 == 0) {
-                                    rval = rs1;
+                                    rval = rs1; // FIXME: Is this right? Should it throw an exception?
                                 } else {
                                     rval = @rem(rs1, rs2);
                                 }
@@ -348,10 +300,10 @@ pub fn step(self: *CpuState, cycles: u64, fail_on_all_faults: bool) void {
                                 }
                             },
                             0b001 => {
-                                rval = @shlWithOverflow(rs1, @as(u5, @mod(rs2, 32)))[0];
+                                rval = @shlWithOverflow(rs1, @as(u5, @truncate(rs2 & 31)))[0];
                             },
                             0b010 => {
-                                if (@as(SWord, rs1) < @as(SWord, rs2)) {
+                                if (@as(SWord, @bitCast(rs1)) < @as(SWord, @bitCast(rs2))) {
                                     rval = 1;
                                 } else {
                                     rval = 0;
@@ -367,9 +319,9 @@ pub fn step(self: *CpuState, cycles: u64, fail_on_all_faults: bool) void {
                             0b100 => rval = rs1 ^ rs2,
                             0b101 => {
                                 if (ir & 0x40000000 != 0) {
-                                    rval = @as(Word, @as(SWord, rs1) >> @as(u5, @mod(rs2, 32)));
+                                    rval = @as(Word, @bitCast(@as(SWord, @bitCast(rs1)) >> @as(u5, @truncate(rs2 & 31))));
                                 } else {
-                                    rval = rs1 >> @as(u5, @mod(rs2, 32));
+                                    rval = rs1 >> @as(u5, @truncate(rs2 & 31));
                                 }
                             },
                             0b110 => rval = rs1 | rs2,
@@ -393,7 +345,7 @@ pub fn step(self: *CpuState, cycles: u64, fail_on_all_faults: bool) void {
                             0x340 => rval = self.reg.mscratch,
                             0x305 => rval = self.reg.mtvec,
                             0x304 => rval = self.reg.mie,
-                            0xC00 => rval = self.reg.cyclel,
+                            0xC00 => rval = @truncate(self.cycles & 0xffffffff),
                             0x344 => rval = self.reg.mip,
                             0x341 => rval = self.reg.mepc,
                             0x300 => rval = self.reg.mstatus, //mstatus
@@ -471,66 +423,85 @@ pub fn step(self: *CpuState, cycles: u64, fail_on_all_faults: bool) void {
                     }
                 },
                 0b0101111 => { // RV32A
-                    var rs1: Word = self.reg.regs[(ir >> 15) & 0x1f];
+                    const rs1: Word = self.reg.regs[(ir >> 15) & 0x1f];
                     var rs2: Word = self.reg.regs[(ir >> 20) & 0x1f];
                     const irmid: Word = (ir >> 27) & 0x1f;
 
-                    rs1 -= RAM_IMAGE_OFFSET;
+                    const amoload = self.bus.access(.{
+                        .cycle = @truncate(self.cycles),
+                        .address = rs1,
+                        .bytes = 0b1111,
+                        .write = false,
+                    });
+                    self.cycles += amoload.duration-1; // minus 1 because we already incremented cycles
 
-                    // We don't implement load/store from UART or CLNT with RV32A here.
-                    if (rs1 >= ramSize - 3) {
-                        trap = (7 + 1); //Store/AMO access fault
-                        rval = rs1 + RAM_IMAGE_OFFSET;
-                    } else {
-                        rval = image4[rs1 / 4];
-                        // Referenced a little bit of https://github.com/franzflasch/riscv_em/blob/master/src/core/core.c
-                        var dowrite: Word = 1;
-                        switch (irmid) {
-                            0b00010 => {
-                                dowrite = 0;
-                                self.reg.extraflags |= 8; //LR.W
-                            },
-                            0b00011 => {
-                                if (!(self.reg.extraflags & 8 != 0)) { // SC.W (Lie and always say it's good)
-                                    rval = 1;
-                                } else {
-                                    rval = 0;
-                                }
-                            },
-                            0b00001 => {}, //AMOSWAP.W
-                            0b00000 => rs2 +%= rval, //AMOADD.W
-                            0b00100 => rs2 ^= rval, //AMOXOR.W
-                            0b01100 => rs2 &= rval, //AMOAND.W
-                            0b01000 => rs2 |= rval, //AMOOR.W
-                            0b10000 => { // AMOMIN.W
-                                if (!(@as(SWord, rs2) < @as(SWord, rval))) {
-                                    rs2 = rval;
-                                }
-                            },
-                            0b10100 => { // AMOMAX.W
-                                if (!(@as(SWord, rs2) > @as(SWord, rval))) {
-                                    rs2 = rval;
-                                }
-                            },
-                            0b11000 => { // AMOMINU.W
-                                if (!(rs2 < rval)) {
-                                    rs2 = rval;
-                                }
-                            },
-                            0b11100 => { // AMOMAXU.W
-                                if (!(rs2 > rval)) {
-                                    rs2 = rval;
-                                }
-                            },
-                            else => {
-                                trap = (2 + 1);
-                                dowrite = 0; //Not supported.
-                            },
-                        }
-                        if (dowrite != 0) {
-                            image4[rs1 / 4] = rs2;
+                    if (!amoload.valid) {
+                        trap = (7 + 1); // Store/AMO access fault
+                        rval = rs1;
+                    }
+
+                    rval = amoload.data;
+
+                    // Referenced a little bit of https://github.com/franzflasch/riscv_em/blob/master/src/core/core.c
+                    var dowrite: bool = true;
+                    switch (irmid) {
+                        0b00010 => {
+                            dowrite = false;
+                            self.reg.extraflags |= 8; //LR.W
+                        },
+                        0b00011 => {
+                            if (!(self.reg.extraflags & 8 != 0)) { // SC.W (Lie and always say it's good)
+                                rval = 1;
+                            } else {
+                                rval = 0;
+                            }
+                        },
+                        0b00001 => {}, //AMOSWAP.W
+                        0b00000 => rs2 +%= rval, //AMOADD.W
+                        0b00100 => rs2 ^= rval, //AMOXOR.W
+                        0b01100 => rs2 &= rval, //AMOAND.W
+                        0b01000 => rs2 |= rval, //AMOOR.W
+                        0b10000 => { // AMOMIN.W
+                            if (!(@as(SWord, @bitCast(rs2)) < @as(SWord, @bitCast(rval)))) {
+                                rs2 = rval;
+                            }
+                        },
+                        0b10100 => { // AMOMAX.W
+                            if (!(@as(SWord, @bitCast(rs2)) > @as(SWord, @bitCast(rval)))) {
+                                rs2 = rval;
+                            }
+                        },
+                        0b11000 => { // AMOMINU.W
+                            if (!(rs2 < rval)) {
+                                rs2 = rval;
+                            }
+                        },
+                        0b11100 => { // AMOMAXU.W
+                            if (!(rs2 > rval)) {
+                                rs2 = rval;
+                            }
+                        },
+                        else => {
+                            trap = (2 + 1);
+                            dowrite = false; //Not supported.
+                        },
+                    }
+                    if (dowrite) {
+                        const amostore = self.bus.access(.{
+                            .cycle = @truncate(self.cycles),
+                            .address = rs1,
+                            .bytes = 0b1111,
+                            .write = true,
+                            .data = rs2,
+                        });
+                        self.cycles += amostore.duration-1; // minus 1 because we already incremented cycles
+
+                        if (!amostore.valid) {
+                            trap = (7 + 1); // Store/AMO access fault
+                            rval = rs1;
                         }
                     }
+
                 },
                 else => trap = (2 + 1), // Fault: Invalid opcode.
             }
@@ -547,7 +518,7 @@ pub fn step(self: *CpuState, cycles: u64, fail_on_all_faults: bool) void {
         if (trap > 0) {
             if (fail_on_all_faults) {
                 //*printf( "FAULT\n" );*/
-                return 3;
+                return trap;
             } else {
                 trap = handle_exception(ir, trap);
             }
@@ -584,32 +555,12 @@ pub fn step(self: *CpuState, cycles: u64, fail_on_all_faults: bool) void {
     return 0;
 }
 
-fn handle_control_load(addr: Word) Word {
-    // Emulating a 8250 / 16550 UART
-    if (addr == 0x10000005) {
-        if (console_fifo.len > 0) {
-            return 0x60 | 1; //intCastCompat(Word, console_fifo.count);
-        } else {
-            return 0x60;
-        }
-    } else if (addr == 0x10000000 and console_fifo.len > 0) {
-        const c:u8 = console_fifo.popFront().?;
-        return @as(Word, c);
-    }
-    return 0;
-}
-
-fn handle_control_store(addr: Word, val: Word) Word {
-    if (addr == 0x10000000) { //UART 8250 / 16550 Data Buffer
-        _ = val;
-        // var buf: [1]u8 = .{@as(u8, val & 0xFF)};
-        // term.write(&buf) catch return 0;    // FIXME handle error
-    }
-    return 0;
-}
-
 fn handle_exception(ir: Word, code: Word) Word {
-    //std.log.info("PROCESSOR EXCEPTION ir:{x} code:{x}", .{ir, code});
-    _ = ir;
+    std.debug.print("PROCESSOR EXCEPTION ir:{x} code:{x}\n", .{ir, code});
     return code;
+}
+
+pub inline fn signExtend(val: Word, bits: comptime_int) Word {
+    const mask: Word = 1 << (bits - 1);
+    return ((val & ((1 << bits) - 1)) ^ mask) -% mask;
 }
