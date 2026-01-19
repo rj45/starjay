@@ -76,11 +76,11 @@ pub fn main() !void {
     if (res.args.rom) |rom| {
         const quiet = res.args.quiet != 0;
         if (res.args.riscv != 0) {
-            try riscv_emu.main(rom, 100000000, quiet, gpa);
+            try riscv_emu.main(rom, std.math.maxInt(usize), quiet, gpa);
         } else if (res.args.llemu != 0) {
-            try ll_emu.main(rom, 100000000, quiet, gpa);
+            try ll_emu.main(rom, std.math.maxInt(usize), quiet, gpa);
         } else {
-            try hl_emu.main(rom, 100000000, quiet, gpa);
+            try hl_emu.main(rom, std.math.maxInt(usize), quiet, gpa);
         }
     }
 }

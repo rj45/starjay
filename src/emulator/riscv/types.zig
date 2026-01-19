@@ -5,7 +5,7 @@ pub const WORDBYTES: comptime_int = WORDSIZE / 8;
 pub const WORDMASK: comptime_int = (1 << WORDSIZE) - 1;
 pub const SHIFTMASK: comptime_int = 0x1f;
 
-pub const RAM_IMAGE_OFFSET: u32 = 0x0000_0000;
+pub const RAM_IMAGE_OFFSET: u32 = 0x8000_0000;
 
 pub const Word = u32;
 pub const SWord = i32;
@@ -14,10 +14,6 @@ pub const Regs = struct {
     regs: [32]Word = [_]Word{0} ** 32,
     pc: u32 = RAM_IMAGE_OFFSET,
     mstatus: u32 = 0,
-    timerl: u32 = 0,
-    timerh: u32 = 0,
-    timermatchl: u32 = 0,
-    timermatchh: u32 = 0,
     mscratch: u32 = 0,
     mtvec: u32 = 0,
     mie: u32 = 0,

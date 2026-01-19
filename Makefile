@@ -14,6 +14,12 @@ examples:
 clean:
 	make -C starjette clean
 
+dlimage:
+	wget https://github.com/cnlohr/mini-rv32ima-images/raw/master/images/linux-6.1.14-rv32nommu-cnl-1.zip -O linux-6.1.14-rv32nommu-cnl-1.zip
+	unzip linux-6.1.14-rv32nommu-cnl-1.zip
+	mv Image LinuxImage
+	rm linux-6.1.14-rv32nommu-cnl-1.zip
+
 public:
 	@COMMIT=$$(git rev-list -1 --before="30 days ago" main); \
 	if [ -n "$$COMMIT" ]; then \

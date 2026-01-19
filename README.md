@@ -48,8 +48,27 @@ customasm -f binary -o <rom.bin> starjette/customasm/cpudef.asm starjette/custom
 zig build run -- --rom <rom.bin> --debugger
 ```
 
+## Running RISC-V
+
+There is a RISC-V emulator included, activated with the `--riscv` flag:
+
+```bash
+zig build run -- --riscv --rom <riscv_rom.bin> 
+```
+
+### Running Linux
+
+You can run a minimal Linux system using the included RISC-V support:
+
+```bash
+make dllinux
+zig build run --release=safe -- --riscv --rom LinuxImage
+```
+
+(If it doesn't boot, press a key to send input to the console. I will fix the bug later with proper TTY support.)
+
 ## License and Copyright
 
-Copyright (c) 2025 Ryan "rj45" Sanche
+Copyright (c) 2026 Ryan "rj45" Sanche
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

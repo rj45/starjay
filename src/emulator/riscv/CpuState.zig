@@ -8,6 +8,7 @@ const std = @import("std");
 const root = @import("root.zig");
 
 const Bus = @import("../device/Bus.zig");
+const Clint = @import("../device/Clint.zig");
 
 const types = root.types;
 
@@ -42,17 +43,27 @@ inline fn translateDataAddr(self: *const CpuState, vaddr: Word) usize {
     return @intCast(vaddr);
 }
 
-pub fn run(self: *CpuState, max_cycles: usize, fail_on_all_faults: bool) !Word {
+pub fn run(self: *CpuState, clint: *Clint, max_cycles: usize, fail_on_all_faults: bool) !Word {
     const start = try std.time.Instant.now();
     const initial_cycles = self.cycles;
-    const errval = self.runForCycles(max_cycles, fail_on_all_faults);
+
+    var num_cycles: usize = 0;
+    var errval: Word = 0;
+    while (num_cycles < max_cycles) : (num_cycles += 1000) {
+        errval = self.runForCycles(clint, 1000, fail_on_all_faults);
+
+        if (errval != 0 and errval != 1) {
+            break;
+        }
+    }
+
     const cycles = self.cycles - initial_cycles;
     const elapsed = (try std.time.Instant.now()).since(start);
     const cycles_per_sec = if (elapsed > 0)
         @as(f64, @floatFromInt(cycles)) / (@as(f64, @floatFromInt(elapsed)) / 1_000_000_000.0)
     else
         0.0;
-    std.debug.print("Execution completed in {d} cycles, elapsed time: {d} ms, {d:.2} cycles/sec\n", .{
+    std.debug.print("\n\nExecution completed in {d} cycles, elapsed time: {d} ms, {d:.2} cycles/sec\n", .{
         cycles,
         elapsed / 1_000_000,
         cycles_per_sec,
@@ -61,17 +72,16 @@ pub fn run(self: *CpuState, max_cycles: usize, fail_on_all_faults: bool) !Word {
     return errval;//self.reg.regs[10]; // a0
 }
 
-pub fn runForCycles(self: *CpuState, cycles: u64, fail_on_all_faults: bool) Word {
+pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_faults: bool) Word {
     // FIXME: This can be quite slow, as it can cause a syscall.
     const t:i64 = std.time.microTimestamp();
     const tu: u64 = @bitCast(t);
-    const tl: Word = @truncate(tu & 0xFFFFFFFF);
-    const th: Word = @truncate(tu >> 32);
-    self.reg.timerl = tl;
-    self.reg.timerh = th;
+
+    clint.mtime = tu;
+
 
     // Handle Timer interrupt.
-    if ((self.reg.timerh > self.reg.timermatchh or (self.reg.timerh == self.reg.timermatchh and self.reg.timerl > self.reg.timermatchl)) and (self.reg.timermatchh != 0 or self.reg.timermatchl != 0)) {
+    if (clint.mtimecmp != 0 and clint.mtime >= clint.mtimecmp) {
         self.reg.extraflags &= ~@as(Word, 4); // Clear WFI
         self.reg.mip |= 1 << 7; //MTIP of MIP // https://stackoverflow.com/a/61916199/2926815  Fire interrupt.
     } else {
@@ -79,6 +89,15 @@ pub fn runForCycles(self: *CpuState, cycles: u64, fail_on_all_faults: bool) Word
     }
 
     if (self.reg.extraflags & @as(Word, 4) != 0) {
+        // In WFI (Wait for interrupt) state.
+        const wait_time = @min(
+            10_000, // 10ms max
+            if (clint.mtimecmp > clint.mtime)
+                @as(u64, clint.mtimecmp - clint.mtime) / 1000
+            else
+                10_000
+        );
+        std.Thread.sleep(wait_time * 1000);
         return 1;
     }
 
@@ -92,7 +111,8 @@ pub fn runForCycles(self: *CpuState, cycles: u64, fail_on_all_faults: bool) Word
 
         var pc: Word = self.reg.pc;
 
-         if (pc & 3 != 0) {
+        if (pc & 3 != 0) {
+            std.debug.print("PC Misalignment fault: {x}\n", .{pc});
             trap = 1 + 0; //Handle PC-misaligned access
         } else {
             const fetch = self.bus.access(.{
@@ -104,6 +124,7 @@ pub fn runForCycles(self: *CpuState, cycles: u64, fail_on_all_faults: bool) Word
             self.cycles += fetch.duration-1; // minus 1 because we are presuming a pipelined fetch
 
             if (!fetch.valid) {
+                std.debug.print("Instruction access fault: {x}\n", .{pc});
                 trap = 1 + 1; // Instruction access fault.
                 ir = 0x13; // NOP
             } else {
@@ -184,6 +205,7 @@ pub fn runForCycles(self: *CpuState, cycles: u64, fail_on_all_faults: bool) Word
                     self.cycles += result.duration;
 
                     if (!result.valid) {
+                        std.debug.print("Load access fault: pc: {x}, addy: {x}\n", .{self.reg.pc, rsval});
                         trap = (5 + 1); // Load access fault.
                         rval = rsval;
                     } else {
@@ -195,10 +217,6 @@ pub fn runForCycles(self: *CpuState, cycles: u64, fail_on_all_faults: bool) Word
                             else => trap = (2 + 1),
                         }
                     }
-
-                    // UART is at  0x10000000
-                    // CLINT is at 0x11000000
-                    // SYSCON is at 0x11100000
                 },
                 0b0100011 => { // Store
                     const rs1: Word = self.reg.regs[(ir >> 15) & 0x1f];
@@ -233,6 +251,7 @@ pub fn runForCycles(self: *CpuState, cycles: u64, fail_on_all_faults: bool) Word
                     self.cycles += result.duration;
 
                     if (!result.valid) {
+                        std.debug.print("Store access fault: pc: {x}, addy: {x}\n", .{self.reg.pc, addy});
                         trap = (7 + 1); // Store access fault.
                         rval = addy;
                     }
@@ -515,9 +534,10 @@ pub fn runForCycles(self: *CpuState, cycles: u64, fail_on_all_faults: bool) Word
             }
         }
 
-        if (trap > 0) {
+        if (trap > 0 and trap < 0x80000000) {
             if (fail_on_all_faults) {
                 //*printf( "FAULT\n" );*/
+                std.debug.print("FAULT: {}\n", .{trap});
                 return trap;
             } else {
                 trap = handle_exception(ir, trap);
@@ -556,7 +576,8 @@ pub fn runForCycles(self: *CpuState, cycles: u64, fail_on_all_faults: bool) Word
 }
 
 fn handle_exception(ir: Word, code: Word) Word {
-    std.debug.print("PROCESSOR EXCEPTION ir:{x} code:{x}\n", .{ir, code});
+    //std.debug.print("PROCESSOR EXCEPTION ir:{x} code:{x}\n", .{ir, code});
+    _ = ir;
     return code;
 }
 
