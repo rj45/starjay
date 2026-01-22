@@ -109,24 +109,24 @@ pub fn process_events(backend: ?*SDLBackend, dvwin: ?*dvui.Window) !bool {
 }
 
 fn getWindowFromEvent(event: *const c.SDL_Event) ?*c.SDL_Window {
-      if (SDLBackend.sdl3) {
-          return c.SDL_GetWindowFromEvent(event);
-      }
+    if (SDLBackend.sdl3) {
+        return c.SDL_GetWindowFromEvent(event);
+    }
 
-      const windowID: u32 = switch (event.type) {
-          c.SDL_WINDOWEVENT => event.window.windowID,
-          c.SDL_KEYDOWN, c.SDL_KEYUP => event.key.windowID,
-          c.SDL_TEXTEDITING => event.edit.windowID,
-          c.SDL_TEXTINPUT => event.text.windowID,
-          c.SDL_MOUSEMOTION => event.motion.windowID,
-          c.SDL_MOUSEBUTTONDOWN, c.SDL_MOUSEBUTTONUP => event.button.windowID,
-          c.SDL_MOUSEWHEEL => event.wheel.windowID,
-          c.SDL_USEREVENT => event.user.windowID,
-          c.SDL_DROPFILE, c.SDL_DROPTEXT, c.SDL_DROPBEGIN, c.SDL_DROPCOMPLETE => event.drop.windowID,
-          else => return null,
-      };
-      return c.SDL_GetWindowFromID(windowID);
-  }
+    const windowID: u32 = switch (event.type) {
+        c.SDL_WINDOWEVENT => event.window.windowID,
+        c.SDL_KEYDOWN, c.SDL_KEYUP => event.key.windowID,
+        c.SDL_TEXTEDITING => event.edit.windowID,
+        c.SDL_TEXTINPUT => event.text.windowID,
+        c.SDL_MOUSEMOTION => event.motion.windowID,
+        c.SDL_MOUSEBUTTONDOWN, c.SDL_MOUSEBUTTONUP => event.button.windowID,
+        c.SDL_MOUSEWHEEL => event.wheel.windowID,
+        c.SDL_USEREVENT => event.user.windowID,
+        c.SDL_DROPFILE, c.SDL_DROPTEXT, c.SDL_DROPBEGIN, c.SDL_DROPCOMPLETE => event.drop.windowID,
+        else => return null,
+    };
+    return c.SDL_GetWindowFromID(windowID);
+}
 
 
 pub fn render_vdp_frame() void {

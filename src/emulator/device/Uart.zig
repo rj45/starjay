@@ -6,28 +6,33 @@ const std = @import("std");
 
 const Bus = @import("Bus.zig");
 
+const Tty = @import("tty.zig").Tty;
+
 const Word = Bus.Word;
 const Addr = Bus.Addr;
 const Cycle = Bus.Cycle;
 const Transaction = Bus.Transaction;
 
-reader: std.fs.File.Reader = undefined,
-writer: std.fs.File.Writer = undefined,
-readBuffer: [65536]u8 = undefined,
-writeBuffer: [65536]u8 = undefined,
+tty: Tty = undefined,
+read_buffer: [4096]u8 = undefined,
+write_buffer: [4096]u8 = undefined,
 
 
 pub const Uart = @This();
 
-pub fn init() Uart {
-    var self = Uart{};
-    self.reader = std.fs.File.stdin().reader(&self.readBuffer);
-    self.writer = std.fs.File.stdout().writer(&self.writeBuffer);
-    return self;
+pub fn init() !Uart {
+    var uart: Uart = .{};
+    uart.tty = try Tty.init(uart.read_buffer[0..], uart.write_buffer[0..]);
+    return uart;
+}
+
+pub fn deinit(self: *Uart) void {
+    self.flush();
+    self.tty.deinit();
 }
 
 pub fn flush(self: *Uart) void {
-    self.writer.interface.flush() catch {};
+    self.tty.writer().flush() catch {};
 }
 
 pub fn access(self: *Uart, transaction: Transaction) Transaction {
@@ -36,11 +41,11 @@ pub fn access(self: *Uart, transaction: Transaction) Transaction {
     if (transaction.write) {
         if (transaction.address == 0) {
             result.valid = true;
-            self.writer.interface.writeByte(@truncate(transaction.data)) catch {
+            self.tty.writer().writeByte(@truncate(transaction.data)) catch {
                 result.valid = false;
             };
             if (transaction.data == '\n' or transaction.data == '\r') {
-                self.writer.interface.flush() catch {};
+                self.flush();
             }
         } else if (transaction.address < 8) {
             // Ignore writes to other registers
@@ -49,16 +54,16 @@ pub fn access(self: *Uart, transaction: Transaction) Transaction {
     } else {
         result.data = 0;
         if (transaction.address == 0) {
-            if (self.reader.interface.peekByte() != error.EndOfStream) {
-                result.data = @intCast(self.reader.interface.takeByte() catch 0);
-                result.valid = true;
-            }
+            result.data = 0xff;
+            if (self.tty.reader().peekByte()) |_| {
+                result.data = @intCast(self.tty.reader().takeByte() catch 0);
+            } else |_| {}
+            result.valid = true;
         } else if (transaction.address == 5) {
-            if (self.reader.interface.peekByte() != error.EndOfStream) {
-                result.data = 0x60 | 1; // Data Ready
-            } else {
-                result.data = 0x60;
-            }
+            result.data = 0x60;
+            if (self.tty.reader().peekByte()) |_| {
+                result.data |= 1; // Data Ready
+            } else |_| {}
             result.valid = true;
         } else if (transaction.address < 8) {
             // Other registers are valid but return 0

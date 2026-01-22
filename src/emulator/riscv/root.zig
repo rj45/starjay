@@ -31,7 +31,8 @@ pub fn main(rom_file: []const u8, max_cycles: usize, quiet: bool, gpa: std.mem.A
     var clint = Clint.init();
     try bus.attach(Device.init(&clint, 0x11000000, 0x1100C000));
 
-    var uart = Uart.init();
+    var uart = try Uart.init();
+    defer uart.deinit();
     try bus.attach(Device.init(&uart, 0x10000000, 0x10000020));
 
     var sram = Sram.init(memory);
@@ -59,16 +60,22 @@ pub fn main(rom_file: []const u8, max_cycles: usize, quiet: bool, gpa: std.mem.A
     cpu.reg.regs[11] = dtb_off + RAM_IMAGE_OFFSET;
     cpu.reg.extraflags |= 3; // Machine-mode.
 
-    var errorLevel = try cpu.run(&clint, max_cycles, false);
+    var error_level = try cpu.run(&clint, max_cycles, false);
+
+    try uart.tty.writer().print("original error_level: {}\r\n", .{error_level});
     uart.flush();
 
-    if (errorLevel == 9) { // ecall trap
-        std.debug.print("ecall trap: a0 = {}", .{cpu.reg.regs[10]});
-        errorLevel = cpu.reg.regs[10];
+    if (error_level == 9) { // ecall trap
+        try uart.tty.writer().print("ecall trap: a0 = {}\r\n", .{cpu.reg.regs[10]});
+        error_level = cpu.reg.regs[10];
     }
 
-    std.debug.print("errorLevel: {}\n", .{errorLevel});
-    std.process.exit(@truncate(errorLevel));
+    try uart.tty.writer().print("error_level: {}\r\n", .{error_level});
+    uart.flush();
+
+    const byte_val: u8 = @truncate(error_level & 0xff);
+
+    std.process.exit(byte_val);
 }
 
 test {

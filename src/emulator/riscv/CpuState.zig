@@ -49,7 +49,7 @@ pub fn run(self: *CpuState, clint: *Clint, max_cycles: usize, fail_on_all_faults
 
     var num_cycles: usize = 0;
     var errval: Word = 0;
-    while (num_cycles < max_cycles) : (num_cycles += 1000) {
+    while (num_cycles < max_cycles) : (num_cycles +%= 1000) {
         errval = self.runForCycles(clint, 1000, fail_on_all_faults);
 
         if (errval != 0 and errval != 1) {
@@ -81,22 +81,23 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
 
 
     // Handle Timer interrupt.
-    if (clint.mtimecmp != 0 and clint.mtime >= clint.mtimecmp) {
+    if (clint.msip and clint.mtimecmp != 0 and clint.mtime >= clint.mtimecmp) {
         self.reg.extraflags &= ~@as(Word, 4); // Clear WFI
         self.reg.mip |= 1 << 7; //MTIP of MIP // https://stackoverflow.com/a/61916199/2926815  Fire interrupt.
     } else {
         self.reg.mip &= ~(@as(Word, 1) << @as(Word, 7));
     }
 
-    if (self.reg.extraflags & @as(Word, 4) != 0) {
+    if ((self.reg.extraflags & @as(Word, 4)) != 0) {
         // In WFI (Wait for interrupt) state.
-        const wait_time = @min(
+        const wait_time: u64 = @min(
             10_000, // 10ms max
             if (clint.mtimecmp > clint.mtime)
-                @as(u64, clint.mtimecmp - clint.mtime) / 1000
+                clint.mtimecmp - clint.mtime
             else
                 10_000
         );
+        std.debug.assert(wait_time <= 10000);
         std.Thread.sleep(wait_time * 1000);
         return 1;
     }
@@ -107,7 +108,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
         var trap: Word = 0; // If positive, is a trap or interrupt.  If negative, is fatal error.
         var rval: Word = 0;
 
-        self.cycles += 1;
+        self.cycles +%= 1;
 
         var pc: Word = self.reg.pc;
 
@@ -121,7 +122,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
                 .bytes = 0b1111,
                 .write = false,
             });
-            self.cycles += fetch.duration-1; // minus 1 because we are presuming a pipelined fetch
+            self.cycles +%= fetch.duration -% 1; // minus 1 because we are presuming a pipelined fetch
 
             if (!fetch.valid) {
                 std.debug.print("Instruction access fault: {x}\n", .{pc});
@@ -202,7 +203,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
                         .write = false,
                     });
 
-                    self.cycles += result.duration;
+                    self.cycles +%= result.duration;
 
                     if (!result.valid) {
                         std.debug.print("Load access fault: pc: {x}, addy: {x}\n", .{self.reg.pc, rsval});
@@ -226,7 +227,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
                     rdid = 0;
 
                     if (addy == 0x11100000) { //SYSCON (reboot, poweroff, etc.)
-                        self.reg.pc = pc + 4;
+                        self.reg.pc +%= 4;
                         return rs2; // NOTE: PC will be PC of Syscon.
                     }
 
@@ -248,7 +249,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
                         .data = rs2,
                         .write = true,
                     });
-                    self.cycles += result.duration;
+                    self.cycles +%= result.duration;
 
                     if (!result.valid) {
                         std.debug.print("Store access fault: pc: {x}, addy: {x}\n", .{self.reg.pc, addy});
@@ -276,7 +277,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
                             0b010 => rval = @as(Word, @truncate(@as(u64, @bitCast(((@as(i64, @as(SWord, @bitCast(rs1))) *% @as(i64, rs2)) >> 32) & 0xFFFFFFFF)))), // MULHSU
                             0b011 => rval = @as(Word, @truncate((@as(u64, rs1) *% @as(u64, rs2)) >> 32)), // MULHU
                             0b100 => { // DIV
-                                self.cycles += 31; // DIV takes longer
+                                self.cycles +%= 31; // DIV takes longer
                                 if (rs2 == 0) {
                                     rval = 0xffffffff; // FIXME: Is this right? Should it throw an exception?
                                 } else {
@@ -284,7 +285,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
                                 }
                             },
                             0b101 => { // DIVU
-                                self.cycles += 31; // DIV takes longer
+                                self.cycles +%= 31; // DIV takes longer
                                 if (rs2 == 0) {
                                     rval = 0xffffffff; // FIXME: Is this right? Should it throw an exception?
                                 } else {
@@ -292,7 +293,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
                                 }
                             },
                             0b110 => { // REM
-                                self.cycles += 31; // DIV takes longer
+                                self.cycles +%= 31; // DIV takes longer
                                 if (rs2 == 0) {
                                     rval = rs1; // FIXME: Is this right? Should it throw an exception?
                                 } else {
@@ -300,7 +301,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
                                 }
                             },
                             0b111 => { // REMU
-                                self.cycles += 31; // DIV takes longer
+                                self.cycles +%= 31; // DIV takes longer
                                 if (rs2 == 0) {
                                     rval = rs1; // FIXME: Is this right? Should it throw an exception?
                                 } else {
@@ -413,7 +414,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
                         if (csrno == 0x105) { //WFI (Wait for interrupts)
                             self.reg.mstatus |= 8; //Enable interrupts
                             self.reg.extraflags |= 4; //Infor environment we want to go to sleep.
-                            self.reg.pc = pc + 4;
+                            self.reg.pc = pc +% 4;
                             return 1;
                         } else if (((csrno & 0xff) == 0x02)) { // MRET
                             //https://raw.githubusercontent.com/riscv/virtual-memory/main/specs/663-Svpbmt.pdf
@@ -423,7 +424,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
                             const startextraflags = self.reg.extraflags;
                             self.reg.mstatus = ((startmstatus & 0x80) >> 4) | ((startextraflags & 3) << 11) | 0x80;
                             self.reg.extraflags = (startextraflags & ~@as(Word, 3)) | ((startmstatus >> 11) & @as(Word, 3));
-                            pc = self.reg.mepc - 4;
+                            pc = self.reg.mepc -% 4;
                         } else {
                             switch (csrno) {
                                 0 => { // ECALL; 8 = "Environment call from U-mode"; 11 = "Environment call from M-mode"
@@ -452,7 +453,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
                         .bytes = 0b1111,
                         .write = false,
                     });
-                    self.cycles += amoload.duration-1; // minus 1 because we already incremented cycles
+                    self.cycles +%= amoload.duration;
 
                     if (!amoload.valid) {
                         trap = (7 + 1); // Store/AMO access fault
@@ -513,7 +514,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
                             .write = true,
                             .data = rs2,
                         });
-                        self.cycles += amostore.duration-1; // minus 1 because we already incremented cycles
+                        self.cycles +%= amostore.duration;
 
                         if (!amostore.valid) {
                             trap = (7 + 1); // Store/AMO access fault
@@ -550,7 +551,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
                 self.reg.extraflags &= ~@as(Word, 8);
                 self.reg.mcause = trap;
                 self.reg.mtval = 0;
-                pc += 4; // PC needs to point to where the PC will return to.
+                pc +%= 4; // PC needs to point to where the PC will return to.
             } else {
                 self.reg.mcause = trap - 1;
                 if (trap > 5 and trap <= 8) {

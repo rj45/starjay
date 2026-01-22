@@ -65,8 +65,6 @@ make dllinux
 zig build run --release=safe -- --riscv --rom LinuxImage
 ```
 
-(If it doesn't boot, press a key to send input to the console. I will fix the bug later with proper TTY support.)
-
 ## License and Copyright
 
 Copyright (c) 2026 Ryan "rj45" Sanche

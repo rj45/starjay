@@ -1,10 +1,13 @@
 const std = @import("std");
 
+const spsc_queue = @import("spsc_queue");
+
 // TODO: move this elsewhere
 pub const Word = u32;
 pub const Addr = u32;
 pub const Cycle = u64;
 pub const Device = @import("Device.zig");
+pub const Queue = spsc_queue.SpscQueuePo2Unmanaged(Transaction);
 
 pub const Bus = @This();
 
