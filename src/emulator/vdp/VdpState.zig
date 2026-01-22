@@ -4,6 +4,8 @@
 
 const std = @import("std");
 
+const Bus = @import("../device/Bus.zig");
+
 const types = @import("types.zig");
 const TilemapEntry = types.TilemapEntry;
 const SpriteYHeight = types.SpriteYHeight;
@@ -12,6 +14,7 @@ const SpriteAddr = types.SpriteAddr;
 const SpriteVelocity = types.SpriteVelocity;
 const ActiveTilemapAddr = types.ActiveTilemapAddr;
 const ActiveBitmapAddr = types.ActiveBitmapAddr;
+const Queue = Bus.Queue;
 
 pub const Cycle = u64;
 
@@ -23,7 +26,6 @@ const tile_map_data = loadHex(u16, "tilemap.hex");
 const tile_set_data = loadHex(u16, "tiles.hex");
 
 pub const VdpState = @This();
-
 
 
 pub const FrameBuffer = struct {

@@ -5,7 +5,9 @@ comptime {
     std.debug.assert(@hasDecl(SDLBackend, "SDLBackend"));
 }
 
+const Bus = @import("../device/Bus.zig");
 pub const VdpState = @import("VdpState.zig");
+pub const VdpThread = @import("VdpThread.zig");
 
 var gpa: std.mem.Allocator = undefined;
 pub const c = SDLBackend.c;
@@ -17,8 +19,13 @@ const frame_time_ns: u64 = 16_627_502; // ~60 FPS
 
 var window: *c.SDL_Window = undefined;
 var window_surface: *c.SDL_Surface = undefined;
-var surface: *c.SDL_Surface = undefined;
-var vdp: VdpState = undefined;
+
+// VDP thread and double buffering with two SDL surfaces
+var vdp_thread: *VdpThread = undefined;
+var shadow_queue: Bus.Queue = undefined;
+var surfaces: [2]*c.SDL_Surface = undefined;
+var front_surface_index: u32 = 0;
+var render_pending: bool = false;
 
 var run_time: std.time.Timer = undefined;
 var frame_count: u64 = 0;
@@ -131,25 +138,58 @@ fn getWindowFromEvent(event: *const c.SDL_Event) ?*c.SDL_Window {
 
 pub fn render_vdp_frame() void {
     const expected_frames = run_time.read() / frame_time_ns;
-    if (frame_count < expected_frames) {
-        while (frame_count < expected_frames) {
-            vdp.emulate_frame((expected_frames - frame_count) > 1);
+
+    // If a render is pending, check if it's done
+    if (render_pending) {
+        if (vdp_thread.tryGetResult()) |_| {
+            render_pending = false;
+            // Swap front/back surfaces
+            front_surface_index = 1 - front_surface_index;
             frame_count += 1;
         }
+    }
 
-        var window_w: c_int = 0;
-        var window_h: c_int = 0;
+    // Submit new render requests if we're behind
+    while (!render_pending and frame_count < expected_frames) {
+        const back_index = 1 - front_surface_index;
+        const back_surface = surfaces[back_index];
+        const skip = (expected_frames - frame_count) > 1;
 
-        _ = c.SDL_GetWindowSizeInPixels(window, &window_w, &window_h);
-
-        const srcrect: c.SDL_Rect = .{ .x = 0, .y = 0, .w = content_width, .h = content_height };
-        const dstrect: c.SDL_Rect = .{ .x = 0, .y = 0, .w = window_w, .h = window_h };
-
-        if (SDLBackend.sdl3) {
-            _ = c.SDL_BlitSurfaceScaled(surface, &srcrect, window_surface, &dstrect, c.SDL_SCALEMODE_NEAREST);
+        if (vdp_thread.submitRenderRequest(.{
+            .buffer = @ptrCast(@alignCast(back_surface.pixels.?)),
+            .width = content_width,
+            .height = content_height,
+            .pitch = @intCast(@divTrunc(back_surface.pitch, @sizeOf(u32))),
+            .skip = skip,
+        })) {
+            render_pending = true;
         } else {
-            _ = c.SDL_BlitScaled(surface, &srcrect, window_surface, @constCast(&dstrect));
+            break; // Queue full, try again next time
         }
+
+        // If skipping, wait for result immediately and continue
+        // Don't swap buffers - skipped frames don't render anything
+        if (skip) {
+            _ = vdp_thread.waitForResult();
+            render_pending = false;
+            frame_count += 1;
+        }
+    }
+
+    // Blit front surface to window
+    const front_surface = surfaces[front_surface_index];
+
+    var window_w: c_int = 0;
+    var window_h: c_int = 0;
+    _ = c.SDL_GetWindowSizeInPixels(window, &window_w, &window_h);
+
+    const srcrect: c.SDL_Rect = .{ .x = 0, .y = 0, .w = content_width, .h = content_height };
+    const dstrect: c.SDL_Rect = .{ .x = 0, .y = 0, .w = window_w, .h = window_h };
+
+    if (SDLBackend.sdl3) {
+        _ = c.SDL_BlitSurfaceScaled(front_surface, &srcrect, window_surface, &dstrect, c.SDL_SCALEMODE_NEAREST);
+    } else {
+        _ = c.SDL_BlitScaled(front_surface, &srcrect, window_surface, @constCast(&dstrect));
     }
 
     _ = c.SDL_UpdateWindowSurface(window);
@@ -177,8 +217,13 @@ pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
         if (vsync) {
             _ = c.SDL_SetWindowSurfaceVSync(window, 1);
         }
-        surface = c.SDL_CreateSurface(content_width, content_height, c.SDL_PIXELFORMAT_ARGB8888) orelse {
-            std.debug.print("Failed to create surface: {s}\n", .{c.SDL_GetError()});
+        // Create two surfaces for double buffering
+        surfaces[0] = c.SDL_CreateSurface(content_width, content_height, c.SDL_PIXELFORMAT_ARGB8888) orelse {
+            std.debug.print("Failed to create surface 0: {s}\n", .{c.SDL_GetError()});
+            return error.BackendError;
+        };
+        surfaces[1] = c.SDL_CreateSurface(content_width, content_height, c.SDL_PIXELFORMAT_ARGB8888) orelse {
+            std.debug.print("Failed to create surface 1: {s}\n", .{c.SDL_GetError()});
             return error.BackendError;
         };
     } else {
@@ -188,25 +233,50 @@ pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
         };
         window_surface = c.SDL_GetWindowSurface(window);
         _ = c.SDL_SetHint(c.SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
-        surface = c.SDL_CreateRGBSurfaceWithFormat(0, content_width, content_height, 32, c.SDL_PIXELFORMAT_ARGB8888) orelse {
-            std.debug.print("Failed to create surface: {s}\n", .{c.SDL_GetError()});
+        // Create two surfaces for double buffering
+        surfaces[0] = c.SDL_CreateRGBSurfaceWithFormat(0, content_width, content_height, 32, c.SDL_PIXELFORMAT_ARGB8888) orelse {
+            std.debug.print("Failed to create surface 0: {s}\n", .{c.SDL_GetError()});
+            return error.BackendError;
+        };
+        surfaces[1] = c.SDL_CreateRGBSurfaceWithFormat(0, content_width, content_height, 32, c.SDL_PIXELFORMAT_ARGB8888) orelse {
+            std.debug.print("Failed to create surface 1: {s}\n", .{c.SDL_GetError()});
             return error.BackendError;
         };
     }
 
-    vdp.init(allocator, VdpState.FrameBuffer{
-        .width = @intCast(surface.w),
-        .height = @intCast(surface.h),
-        .pixels = @ptrCast(@alignCast(surface.pixels.?)),
-        .pitch = @intCast(@divTrunc(surface.pitch, @sizeOf(u32))),
-    });
+    // Initialize shadow queue for CPU writes to VDP memory
+    shadow_queue = Bus.Queue.initCapacity(allocator, 1024) catch {
+        std.debug.print("Failed to create shadow queue\n", .{});
+        return error.OutOfMemory;
+    };
+
+    // Initialize VDP thread
+    vdp_thread = VdpThread.init(allocator, &shadow_queue, frame_time_ns) catch {
+        std.debug.print("Failed to create VDP thread\n", .{});
+        return error.OutOfMemory;
+    };
+
+    // Start the VDP thread
+    vdp_thread.start() catch {
+        std.debug.print("Failed to start VDP thread\n", .{});
+        return error.BackendError;
+    };
 }
 
 pub fn destroy_vdp_window() void {
+    // Stop VDP thread
+    vdp_thread.deinit();
+
+    // Free shadow queue
+    shadow_queue.deinit(gpa);
+
+    // Destroy surfaces
     if (SDLBackend.sdl3) {
-        _ = c.SDL_DestroySurface(surface);
+        _ = c.SDL_DestroySurface(surfaces[0]);
+        _ = c.SDL_DestroySurface(surfaces[1]);
     } else {
-        _ = c.SDL_FreeSurface(surface);
+        _ = c.SDL_FreeSurface(surfaces[0]);
+        _ = c.SDL_FreeSurface(surfaces[1]);
     }
     c.SDL_DestroyWindow(window);
 }
