@@ -8,6 +8,7 @@ comptime {
 const Bus = @import("../device/Bus.zig");
 pub const VdpState = @import("VdpState.zig");
 pub const VdpThread = @import("VdpThread.zig");
+pub const CpuThread = @import("../riscv/CpuThread.zig");
 
 var gpa: std.mem.Allocator = undefined;
 pub const c = SDLBackend.c;
@@ -25,12 +26,17 @@ var vdp_thread: *VdpThread = undefined;
 var shadow_queue: Bus.Queue = undefined;
 var surfaces: [2]*c.SDL_Surface = undefined;
 var front_surface_index: u32 = 0;
-var render_pending: bool = false;
+
+// CPU thread and frame synchronization
+var cpu_thread: ?*CpuThread = null;
+var frame_futex: std.atomic.Value(u32) = .init(0);
 
 var run_time: std.time.Timer = undefined;
 var frame_count: u64 = 0;
+var pending_frames: u64 = 0;
+var last_blit_time: u64 = 0;
 
-pub fn main(allocator: std.mem.Allocator) !void {
+pub fn main(allocator: std.mem.Allocator, rom_path: ?[]const u8) !void {
     if (@import("builtin").os.tag == .windows) { // optional
         // on windows graphical apps have no console, so output goes to nowhere - attach it manually. related: https://github.com/ziglang/zig/issues/4196
         dvui.Backend.Common.windowsAttachConsole() catch {};
@@ -42,11 +48,20 @@ pub fn main(allocator: std.mem.Allocator) !void {
     // app_init is a stand-in for what your application is already doing to set things up
     try open_vdp_window(allocator);
 
+    // Start CPU thread if ROM is provided
+    if (rom_path) |path| {
+        try start_cpu_thread(allocator, path);
+    }
+
     while (try process_events(null, null)) {
-        render_vdp_frame();
+        if (!run_frame()) {
+            break;
+        }
     }
 
     destroy_vdp_window();
+    destroy_cpu_thread();
+
     c.SDL_Quit();
 }
 
@@ -136,47 +151,115 @@ fn getWindowFromEvent(event: *const c.SDL_Event) ?*c.SDL_Window {
 }
 
 
-pub fn render_vdp_frame() void {
-    const expected_frames = run_time.read() / frame_time_ns;
+/// Main frame loop: coordinate CPU and VDP threads
+/// This runs once per monitor refresh (vsync)
+pub fn run_frame() bool {
+    const current_time = run_time.read();
+    const expected_frames = @max(1, current_time / frame_time_ns);
+    var frames_to_do = @min(3, expected_frames - (frame_count + pending_frames));
 
-    // If a render is pending, check if it's done
-    if (render_pending) {
-        if (vdp_thread.tryGetResult()) |_| {
-            render_pending = false;
-            // Swap front/back surfaces
-            front_surface_index = 1 - front_surface_index;
-            frame_count += 1;
+    // While we are behind, try to catch up by skipping frames and running the CPU as fast as possible
+    while (frames_to_do > 1) {
+        if (cpu_thread) |cpu| {
+            cpu.submitCommand(.run_frame);
+        }
+        submitVdpRenderRequest(true);
+        pending_frames += 1;
+        frames_to_do -= 1;
+
+        // If the frame_futex is the expected value (1)
+        if (frame_futex.cmpxchgWeak(1, 0, .release, .acquire) == null) {
+            // Wake any waiting threads
+            std.Thread.Futex.wake(&frame_futex, 10);
         }
     }
 
-    // Submit new render requests if we're behind
-    while (!render_pending and frame_count < expected_frames) {
-        const back_index = 1 - front_surface_index;
-        const back_surface = surfaces[back_index];
-        const skip = (expected_frames - frame_count) > 1;
+    var cpu_pending = pending_frames;
+    var vdp_pending = pending_frames;
 
-        if (vdp_thread.submitRenderRequest(.{
-            .buffer = @ptrCast(@alignCast(back_surface.pixels.?)),
-            .width = content_width,
-            .height = content_height,
-            .pitch = @intCast(@divTrunc(back_surface.pitch, @sizeOf(u32))),
-            .skip = skip,
-        })) {
-            render_pending = true;
-        } else {
-            break; // Queue full, try again next time
+    while (cpu_pending > 0 or vdp_pending > 0) {
+        // Check for CPU frame completion
+        if (cpu_pending > 0) {
+            if (cpu_thread) |cpu| {
+                if (cpu.tryGetCompletion()) |result| {
+                    cpu_pending -= 1;
+
+                    switch (result) {
+                        .cpu_halted => |error_level| {
+                            std.debug.print("error_level: {}\r\n", .{error_level});
+
+                            return false; // Stop main loop
+                        },
+                        .frame_complete => {
+                            // Normal frame completion
+                        },
+                    }
+                }
+            } else {
+                // No CPU thread, assume frame is done
+                cpu_pending -= 1;
+            }
         }
 
-        // If skipping, wait for result immediately and continue
-        // Don't swap buffers - skipped frames don't render anything
-        if (skip) {
-            _ = vdp_thread.waitForResult();
-            render_pending = false;
-            frame_count += 1;
+        // Check for VDP render completion
+        if (vdp_pending > 0) {
+            if (vdp_thread.tryGetResult()) |result| {
+                vdp_pending -= 1;
+                front_surface_index = result.index;
+                frame_count += 1;
+                pending_frames -= 1;
+            }
+        }
+
+        std.atomic.spinLoopHint();
+
+        // TODO: sleep?
+    }
+
+    // Queue another frame while we blit and wait for vsync
+    if (frames_to_do > 0) {
+        if (cpu_thread) |cpu| {
+            cpu.submitCommand(.run_frame);
+        }
+        submitVdpRenderRequest(false);
+        pending_frames += 1;
+
+        // If the frame_futex is the expected value (1)
+        if (frame_futex.cmpxchgWeak(1, 0, .release, .acquire) == null) {
+            // Wake any waiting threads
+            std.Thread.Futex.wake(&frame_futex, 10);
         }
     }
 
     // Blit front surface to window
+    // NOTE: this will wait for vsync
+    blitToWindow();
+    const current_blit_time = run_time.read();
+    // const frame_time = current_blit_time - last_blit_time;
+    last_blit_time = current_blit_time;
+
+    // if (frame_time > (frame_time_ns+(frame_time_ns / 2))) {
+    //     std.debug.print("Warning: Blit took too long: {} us\r\n", .{frame_time/1000});
+    // }
+
+    return true;
+}
+
+fn submitVdpRenderRequest(skip: bool) void {
+    const back_index = 1 - front_surface_index;
+    const back_surface = surfaces[back_index];
+
+    vdp_thread.submitRenderRequest(.{
+        .buffer = @ptrCast(@alignCast(back_surface.pixels.?)),
+        .width = content_width,
+        .height = content_height,
+        .pitch = @intCast(@divTrunc(back_surface.pitch, @sizeOf(u32))),
+        .skip = skip,
+        .index = back_index,
+    });
+}
+
+fn blitToWindow() void {
     const front_surface = surfaces[front_surface_index];
 
     var window_w: c_int = 0;
@@ -193,6 +276,25 @@ pub fn render_vdp_frame() void {
     }
 
     _ = c.SDL_UpdateWindowSurface(window);
+}
+
+pub fn start_cpu_thread(allocator: std.mem.Allocator, rom_path: []const u8) !void {
+    cpu_thread = CpuThread.init(allocator, &frame_futex, &shadow_queue, rom_path) catch |err| {
+        std.debug.print("Failed to create CPU thread: {}\n", .{err});
+        return error.OutOfMemory;
+    };
+
+    cpu_thread.?.start() catch {
+        std.debug.print("Failed to start CPU thread\n", .{});
+        return error.BackendError;
+    };
+}
+
+pub fn destroy_cpu_thread() void {
+    if (cpu_thread) |cpu| {
+        cpu.deinit();
+        cpu_thread = null;
+    }
 }
 
 pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
@@ -251,7 +353,7 @@ pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
     };
 
     // Initialize VDP thread
-    vdp_thread = VdpThread.init(allocator, &shadow_queue, frame_time_ns) catch {
+    vdp_thread = VdpThread.init(allocator, &shadow_queue, &frame_futex) catch {
         std.debug.print("Failed to create VDP thread\n", .{});
         return error.OutOfMemory;
     };
@@ -261,6 +363,8 @@ pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
         std.debug.print("Failed to start VDP thread\n", .{});
         return error.BackendError;
     };
+
+    last_blit_time = run_time.read();
 }
 
 pub fn destroy_vdp_window() void {

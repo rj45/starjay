@@ -1,0 +1,29 @@
+{ config: {'hscale': 3, 'skin': 'narrow'},
+  head: {tick: 0},
+  signal: [
+    {              name: 'clk',    wave: '0P.............'},
+    ['Read Read', 
+      {phase: 1.5, name: 'cmd',    wave: 'x72775755757757', data: ['ACT', 'NOP', 'READ', 'NOP', 'ACT', 'PRE', 'READ', 'NOP', 'ACT', 'PRE', 'READ', 'NOP', 'ACT', 'PRE']},
+      {phase: 1.5, name: 'dqm',    wave: 'xx.00x.00x.00x.'},
+      {phase: 1.5, name: 'addr',   wave: 'x7x7x5x5x7x7x5x', data: ['R0', 'C0','R1', 'C1','R2', 'C2', 'R3']},
+      {phase: 1.5, name: 'a10',    wave: 'x7x0x5x0x7x0x5x', data: ['R0', 'R1', 'R2', 'R3']},
+      {phase: 1.5, name: 'bank',   wave: 'x7x7x575x757x57', data: ['0', '0', '1','0', '1','0', '1','0', '1','0']},
+      {phase: 1.3, name: 'd_in',   wave: 'zzzzz77zz55zz77', data: ['D0L', 'D0H', 'D1L', 'D1H', 'D2L', 'D2H' ]},
+      {                            node: '.A.B.CD.E......'},
+      {                            node: '.F.......G.....'},
+    ],
+    ['Read Write', 
+      {phase: 1.5, name: 'cmd',    wave: 'x72775755757757', data: ['ACT', 'NOP', 'READ', 'NOP', 'ACT', 'PRE', 'NOP', 'WRITE', 'ACT', 'NOP', 'READ', 'NOP', 'ACT', 'PRE']},
+      {phase: 1.5, name: 'dqm',    wave: 'xx.00x..00x00x.'},
+      {phase: 1.5, name: 'addr',   wave: 'x7x7x5xx57x7x5x', data: ['R0', 'C0','R1', 'C1','R2', 'C2', 'R3']},
+      {phase: 1.5, name: 'a10',    wave: 'x7x0x5xx17x0x5x', data: ['R0', 'R1', 'R2', 'R3']},
+      {phase: 1.5, name: 'bank',   wave: 'x7x7x57x57x7x57', data: ['0', '0', '1','0', '1','0','0', '1','0']},
+      {phase: 1.3, name: 'd_in',   wave: 'zzzzz77zzzzzz77', data: ['D0L', 'D0H', 'D2L', 'D2H' ]},
+      {phase: 1.3, name: 'd_out',  wave: 'zzzzzzzz55zzzzz', data: ['D1L', 'D1H' ]},
+      {                            node: '.....K.L.H.I.J..'},
+    ]
+  ],
+  edge: [
+    'A+B T_RCD', 'B+C T_CAS', 'D+E T_RP', 'F+G T_RC', 'H+I T_WR/T_DPL', 'I+J T_RP', 'K+L T_RCD'
+  ]
+}

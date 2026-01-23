@@ -67,10 +67,12 @@ pub fn main() !void {
     }
 
     if (res.args.debugger != 0) {
-        try debugger.main(gpa, res.args.vdp != 0);
+        std.debug.print("Debugger is currently broken, sorry.\n", .{});
+        // try debugger.main(gpa, res.args.vdp != 0);
         return;
     } else if (res.args.vdp != 0) {
-        try vdp.main(gpa);
+        try vdp.main(gpa, res.args.rom);
+        return;
     }
 
     if (res.args.rom) |rom| {

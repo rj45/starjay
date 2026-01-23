@@ -106,7 +106,9 @@ pub fn main(gpa: std.mem.Allocator, show_vdp: bool) !void {
         try backend.textInputRect(win.textInputRequested());
 
         if (show_vdp) {
-            vdp.render_vdp_frame();
+            if(!vdp.run_frame()) {
+                break :main_loop;
+            }
         }
 
         // render frame to OS
@@ -201,20 +203,20 @@ fn dvui_frame() !bool {
             }
         }
 
-
-        if (dvui.menuItemLabel(@src(), "Debug", .{ .submenu = true }, .{})) |r| {
-            var fw = dvui.floatingMenu(@src(), .{ .from = r }, .{});
-            defer fw.deinit();
-            const label = if (dvui.Examples.show_demo_window) "Hide Demo" else "Show Demo";
-            if (dvui.menuItemLabel(@src(), label, .{}, .{ .expand = .horizontal }) != null) {
-                dvui.Examples.show_demo_window = !dvui.Examples.show_demo_window;
-                m.close();
-            }
-            if (dvui.menuItemLabel(@src(), "Dvui Debug", .{}, .{ .expand = .horizontal }) != null) {
-                dvui.toggleDebugWindow();
-                m.close();
-            }
-        }
+        // Commented out because the demo window and debug window take a long time to compile
+        // if (dvui.menuItemLabel(@src(), "Debug", .{ .submenu = true }, .{})) |r| {
+        //     var fw = dvui.floatingMenu(@src(), .{ .from = r }, .{});
+        //     defer fw.deinit();
+        //     const label = if (dvui.Examples.show_demo_window) "Hide Demo" else "Show Demo";
+        //     if (dvui.menuItemLabel(@src(), label, .{}, .{ .expand = .horizontal }) != null) {
+        //         dvui.Examples.show_demo_window = !dvui.Examples.show_demo_window;
+        //         m.close();
+        //     }
+        //     if (dvui.menuItemLabel(@src(), "Dvui Debug", .{}, .{ .expand = .horizontal }) != null) {
+        //         dvui.toggleDebugWindow();
+        //         m.close();
+        //     }
+        // }
 
         if (dvui.backend.kind == .web) upload: {
             if (dvui.wasmFileUploaded(wasm_file_id)) |file| {

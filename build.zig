@@ -6,15 +6,16 @@ pub fn build(b: *std.Build) void {
     const sdl2 = b.option(bool, "sdl2", "Build for SDL2 instead of SDL3") orelse false;
     const sdl3 = !sdl2;
 
-    // const backend:  = if (sdl3) .sdl3 else .sdl2;
+    // For dvui and SDL, never use Debug mode; use ReleaseSafe instead.
+    const ui_opt_mode: @TypeOf(optimize) = if (optimize == .Debug) .ReleaseSafe else optimize;
 
     const dvui_dep = if (sdl3) b.dependency("dvui", .{
         .target = target,
-        .optimize = optimize,
-        .backend =  .sdl3,
+        .optimize = ui_opt_mode,
+        .backend = .sdl3,
     }) else b.dependency("dvui", .{
         .target = target,
-        .optimize = optimize,
+        .optimize = ui_opt_mode,
         .backend = .sdl2,
     });
 

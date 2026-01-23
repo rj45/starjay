@@ -23,6 +23,7 @@ const FrameBuffer = VdpState.FrameBuffer;
 
 /// Render request sent from UI thread to VDP thread
 pub const RenderRequest = struct {
+    index: u32,
     buffer: [*]u32,
     width: u32,
     height: u32,
@@ -33,6 +34,7 @@ pub const RenderRequest = struct {
 /// Render result sent from VDP thread back to UI thread
 pub const RenderResult = struct {
     buffer: [*]u32,
+    index: u32,
 };
 
 pub const RequestQueue = spsc_queue.SpscQueuePo2Unmanaged(RenderRequest);
@@ -51,9 +53,7 @@ result_queue: ResultQueue,
 // Thread control
 thread: ?std.Thread,
 running: std.atomic.Value(bool),
-
-// Timing
-frame_time_ns: u64,
+frame_futex: *std.atomic.Value(u32),
 
 // Allocator for cleanup
 allocator: std.mem.Allocator,
@@ -61,7 +61,7 @@ allocator: std.mem.Allocator,
 pub fn init(
     allocator: std.mem.Allocator,
     shadow_queue: *ShadowQueue,
-    frame_time_ns: u64,
+    frame_futex: *std.atomic.Value(u32),
 ) !*VdpThread {
     const self = try allocator.create(VdpThread);
     errdefer allocator.destroy(self);
@@ -69,7 +69,7 @@ pub fn init(
     self.shadow_queue = shadow_queue;
     self.thread = null;
     self.running = std.atomic.Value(bool).init(false);
-    self.frame_time_ns = frame_time_ns;
+    self.frame_futex = frame_futex;
     self.allocator = allocator;
 
     // Initialize queues (small capacity is fine, typically 1-2 in flight)
@@ -99,11 +99,13 @@ pub fn start(self: *VdpThread) !void {
 
     self.running.store(true, .release);
     self.thread = try std.Thread.spawn(.{}, threadMain, .{self});
+    try self.thread.?.setName("starjay/VDP");
 }
 
 pub fn stop(self: *VdpThread) void {
     if (self.thread) |thread| {
         self.running.store(false, .release);
+        std.Thread.Futex.wake(self.frame_futex, 10);
         thread.join();
         self.thread = null;
     }
@@ -111,8 +113,8 @@ pub fn stop(self: *VdpThread) void {
 
 /// Submit a render request (called by UI thread).
 /// Returns true if the request was queued, false if queue is full.
-pub fn submitRenderRequest(self: *VdpThread, request: RenderRequest) bool {
-    return self.request_queue.tryPush(request);
+pub fn submitRenderRequest(self: *VdpThread, request: RenderRequest) void {
+    self.request_queue.push(request);
 }
 
 /// Try to get a completed render result (called by UI thread).
@@ -133,25 +135,19 @@ pub fn waitForResult(self: *VdpThread) RenderResult {
         if (self.tryGetResult()) |result| {
             return result;
         }
-        std.Thread.yield() catch {};
+        std.atomic.spinLoopHint();
     }
 }
 
 fn threadMain(self: *VdpThread) void {
-    // Wake up this early before expected frame to account for sleep inaccuracy
-    const early_wakeup_ns: u64 = 4_000_000; // 4ms
-
-    var timer = std.time.Timer.start() catch unreachable;
-    var last_frame_time: u64 = 0;
-
     while (self.running.load(.acquire)) {
-        // Always drain shadow queue (memory writes from CPU)
-        self.drainShadowQueue();
-
         // Check for render requests
-        if (self.request_queue.front()) |request| {
+        while (self.request_queue.front()) |request| {
             const req = request.*;
             self.request_queue.pop();
+
+            // Always drain shadow queue (memory writes from CPU)
+            self.drainShadowQueue();
 
             // Set up frame buffer from request
             self.device.vdp.frame_buffer = FrameBuffer{
@@ -165,25 +161,13 @@ fn threadMain(self: *VdpThread) void {
             self.device.vdp.emulate_frame(req.skip);
 
             // Send result back to UI thread
-            self.result_queue.push(.{ .buffer = req.buffer });
+            self.result_queue.push(.{ .index = req.index, .buffer = req.buffer });
+        }
 
-            // Record when this frame completed
-            last_frame_time = timer.read();
-        } else {
-            // No request pending - sleep intelligently
-            const now = timer.read();
-            const time_since_last_frame = now - last_frame_time;
-
-            if (time_since_last_frame < self.frame_time_ns) {
-                const time_until_next_frame = self.frame_time_ns - time_since_last_frame;
-
-                if (time_until_next_frame > early_wakeup_ns) {
-                    // Sleep until early_wakeup_ns before the next expected frame
-                    std.Thread.sleep(time_until_next_frame - early_wakeup_ns);
-                }
-                // Spin wait for the remaining time (or if close to frame time)
-            }
-            // If past expected frame time, just spin waiting for the request
+        if (self.running.load(.acquire)) {
+            // Wait for the next frame
+            self.frame_futex.store(1, .release);
+            std.Thread.Futex.wait(self.frame_futex, 1);
         }
     }
 }
