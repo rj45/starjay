@@ -122,6 +122,6 @@ pub fn loadRom(self: *Sram, rom_file: []const u8) !void {
 
     const file_size = try file.getEndPos();
 
-    std.log.info("Load {} bytes as rom", .{file_size});
+    std.debug.print("Load {} bytes as rom\r\n", .{file_size});
     _ = try file.readAll(@ptrCast(self.mem));
 }

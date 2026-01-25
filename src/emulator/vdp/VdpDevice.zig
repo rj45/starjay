@@ -12,7 +12,7 @@
 //                  512 sprites × 4 bytes = 2048 bytes
 //                  Per sprite word: bits[3:0]=y_height[35:32], [7:4]=x_width[35:32],
 //                                   [11:8]=addr[35:32], [15:12]=velocity[35:32]
-// 0x2800 - 0x67FF: VRAM (tilemap and tile bitmap data)
+// 0x4000 - 0x7FFF: VRAM (tilemap and tile bitmap data)
 //                  16 KB = 16384 bytes
 
 const std = @import("std");
@@ -32,18 +32,14 @@ pub const SPRITE_ATTR_BASE: Addr = 0x0000;
 pub const SPRITE_ATTR_SIZE: Addr = 0x2000; // 8192 bytes (512 sprites × 4 attrs × 4 bytes)
 pub const SPRITE_HIGH_BASE: Addr = 0x2000;
 pub const SPRITE_HIGH_SIZE: Addr = 0x0800; // 2048 bytes (512 sprites × 4 bytes)
-pub const VRAM_BASE: Addr = 0x2800;
-pub const VRAM_SIZE: Addr = 0x4000; // 16384 bytes
-pub const TOTAL_SIZE: Addr = VRAM_BASE + VRAM_SIZE; // 0x6800 = 26624 bytes
-
-// VRAM storage (tilemap and tile bitmap data)
-vram: [VRAM_SIZE]u8 align(4),
+pub const PALETTE_BASE: Addr = 0x3000;
+pub const VRAM_BASE: Addr = 0x4000;
+pub const TOTAL_SIZE: Addr = VRAM_BASE + VdpState.VRAM_SIZE;
 
 // VDP state (owns the sprite attribute arrays)
 vdp: VdpState,
 
 pub fn init(self: *VdpDevice, allocator: std.mem.Allocator, frame_buffer: VdpState.FrameBuffer) void {
-    self.vram = .{0} ** VRAM_SIZE;
     self.vdp.init(allocator, frame_buffer);
 }
 
@@ -60,7 +56,10 @@ pub fn access(self: *VdpDevice, transaction: Transaction) Transaction {
     } else if (addr < SPRITE_HIGH_BASE + SPRITE_HIGH_SIZE) {
         // Sprite high bits table
         result = self.accessSpriteHigh(transaction);
-    } else if (addr < VRAM_BASE + VRAM_SIZE) {
+    } else if (addr >= PALETTE_BASE and addr < PALETTE_BASE + VdpState.PALETTE_SIZE) {
+        // Pallette RAM
+        result = self.accessPalette(transaction);
+    } else if (addr >= VRAM_BASE and addr < VRAM_BASE + VdpState.VRAM_SIZE) {
         // VRAM
         result = self.accessVram(transaction);
     }
@@ -114,7 +113,7 @@ fn accessSpriteHigh(self: *VdpDevice, transaction: Transaction) Transaction {
     const byte_offset = addr % 4;
 
     if (sprite_index >= 512) return result;
-    if (byte_offset != 0 or transaction.bytes != 0b1111) {
+    if (byte_offset != 0 or transaction.bytes != 0b1111 ) {
         // For now, only support aligned 32-bit accesses
         return result;
     }
@@ -157,37 +156,76 @@ fn accessSpriteHigh(self: *VdpDevice, transaction: Transaction) Transaction {
     return result;
 }
 
+fn accessPalette(self: *VdpDevice, transaction: Transaction) Transaction {
+    var result = transaction;
+    result.duration += 1;
+
+    const addr = transaction.address - PALETTE_BASE;
+    if (addr >= VdpState.PALETTE_SIZE) return result;
+
+    if (transaction.write) {
+        if (transaction.bytes == 0b1111 and addr % 4 == 0) {
+            self.vdp.palette[addr / 4] = transaction.data;
+            result.valid = true;
+        } else if (transaction.bytes == 0b0011 and addr % 2 == 0) {
+            const half_ptr: [*]u16 = @alignCast(@ptrCast(&self.vdp.palette[addr / 4]));
+            half_ptr[addr % 2] = @truncate(transaction.data);
+            result.valid = true;
+        } else if (transaction.bytes == 0b0001) {
+            const byte_ptr: [*]u8 = @alignCast(@ptrCast(&self.vdp.palette[addr / 4]));
+            byte_ptr[addr % 4] = @truncate(transaction.data);
+            result.valid = true;
+        }
+    } else {
+        if (transaction.bytes == 0b1111 and addr % 4 == 0) {
+            result.data = self.vdp.palette[addr/4];
+            result.valid = true;
+        } else if (transaction.bytes == 0b0011 and addr % 2 == 0) {
+            const half_ptr: [*]u16 = @alignCast(@ptrCast(&self.vdp.palette[addr / 4]));
+            result.data = half_ptr[addr % 2];
+            result.valid = true;
+        } else if (transaction.bytes == 0b0001) {
+            const byte_ptr: [*]u8 = @alignCast(@ptrCast(&self.vdp.palette[addr / 4]));
+            result.data = byte_ptr[addr % 4];
+            result.valid = true;
+        }
+    }
+
+    return result;
+}
+
+
 fn accessVram(self: *VdpDevice, transaction: Transaction) Transaction {
     var result = transaction;
     result.duration += 1;
 
     const addr = transaction.address - VRAM_BASE;
-    if (addr >= VRAM_SIZE) return result;
+    if (addr >= VdpState.VRAM_SIZE) return result;
 
     if (transaction.write) {
         if (transaction.bytes == 0b1111 and addr % 4 == 0) {
-            const word_ptr: *u32 = @alignCast(@ptrCast(&self.vram[addr]));
+            const word_ptr: *u32 = @alignCast(@ptrCast(&self.vdp.vram[addr]));
             word_ptr.* = transaction.data;
             result.valid = true;
         } else if (transaction.bytes == 0b0011 and addr % 2 == 0) {
-            const half_ptr: *u16 = @alignCast(@ptrCast(&self.vram[addr]));
+            const half_ptr: *u16 = @alignCast(@ptrCast(&self.vdp.vram[addr]));
             half_ptr.* = @truncate(transaction.data);
             result.valid = true;
         } else if (transaction.bytes == 0b0001) {
-            self.vram[addr] = @truncate(transaction.data);
+            self.vdp.vram[addr] = @truncate(transaction.data);
             result.valid = true;
         }
     } else {
         if (transaction.bytes == 0b1111 and addr % 4 == 0) {
-            const word_ptr: *u32 = @alignCast(@ptrCast(&self.vram[addr]));
+            const word_ptr: *u32 = @alignCast(@ptrCast(&self.vdp.vram[addr]));
             result.data = word_ptr.*;
             result.valid = true;
         } else if (transaction.bytes == 0b0011 and addr % 2 == 0) {
-            const half_ptr: *u16 = @alignCast(@ptrCast(&self.vram[addr]));
+            const half_ptr: *u16 = @alignCast(@ptrCast(&self.vdp.vram[addr]));
             result.data = half_ptr.*;
             result.valid = true;
         } else if (transaction.bytes == 0b0001) {
-            result.data = self.vram[addr];
+            result.data = self.vdp.vram[addr];
             result.valid = true;
         }
     }

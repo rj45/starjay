@@ -167,7 +167,6 @@ pub fn init(
     const dtb: []u32 = @as([*]u32, @alignCast(@ptrCast(self.memory.ptr + dtb_off)))[0 .. device_table.len / 4];
     if (dtb[0x13c / 4] == 0x00c0ff03) {
         const validram: u32 = dtb_off;
-        std.debug.print("Updating ram size: {x}\n", .{dtb_off});
         dtb[0x13c / 4] = (validram >> 24) | (((validram >> 16) & 0xff) << 8) | (((validram >> 8) & 0xff) << 16) | ((validram & 0xff) << 24);
     }
 

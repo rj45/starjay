@@ -277,7 +277,7 @@ pub const CpuState = struct {
             word.* = 0;
         }
 
-        std.log.info("Load {} bytes as rom", .{file_size});
+        std.debug.print("Load {} bytes as rom\r\n", .{file_size});
         _ = try file.readAll(@ptrCast(self.memory));
     }
 };

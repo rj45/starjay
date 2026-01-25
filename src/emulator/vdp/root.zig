@@ -347,7 +347,7 @@ pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
     }
 
     // Initialize shadow queue for CPU writes to VDP memory
-    shadow_queue = Bus.Queue.initCapacity(allocator, 1024) catch {
+    shadow_queue = Bus.Queue.initCapacity(allocator, 0x200000) catch {
         std.debug.print("Failed to create shadow queue\n", .{});
         return error.OutOfMemory;
     };

@@ -39,8 +39,9 @@ pub const SpriteXWidth = packed struct(u36) {
 };
 
 pub const SpriteAddr = packed struct(u36) {
-    tile_bitmap_addr: u18,
-    tilemap_addr: u18,
+    tile_bitmap_addr: u16,
+    tilemap_addr: u16,
+    unused: u4,
 };
 
 pub const SpriteVelocity = packed struct(u36) {

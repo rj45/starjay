@@ -56,6 +56,16 @@ There is a RISC-V emulator included, activated with the `--riscv` flag:
 zig build run -- --riscv --rom <riscv_rom.bin> 
 ```
 
+### Running the VDP Demo
+
+You can run the VDP demo using the included RISC-V support:
+
+```bash
+cd riscv/examples/vdp_demo && zig build && cd ../../../
+zig build run --release=safe -- --riscv --vdp --rom riscv/examples/vdp_demo/zig-out/bin/vdp_demo.bin
+
+```
+
 ### Running Linux
 
 You can run a minimal Linux system using the included RISC-V support:

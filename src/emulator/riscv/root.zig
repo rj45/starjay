@@ -51,7 +51,6 @@ pub fn main(rom_file: []const u8, max_cycles: usize, quiet: bool, gpa: std.mem.A
     var dtb: []u32 = @ptrCast(memory[dtb_off..]);
     if (dtb[0x13c / 4] == 0x00c0ff03) {
         const validram: u32 = dtb_off;
-        std.debug.print("Updating ram size: {x}\n", .{dtb_off});
         dtb[0x13c / 4] = (validram >> 24) | (((validram >> 16) & 0xff) << 8) | (((validram >> 8) & 0xff) << 16) | ((validram & 0xff) << 24);
     }
 

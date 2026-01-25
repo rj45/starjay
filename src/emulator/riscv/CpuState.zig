@@ -63,7 +63,7 @@ pub fn run(self: *CpuState, clint: *Clint, max_cycles: usize, fail_on_all_faults
         @as(f64, @floatFromInt(cycles)) / (@as(f64, @floatFromInt(elapsed)) / 1_000_000_000.0)
     else
         0.0;
-    std.debug.print("\n\nExecution completed in {d} cycles, elapsed time: {d} ms, {d:.2} cycles/sec\n", .{
+    std.debug.print("\n\nExecution completed in {d} cycles, elapsed time: {d} ms, {d:.2} cycles/sec\r\n", .{
         cycles,
         elapsed / 1_000_000,
         cycles_per_sec,
@@ -113,7 +113,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
         var pc: Word = self.reg.pc;
 
         if (pc & 3 != 0) {
-            std.debug.print("PC Misalignment fault: {x}\n", .{pc});
+            std.debug.print("PC Misalignment fault: {x}\r\n", .{pc});
             trap = 1 + 0; //Handle PC-misaligned access
         } else {
             const fetch = self.bus.access(.{
@@ -125,7 +125,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
             self.cycles +%= fetch.duration -% 1; // minus 1 because we are presuming a pipelined fetch
 
             if (!fetch.valid) {
-                std.debug.print("Instruction access fault: {x}\n", .{pc});
+                //std.debug.print("Instruction access fault: {x}\r\n", .{pc});
                 trap = 1 + 1; // Instruction access fault.
                 ir = 0x13; // NOP
             } else {
@@ -140,7 +140,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
                 0b1101111 => { // JAL
                     const reladdy  = signExtend(((ir & 0x80000000) >> 11) | ((ir & 0x7fe00000) >> 20) | ((ir & 0x00100000) >> 9) | ((ir & 0x000ff000)), 21);
                     rval = pc + 4;
-                    pc = pc +% @as(Word, reladdy - 4);
+                    pc = pc +% @as(Word, reladdy) -% @as(Word, 4);
                 },
                 0b1100111 => { // JALR
                     const imm: Word = signExtend(ir >> 20, 12);
@@ -206,7 +206,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
                     self.cycles +%= result.duration;
 
                     if (!result.valid) {
-                        std.debug.print("Load access fault: pc: {x}, addy: {x}\n", .{self.reg.pc, rsval});
+                        std.debug.print("Load access fault: pc: {x}, addy: {x}\r\n", .{self.reg.pc, rsval});
                         trap = (5 + 1); // Load access fault.
                         rval = rsval;
                     } else {
@@ -252,7 +252,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
                     self.cycles +%= result.duration;
 
                     if (!result.valid) {
-                        std.debug.print("Store access fault: pc: {x}, addy: {x}\n", .{self.reg.pc, addy});
+                        std.debug.print("Store access fault: pc: {x}, addy: {x}\r\n", .{self.reg.pc, addy});
                         trap = (7 + 1); // Store access fault.
                         rval = addy;
                     }
@@ -537,8 +537,8 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
 
         if (trap > 0 and trap < 0x80000000) {
             if (fail_on_all_faults) {
-                //*printf( "FAULT\n" );*/
-                std.debug.print("FAULT: {}\n", .{trap});
+                //*printf( "FAULT\r\n" );*/
+                std.debug.print("FAULT: {}\r\n", .{trap});
                 return trap;
             } else {
                 trap = handle_exception(ir, trap);
@@ -577,7 +577,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
 }
 
 fn handle_exception(ir: Word, code: Word) Word {
-    //std.debug.print("PROCESSOR EXCEPTION ir:{x} code:{x}\n", .{ir, code});
+    //std.debug.print("PROCESSOR EXCEPTION ir:{x} code:{x}\r\n", .{ir, code});
     _ = ir;
     return code;
 }
