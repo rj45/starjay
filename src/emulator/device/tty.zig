@@ -258,7 +258,7 @@ pub const TestTty = struct {
     }
 
     pub fn reader(self: *TestTty) *std.Io.Reader {
-        return &self.tty_reader.reader;
+        return &self.tty_reader.interface;
     }
 
     pub fn resetSignalHandler() void {

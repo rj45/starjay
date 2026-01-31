@@ -10,16 +10,11 @@ pub const Clint = @import("device/Clint.zig");
 pub const Sram = @import("device/Sram.zig");
 pub const Uart = @import("device/Uart.zig");
 pub const Shadow = @import("device/shadow.zig").Shadow;
-
-pub const VdpDevice = @import("vdp/Device.zig");
-pub const VdpState = @import("vdp/State.zig");
+pub const Vdp = @import("Vdp.zig");
 
 pub const Thread = @import("system/Thread.zig");
 
 pub const Word = Bus.Word;
-pub const SWord = Bus.SWord;
-pub const WORDSIZE = riscv.WORDSIZE;
-pub const WORDBYTES = riscv.WORDBYTES;
 pub const RAM_IMAGE_OFFSET = riscv.RAM_IMAGE_OFFSET;
 pub const DEVICE_TABLE = riscv.DEVICE_TABLE;
 
@@ -29,7 +24,7 @@ const FRAME_TIME_NS: u64 = 16_627_502; // ~60 FPS
 
 // Memory map constants
 pub const VDP_BASE: u32 = 0x2000_0000;
-pub const VDP_SIZE: u32 = VdpDevice.TOTAL_SIZE;
+pub const VDP_SIZE: u32 = Vdp.Device.TOTAL_SIZE;
 
 pub const System = @This();
 
@@ -39,7 +34,7 @@ clint: Clint,
 uart: Uart,
 sram: Sram,
 cpu: riscv.CpuState,
-vdp_shadow: Shadow(VdpDevice),
+vdp_shadow: Shadow(Vdp.Device),
 
 pub fn init(rom_file: []const u8, quiet: bool, vdp_queue: ?*Bus.Queue, gpa: std.mem.Allocator) !*System {
     var self = try gpa.create(System);
@@ -65,7 +60,7 @@ pub fn init(rom_file: []const u8, quiet: bool, vdp_queue: ?*Bus.Queue, gpa: std.
     try self.sram.loadRom(rom_file);
     try self.bus.attach(Device.init(&self.sram, RAM_IMAGE_OFFSET, RAM_IMAGE_OFFSET+memsize));
 
-    self.vdp_shadow = Shadow(VdpDevice).init(VdpDevice.init(), vdp_queue);
+    self.vdp_shadow = Shadow(Vdp.Device).init(Vdp.Device.init(), vdp_queue);
     try self.bus.attach(Device.init(&self.vdp_shadow, VDP_BASE, VDP_BASE + VDP_SIZE));
 
     self.cpu = riscv.CpuState.init(&self.bus);
@@ -115,4 +110,9 @@ pub fn run(self: *System, max_cycles: usize) !void {
     const byte_val: u8 = @truncate(error_level & 0xff);
 
     std.process.exit(byte_val);
+}
+
+test {
+    // Run all tests in submodules
+    @import("std").testing.refAllDecls(@This());
 }

@@ -271,13 +271,10 @@ pub const CpuState = struct {
         var file = try std.fs.cwd().openFile(rom_file, .{});
         defer file.close();
 
-        const file_size = try file.getEndPos();
-
         for (self.memory) |*word| {
             word.* = 0;
         }
 
-        std.debug.print("Load {} bytes as rom\r\n", .{file_size});
         _ = try file.readAll(@ptrCast(self.memory));
     }
 };

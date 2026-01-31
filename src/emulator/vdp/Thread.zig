@@ -6,14 +6,12 @@ const spsc_queue = @import("spsc_queue");
 
 const Bus = @import("../device/Bus.zig");
 const Device = @import("Device.zig");
-const VdpState = @import("State.zig");
+const State = @import("State.zig");
 
 const Transaction = Bus.Transaction;
 const ShadowQueue = Bus.Queue;
 
 pub const Thread = @This();
-
-const FrameBuffer = VdpState.FrameBuffer;
 
 /// Render request sent from UI thread to VDP thread
 pub const RenderRequest = struct {
@@ -34,7 +32,7 @@ pub const RenderResult = struct {
 pub const RequestQueue = spsc_queue.SpscQueuePo2Unmanaged(RenderRequest);
 pub const ResultQueue = spsc_queue.SpscQueuePo2Unmanaged(RenderResult);
 
-// VDP device (owns VdpState)
+// VDP device (owns State)
 device: Device,
 
 // Shadow queue to consume memory write transactions from
@@ -139,7 +137,7 @@ fn threadMain(self: *Thread) void {
             self.drainShadowQueue();
 
             // Set up frame buffer from request
-            self.device.vdp.frame_buffer = FrameBuffer{
+            self.device.vdp.frame_buffer = State.FrameBuffer{
                 .width = req.width,
                 .height = req.height,
                 .pitch = req.pitch,

@@ -1,19 +1,6 @@
 // (C) 2026 Ryan "rj45" Sanche, MIT License
 //
-// VdpDevice: Memory-mapped device interface for the VDP
-// Implements the Device interface and owns vdp.State.
-// Translates addresses directly to vdp.State's sprite attribute arrays.
-//
-// Address Space (contiguous addressing):
-// 0x0000 - 0x1FFF: Sprite attribute table (low 32 bits)
-//                  512 sprites × 4 attributes × 4 bytes = 8192 bytes
-//                  Per sprite (16 bytes): [y_height_lo, x_width_lo, addr_lo, velocity_lo]
-// 0x2000 - 0x27FF: Sprite high bits table
-//                  512 sprites × 4 bytes = 2048 bytes
-//                  Per sprite word: bits[3:0]=y_height[35:32], [7:4]=x_width[35:32],
-//                                   [11:8]=addr[35:32], [15:12]=velocity[35:32]
-// 0x4000 - 0x7FFF: VRAM (tilemap and tile bitmap data)
-//                  16 KB = 16384 bytes
+// Vdp.Device: Memory-mapped device interface for the VDP
 
 const std = @import("std");
 
@@ -25,7 +12,7 @@ const Transaction = Bus.Transaction;
 const Addr = Bus.Addr;
 const Word = Bus.Word;
 
-pub const VdpDevice = @This();
+pub const Device = @This();
 
 // Memory region constants
 pub const SPRITE_ATTR_BASE: Addr = 0x0000;
@@ -39,14 +26,14 @@ pub const TOTAL_SIZE: Addr = VRAM_BASE + State.VRAM_SIZE;
 // VDP state (owns the sprite attribute arrays)
 vdp: State,
 
-pub fn init() VdpDevice {
+pub fn init() Device {
     return .{
         .vdp = State.init(),
     };
 }
 
 /// Device interface: handle memory-mapped access
-pub fn access(self: *VdpDevice, transaction: Transaction) Transaction {
+pub fn access(self: *Device, transaction: Transaction) Transaction {
     var result = transaction;
     result.duration += 1;
 
@@ -69,7 +56,7 @@ pub fn access(self: *VdpDevice, transaction: Transaction) Transaction {
     return result;
 }
 
-fn accessSpriteAttrLo(self: *VdpDevice, transaction: Transaction) Transaction {
+fn accessSpriteAttrLo(self: *Device, transaction: Transaction) Transaction {
     var result = transaction;
     result.duration += 1;
 
@@ -103,7 +90,7 @@ fn accessSpriteAttrLo(self: *VdpDevice, transaction: Transaction) Transaction {
     return result;
 }
 
-fn accessSpriteHigh(self: *VdpDevice, transaction: Transaction) Transaction {
+fn accessSpriteHigh(self: *Device, transaction: Transaction) Transaction {
     var result = transaction;
     result.duration += 1;
 
@@ -157,7 +144,7 @@ fn accessSpriteHigh(self: *VdpDevice, transaction: Transaction) Transaction {
     return result;
 }
 
-fn accessPalette(self: *VdpDevice, transaction: Transaction) Transaction {
+fn accessPalette(self: *Device, transaction: Transaction) Transaction {
     var result = transaction;
     result.duration += 1;
 
@@ -203,7 +190,7 @@ fn accessPalette(self: *VdpDevice, transaction: Transaction) Transaction {
 }
 
 // TODO: this is nearly identical to accessPalette - refactor
-fn accessVram(self: *VdpDevice, transaction: Transaction) Transaction {
+fn accessVram(self: *Device, transaction: Transaction) Transaction {
     var result = transaction;
     result.duration += 1;
 
@@ -247,18 +234,18 @@ fn accessVram(self: *VdpDevice, transaction: Transaction) Transaction {
     return result;
 }
 
-inline fn getVram(self: *VdpDevice, addr: usize) u32 {
+inline fn getVram(self: *Device, addr: usize) u32 {
     const vram: []u32 = std.mem.bytesAsSlice(u32, &self.vdp.vram);
     return vram[addr / 4];
 }
 
-inline fn setVram(self: *VdpDevice, addr: usize, value: u32) void {
+inline fn setVram(self: *Device, addr: usize, value: u32) void {
     const vram: []u32 = std.mem.bytesAsSlice(u32, &self.vdp.vram);
     vram[addr / 4] = value;
 }
 
 /// Get a sprite attribute as u36 by sprite index and attribute index (0-3)
-fn getSpriteAttr36(self: *VdpDevice, sprite_index: usize, attr_index: usize) u36 {
+fn getSpriteAttr36(self: *Device, sprite_index: usize, attr_index: usize) u36 {
     return switch (attr_index) {
         0 => @bitCast(self.vdp.sprite_y_height[sprite_index]),
         1 => @bitCast(self.vdp.sprite_x_width[sprite_index]),
@@ -269,7 +256,7 @@ fn getSpriteAttr36(self: *VdpDevice, sprite_index: usize, attr_index: usize) u36
 }
 
 /// Set a sprite attribute from u36 by sprite index and attribute index (0-3)
-fn setSpriteAttr36(self: *VdpDevice, sprite_index: usize, attr_index: usize, value: u36) void {
+fn setSpriteAttr36(self: *Device, sprite_index: usize, attr_index: usize, value: u36) void {
     switch (attr_index) {
         0 => self.vdp.sprite_y_height[sprite_index] = @bitCast(value),
         1 => self.vdp.sprite_x_width[sprite_index] = @bitCast(value),

@@ -2,7 +2,7 @@ const std = @import("std");
 const dvui = @import("dvui");
 const Backend = @import("backend");
 const debugger = @import("debugger.zig");
-const vdp = @import("../emulator/vdp/root.zig");
+const vdp = @import("../emulator/vdp/main.zig");
 
 const sourceView = @import("source_view.zig");
 const disasm = debugger.disasm;

@@ -6,12 +6,11 @@ comptime {
 }
 
 const Bus = @import("../device/Bus.zig");
-pub const VdpState = @import("State.zig");
-pub const VdpThread = @import("Thread.zig");
-pub const System = @import("../System.zig");
+const System = @import("../System.zig");
+const Vdp = @import("../Vdp.zig");
 
 var gpa: std.mem.Allocator = undefined;
-pub const c = SDLBackend.c;
+const c = SDLBackend.c;
 
 const vsync = true;
 const content_width = 1280;
@@ -22,7 +21,7 @@ var window: *c.SDL_Window = undefined;
 var window_surface: *c.SDL_Surface = undefined;
 
 // VDP thread and double buffering with two SDL surfaces
-var vdp_thread: *VdpThread = undefined;
+var vdp_thread: *Vdp.Thread = undefined;
 var shadow_queue: Bus.Queue = undefined;
 var surfaces: [2]*c.SDL_Surface = undefined;
 var front_surface_index: u32 = 0;
@@ -356,7 +355,7 @@ pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
     };
 
     // Initialize VDP thread
-    vdp_thread = VdpThread.init(allocator, &shadow_queue, &frame_futex) catch {
+    vdp_thread = Vdp.Thread.init(allocator, &shadow_queue, &frame_futex) catch {
         std.debug.print("Failed to create VDP thread\n", .{});
         return error.OutOfMemory;
     };
