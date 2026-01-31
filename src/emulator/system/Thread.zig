@@ -15,7 +15,7 @@ const System = @import("../System.zig");
 pub const Thread = @This();
 
 // Timing constants
-pub const CYCLES_PER_FRAME: u64 = 1440 * 741; // 741 scanlines, 1440 cycles per scanline
+pub const CYCLES_PER_FRAME: u64 = 1440 * 741 / 2; // 741 scanlines, 1440 cycles per scanline, running at half speed
 const FRAME_TIME_NS: u64 = 16_627_502; // ~60 FPS
 
 // Command from coordinator to CPU thread
@@ -155,9 +155,19 @@ fn threadMain(self: *Thread) void {
             switch (cmd) {
                 .run_frame => {
                     const adjusted_cycles = CYCLES_PER_FRAME / @as(u64, self.cycle_divisor);
+                    const cycle_goal = self.system.cpu.cycles +% adjusted_cycles;
 
                     const start_time = self.timer.read();
-                    const retval = self.system.cpu.runForCycles(&self.system.clint, adjusted_cycles, false);
+                    var retval: System.Word = 0;
+                    while (self.system.cpu.cycles < cycle_goal) {
+                        const remaining_cycles = cycle_goal - self.system.cpu.cycles;
+                        const ret = self.system.cpu.runForCycles(&self.system.clint, self.system.memory, remaining_cycles, false);
+                        if (ret != 0 and ret != 1) {
+                            retval = ret;
+                            break;
+                        }
+                    }
+
                     const elapsed_ns = self.timer.read() - start_time;
 
                     if (elapsed_ns > (FRAME_TIME_NS*2)) {

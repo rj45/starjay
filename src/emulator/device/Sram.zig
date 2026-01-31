@@ -73,16 +73,17 @@ pub fn access(self: *Sram, transaction: Transaction) Transaction {
             return result; // Out of bounds
         }
         if (transaction.bytes == 0b1111) {
-            if (transaction.address % 4 != 0) {
-                std.debug.print("Unaligned: {x}\n", .{transaction.address});
-                return result; // Unaligned access
+            if (transaction.address & 3 != 0) {
+                std.debug.print("Load Unaligned: {x}\n", .{transaction.address});
+                @panic("wat");
+                // return result; // Unaligned access
             }
             const wordPtr: *u32 = @alignCast(@ptrCast(&self.mem[transaction.address]));
             result.data = wordPtr.*;
             result.valid = true;
         } else if (transaction.bytes == 0b0011) {
-            if (transaction.address % 2 != 0) {
-                std.debug.print("Unaligned: {x}\n", .{transaction.address});
+            if (transaction.address & 1 != 0) {
+                std.debug.print("Store Unaligned: {x}\n", .{transaction.address});
                 return result; // Unaligned access
             }
             const halfPtr: *u16 = @alignCast(@ptrCast(&self.mem[transaction.address]));
@@ -92,7 +93,7 @@ pub fn access(self: *Sram, transaction: Transaction) Transaction {
             result.data = @intCast(self.mem[transaction.address]);
             result.valid = true;
         } else { // slow path for arbitrary byte enables
-            if (transaction.address % 4 != 0) {
+            if (transaction.address & 3 != 0) {
                 return result; // Unaligned access
             }
             const wordPtr: *u32 = @alignCast(@ptrCast(&self.mem[transaction.address]));

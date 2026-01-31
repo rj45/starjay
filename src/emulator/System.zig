@@ -11,6 +11,7 @@ pub const Sram = @import("device/Sram.zig");
 pub const Uart = @import("device/Uart.zig");
 pub const Shadow = @import("device/shadow.zig").Shadow;
 pub const Vdp = @import("Vdp.zig");
+pub const Memory = riscv.CpuState.Memory;
 
 pub const Thread = @import("system/Thread.zig");
 
@@ -28,7 +29,7 @@ pub const VDP_SIZE: u32 = Vdp.Device.TOTAL_SIZE;
 
 pub const System = @This();
 
-memory: []align(4) u8,
+memory: Memory,
 bus: Bus,
 clint: Clint,
 uart: Uart,
@@ -41,10 +42,14 @@ pub fn init(rom_file: []const u8, quiet: bool, vdp_queue: ?*Bus.Queue, gpa: std.
     errdefer gpa.destroy(self);
 
     const memsize:u32 = 64 * 1024 * 1024;
-    self.memory = try gpa.alignedAlloc(u8, .@"4", memsize);
-    errdefer gpa.free(self.memory);
+    self.memory = .{
+       .data = try gpa.alignedAlloc(u8, .@"4", memsize),
+       .start_address = RAM_IMAGE_OFFSET,
+       .end_address = RAM_IMAGE_OFFSET + memsize,
+    };
+    errdefer gpa.free(self.memory.data);
 
-    @memset(self.memory, 0x00);
+    @memset(self.memory.data, 0x00);
 
     self.bus = try Bus.init(gpa);
     errdefer self.bus.deinit();
@@ -56,9 +61,9 @@ pub fn init(rom_file: []const u8, quiet: bool, vdp_queue: ?*Bus.Queue, gpa: std.
     errdefer self.uart.deinit();
     try self.bus.attach(Device.init(&self.uart, 0x10000000, 0x10000020));
 
-    self.sram = Sram.init(self.memory);
+    self.sram = Sram.init(self.memory.data);
     try self.sram.loadRom(rom_file);
-    try self.bus.attach(Device.init(&self.sram, RAM_IMAGE_OFFSET, RAM_IMAGE_OFFSET+memsize));
+    try self.bus.attach(Device.init(&self.sram, self.memory.start_address, self.memory.end_address));
 
     self.vdp_shadow = Shadow(Vdp.Device).init(Vdp.Device.init(), vdp_queue);
     try self.bus.attach(Device.init(&self.vdp_shadow, VDP_BASE, VDP_BASE + VDP_SIZE));
@@ -68,11 +73,11 @@ pub fn init(rom_file: []const u8, quiet: bool, vdp_queue: ?*Bus.Queue, gpa: std.
 
     // load DTB into ram
     const dtb_off = memsize - DEVICE_TABLE.len;
-    @memcpy(self.memory.ptr + dtb_off, DEVICE_TABLE[0..DEVICE_TABLE.len]);
+    @memcpy(self.memory.data.ptr + dtb_off, DEVICE_TABLE[0..DEVICE_TABLE.len]);
 
     // Update system ram size in DTB (but if and only if we're using the default DTB)
     // Warning - this will need to be updated if the skeleton DTB is ever modified.
-    var dtb: []u32 = @ptrCast(self.memory[dtb_off..]);
+    var dtb: []u32 = @ptrCast(self.memory.data[dtb_off..]);
     if (dtb[0x13c / 4] == 0x00c0ff03) {
         const validram: u32 = dtb_off;
         dtb[0x13c / 4] = (validram >> 24) | (((validram >> 16) & 0xff) << 8) | (((validram >> 8) & 0xff) << 16) | ((validram & 0xff) << 24);
@@ -89,12 +94,12 @@ pub fn init(rom_file: []const u8, quiet: bool, vdp_queue: ?*Bus.Queue, gpa: std.
 pub fn deinit(self: *System, gpa: std.mem.Allocator) void {
     self.bus.deinit();
     self.uart.deinit();
-    gpa.free(self.memory);
+    gpa.free(self.memory.data);
     gpa.destroy(self);
 }
 
 pub fn run(self: *System, max_cycles: usize) !void {
-    var error_level = try self.cpu.run(&self.clint, max_cycles, false);
+    var error_level = try self.cpu.run(&self.clint, self.memory, max_cycles, false);
 
     try self.uart.tty.writer().print("original error_level: {}\r\n", .{error_level});
     self.uart.flush();

@@ -25,6 +25,12 @@ cycles: usize = 0,
 halted: bool = false,
 log_enabled: bool = true,
 
+pub const Memory = struct {
+     data: []align(4) u8,
+     start_address: Bus.Addr,
+     end_address: Bus.Addr,
+};
+
 var console_scratch: [8192]u8 = undefined;
 var console_fifo:std.Deque(u8) = std.Deque(u8).initBuffer(&console_scratch);
 
@@ -43,14 +49,14 @@ inline fn translateDataAddr(self: *const CpuState, vaddr: Word) usize {
     return @intCast(vaddr);
 }
 
-pub fn run(self: *CpuState, clint: *Clint, max_cycles: usize, fail_on_all_faults: bool) !Word {
+pub fn run(self: *CpuState, clint: *Clint, mem: Memory, max_cycles: usize, fail_on_all_faults: bool) !Word {
     const start = try std.time.Instant.now();
     const initial_cycles = self.cycles;
 
     var num_cycles: usize = 0;
     var errval: Word = 0;
     while (num_cycles < max_cycles) : (num_cycles +%= 1000) {
-        errval = self.runForCycles(clint, 1000, fail_on_all_faults);
+        errval = self.runForCycles(clint, mem, 1000, fail_on_all_faults);
 
         if (errval != 0 and errval != 1) {
             break;
@@ -72,13 +78,8 @@ pub fn run(self: *CpuState, clint: *Clint, max_cycles: usize, fail_on_all_faults
     return errval;//self.reg.regs[10]; // a0
 }
 
-pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_faults: bool) Word {
-    // FIXME: This can be quite slow, as it can cause a syscall.
-    const t:i64 = std.time.microTimestamp();
-    const tu: u64 = @bitCast(t);
-
-    clint.mtime = tu;
-
+pub fn runForCycles(self: *CpuState, clint: *Clint, mem: Memory, cycles: u64, fail_on_all_faults: bool) Word {
+    clint.mtime = self.cycles;
 
     // Handle Timer interrupt.
     if (clint.msip and clint.mtimecmp != 0 and clint.mtime >= clint.mtimecmp) {
@@ -89,21 +90,22 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
     }
 
     if ((self.reg.extraflags & @as(Word, 4)) != 0) {
-        // In WFI (Wait for interrupt) state.
-        const wait_time: u64 = @min(
-            10_000, // 10ms max
-            if (clint.mtimecmp > clint.mtime)
-                clint.mtimecmp - clint.mtime
-            else
-                10_000
-        );
-        std.debug.assert(wait_time <= 10000);
-        std.Thread.sleep(wait_time * 1000);
+        if (clint.mtimecmp > clint.mtime) {
+            const delta = @as(usize, clint.mtimecmp - clint.mtime);
+            if (delta < cycles) {
+                self.cycles +%= delta;
+                return 1;
+            }
+        }
+        self.cycles +%= cycles;
         return 1;
     }
 
-    var icount: usize = 0;
-    while (icount < cycles) : (icount += 1) {
+    const memory_word = std.mem.bytesAsSlice(Word, mem.data);
+    const memory_half = std.mem.bytesAsSlice(u16, mem.data);
+
+    const goal_cycles = self.cycles +% @as(usize, cycles);
+    while (self.cycles < goal_cycles) {
         var ir: Word = 0;
         var trap: Word = 0; // If positive, is a trap or interrupt.  If negative, is fatal error.
         var rval: Word = 0;
@@ -116,20 +118,25 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
             std.debug.print("PC Misalignment fault: {x}\r\n", .{pc});
             trap = 1 + 0; //Handle PC-misaligned access
         } else {
-            const fetch = self.bus.access(.{
-                .cycle = @truncate(self.cycles),
-                .address = pc,
-                .bytes = 0b1111,
-                .write = false,
-            });
-            self.cycles +%= fetch.duration -% 1; // minus 1 because we are presuming a pipelined fetch
-
-            if (!fetch.valid) {
-                //std.debug.print("Instruction access fault: {x}\r\n", .{pc});
-                trap = 1 + 1; // Instruction access fault.
-                ir = 0x13; // NOP
+            if (pc >= mem.start_address and pc < mem.end_address) {
+                const offset: usize = @intCast(pc - mem.start_address);
+                ir = memory_word[offset >> 2];
             } else {
-                ir = fetch.data;
+                const fetch = self.bus.access(.{
+                    .cycle = @truncate(self.cycles),
+                    .address = pc,
+                    .bytes = 0b1111,
+                    .write = false,
+                });
+                self.cycles +%= fetch.duration -% 1; // minus 1 because we are presuming a pipelined fetch
+
+                if (!fetch.valid) {
+                    //std.debug.print("Instruction access fault: {x}\r\n", .{pc});
+                    trap = 1 + 1; // Instruction access fault.
+                    ir = 0x13; // NOP
+                } else {
+                    ir = fetch.data;
+                }
             }
 
             var rdid = (ir >> 7) & 0x1f;
@@ -186,22 +193,58 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
                     const rs1: Word = self.reg.regs[(ir >> 15) & 0x1f];
                     const imm: Word = signExtend(ir >> 20, 12);
                     const rsval: Word = rs1 +% imm;
+                    const sub_op: u3 = @as(u3, @truncate((ir >> 12) & 0x7));
 
-                    var bytemask: u4 = 0;
-                    switch ((ir >> 12) & 0x7) {
-                        //LB, LH, LW, LBU, LHU
-                        0b000, 0b100 => bytemask = 0b0001,
-                        0b001, 0b101 => bytemask = 0b0011,
-                        0b010 => bytemask = 0b1111,
-                        else => trap = (2 + 1),
+                    clint.mtime = self.cycles; // make sure the clint time is up to date for memory-mapped timer reads
+
+                    var result: Bus.Transaction = undefined;
+                    if (rsval >= mem.start_address and rsval < mem.end_address) {
+                        const rel_addy = rsval - mem.start_address;
+                        result = .{
+                            .address = rsval,
+                            .duration = 1,
+                            .valid = true,
+                        };
+                        switch (sub_op) {
+                            //LB, LH, LW, LBU, LHU
+                            0b000, 0b100 => result.data = mem.data[rel_addy],
+                            0b001, 0b101 => {
+                                result.data = memory_half[rel_addy >> 1];
+                                result.valid = rel_addy & 1 == 0;
+                            },
+                            0b010 => {
+                                result.data = memory_word[rel_addy >> 2];
+                                result.valid = rel_addy & 3 == 0;
+                            },
+                            else => trap = (2 + 1),
+                        }
+                    } else {
+                        var bytemask: u4 = 0;
+                        switch (sub_op) {
+                            //LB, LH, LW, LBU, LHU
+                            0b000, 0b100 => bytemask = 0b0001,
+                            0b001, 0b101 => bytemask = 0b0011,
+                            0b010 => bytemask = 0b1111,
+                            else => trap = (2 + 1),
+                        }
+
+                        if (bytemask == 0b111 and rsval & 3 != 0) {
+                            std.debug.print("Load align fault: pc: {x}, addy: {x}\r\n", .{self.reg.pc, rsval});
+                            trap = (4 + 1);
+                            result.valid = true; // slip load access fault since this is an alignment fault
+                        } else if (bytemask == 0b011 and rsval & 1 != 0) {
+                            std.debug.print("Load align fault: pc: {x}, addy: {x}\r\n", .{self.reg.pc, rsval});
+                            trap = (4 + 1);
+                            result.valid = true; // slip load access fault since this is an alignment fault
+                        } else {
+                            result = self.bus.access(.{
+                                .cycle = @truncate(self.cycles),
+                                .address = rsval,
+                                .bytes = bytemask,
+                                .write = false,
+                            });
+                        }
                     }
-
-                    const result: Bus.Transaction = self.bus.access(.{
-                        .cycle = @truncate(self.cycles),
-                        .address = rsval,
-                        .bytes = bytemask,
-                        .write = false,
-                    });
 
                     self.cycles +%= result.duration;
 
@@ -210,7 +253,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
                         trap = (5 + 1); // Load access fault.
                         rval = rsval;
                     } else {
-                        switch ((ir >> 12) & 0x7) {
+                        switch (sub_op) {
                             //LB, LH, LW, LBU, LHU
                             0b000 => rval = signExtend(result.data, 8),
                             0b001 => rval = signExtend(result.data, 16),
@@ -223,6 +266,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
                     const rs1: Word = self.reg.regs[(ir >> 15) & 0x1f];
                     const rs2: Word = self.reg.regs[(ir >> 20) & 0x1f];
                     const addy: Word = rs1 +% signExtend(((ir >> 7) & 0x1f) | ((ir & 0xfe000000) >> 20), 12);
+                    const sub_op: u3 = @as(u3, @truncate((ir >> 12) & 0x7));
 
                     rdid = 0;
 
@@ -231,30 +275,62 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, cycles: u64, fail_on_all_fau
                         return rs2; // NOTE: PC will be PC of Syscon.
                     }
 
-                    const bytemask: u4 = switch ((ir >> 12) & 0x7) {
-                        //SB, SH, SW
-                        0b000 => 0b0001,
-                        0b001 => 0b0011,
-                        0b010 => 0b1111,
-                        else => brk: {
-                            trap = (2 + 1);
-                            break :brk 0;
-                        },
-                    };
+                    if (addy >= mem.start_address and addy < mem.end_address) {
+                        const rel_addy = addy - mem.start_address;
+                        switch (sub_op) {
+                            //SB, SH, SW
+                            0b000 => {
+                                mem.data[rel_addy] = @as(u8, @truncate(rs2 & 0xff));
+                            },
+                            0b001 => {
+                                if (rel_addy & 1 != 0) {
+                                    std.debug.print("Store align fault: pc: {x}, rel_addy: {x}\r\n", .{self.reg.pc, rel_addy});
+                                    trap = (2 + 1);
+                                } else {
+                                    memory_half[rel_addy >> 1] = @as(u16, @truncate(rs2 & 0xffff));
+                                }
+                            },
+                            0b010 => {
+                                if (rel_addy & 3 != 0) {
+                                    std.debug.print("Store align fault: pc: {x}, rel_addy: {x}\r\n", .{self.reg.pc, rel_addy});
+                                    trap = (2 + 1);
+                                } else {
+                                    memory_word[rel_addy >> 2] = rs2;
+                                }
+                            },
+                            else =>  {
+                                std.debug.print("Store access fault: pc: {x}, rel_addy: {x}\r\n", .{self.reg.pc, rel_addy});
+                                trap = (2 + 1);
+                            },
+                        }
+                        self.cycles +%= 1;
+                    } else {
+                        const bytemask: u4 = switch (sub_op) {
+                            //SB, SH, SW
+                            0b000 => 0b0001,
+                            0b001 => 0b0011,
+                            0b010 => 0b1111,
+                            else => brk: {
+                                trap = (2 + 1);
+                                break :brk 0;
+                            },
+                        };
 
-                    const result = self.bus.access(.{
-                        .cycle = @truncate(self.cycles),
-                        .address = addy,
-                        .bytes = bytemask,
-                        .data = rs2,
-                        .write = true,
-                    });
-                    self.cycles +%= result.duration;
+                        const result = self.bus.access(.{
+                            .cycle = @truncate(self.cycles),
+                            .address = addy,
+                            .bytes = bytemask,
+                            .data = rs2,
+                            .write = true,
+                        });
 
-                    if (!result.valid) {
-                        std.debug.print("Store access fault: pc: {x}, addy: {x}\r\n", .{self.reg.pc, addy});
-                        trap = (7 + 1); // Store access fault.
-                        rval = addy;
+                        self.cycles +%= result.duration;
+
+                        if (!result.valid) {
+                            std.debug.print("Store access fault: pc: {x}, addy: {x}\r\n", .{self.reg.pc, addy});
+                            trap = (7 + 1); // Store access fault.
+                            rval = addy;
+                        }
                     }
                 },
                 0b0010011, 0b0110011 => { // Op-immediate, Op
