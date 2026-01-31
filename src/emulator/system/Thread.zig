@@ -146,6 +146,7 @@ pub fn waitForCompletion(self: *Thread) CpuCompletion {
 }
 
 fn threadMain(self: *Thread) void {
+    var slow_frames: usize = 0;
     while (self.running.load(.acquire)) {
         // Check for commands
         while (self.command_queue.front()) |command| {
@@ -170,14 +171,19 @@ fn threadMain(self: *Thread) void {
 
                     const elapsed_ns = self.timer.read() - start_time;
 
-                    if (elapsed_ns > (FRAME_TIME_NS*2)) {
-                        const ratio = std.math.ceilPowerOfTwo(u32,
-                            @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(elapsed_ns)) / @as(f32, @floatFromInt(FRAME_TIME_NS))))
-                        ) catch 64;
-                        if (ratio > self.cycle_divisor) {
-                            self.cycle_divisor = ratio;
-                            std.debug.print("Frame {} slow ({} ns), increasing cycle_divisor to {}\r\n", .{self.frame_number, elapsed_ns, self.cycle_divisor});
+                    if (elapsed_ns > (FRAME_TIME_NS*2/self.cycle_divisor)) {
+                        slow_frames += 1;
+                        if (slow_frames > 8) {
+                            const ratio = std.math.ceilPowerOfTwo(u32,
+                                @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(elapsed_ns)) / @as(f32, @floatFromInt(FRAME_TIME_NS))))
+                            ) catch 64;
+                            if (ratio > self.cycle_divisor) {
+                                self.cycle_divisor = ratio;
+                                std.debug.print("Frame {} slow ({} ns), increasing cycle_divisor to {}\r\n", .{self.frame_number, elapsed_ns, self.cycle_divisor});
+                            }
                         }
+                    } else {
+                        slow_frames = 0;
                     }
                     if ((self.frame_number % (60*30)) == 0) {
                         const fps = @as(f32, 1_000_000_000) / @as(f32, @floatFromInt(elapsed_ns));

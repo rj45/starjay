@@ -64,9 +64,9 @@ fn accessSpriteAttrLo(self: *Device, transaction: Transaction) Transaction {
     if (addr >= SPRITE_ATTR_SIZE) return result;
 
     // Each sprite has 16 bytes (4 attributes × 4 bytes)
-    const sprite_index = addr / 16;
-    const attr_offset = (addr % 16) / 4;
-    const byte_offset = addr % 4;
+    const sprite_index = addr >> 4;
+    const attr_offset = (addr & 0xf) >> 2;
+    const byte_offset = addr & 3;
 
     if (sprite_index >= 512) return result;
     if (byte_offset != 0 or transaction.bytes != 0b1111) {
@@ -97,8 +97,8 @@ fn accessSpriteHigh(self: *Device, transaction: Transaction) Transaction {
     const addr = transaction.address - SPRITE_HIGH_BASE;
     if (addr >= SPRITE_HIGH_SIZE) return result;
 
-    const sprite_index = addr / 4;
-    const byte_offset = addr % 4;
+    const sprite_index = addr >> 2;
+    const byte_offset = addr & 3;
 
     if (sprite_index >= 512) return result;
     if (byte_offset != 0 or transaction.bytes != 0b1111 ) {
@@ -150,37 +150,37 @@ fn accessPalette(self: *Device, transaction: Transaction) Transaction {
 
     const addr = transaction.address - PALETTE_BASE;
     if (addr >= State.PALETTE_SIZE) return result;
-    const index = addr / 4;
+    const index = addr >> 2;
 
     if (transaction.write) {
-        if (transaction.bytes == 0b1111 and addr % 4 == 0) {
+        if (transaction.bytes == 0b1111 and addr & 3 == 0) {
             self.vdp.palette[index] = transaction.data;
             result.valid = true;
-        } else if (transaction.bytes == 0b0011 and addr % 2 == 0) {
+        } else if (transaction.bytes == 0b0011 and addr & 1 == 0) {
             var word = self.vdp.palette[index];
-            const half: u5 = @truncate(addr % 2);
+            const half: u5 = @truncate(addr & 1);
             word = word & ~(@as(u32, 0xFFFF) << (half * 16)) | ((transaction.data & 0xFFFF) << (half * 16));
             self.vdp.palette[index] = word;
             result.valid = true;
         } else if (transaction.bytes == 0b0001) {
             var word = self.vdp.palette[index];
-            const byte:u5 = @truncate(addr % 4);
+            const byte:u5 = @truncate(addr & 3);
             word = word & ~(@as(u32, 0xFF) << (byte * 8)) | ((transaction.data & 0xFF) << (byte * 8));
             self.vdp.palette[index] = word;
             result.valid = true;
         }
     } else {
-        if (transaction.bytes == 0b1111 and addr % 4 == 0) {
+        if (transaction.bytes == 0b1111 and addr & 3 == 0) {
             result.data = self.vdp.palette[index];
             result.valid = true;
-        } else if (transaction.bytes == 0b0011 and addr % 2 == 0) {
+        } else if (transaction.bytes == 0b0011 and addr & 1 == 0) {
             const word = self.vdp.palette[index];
-            const half: u5 = @truncate(addr % 2);
-            result.data = (word >> (half * 16)) & 0xFFFF;
+            const half: u5 = @truncate(addr & 1);
+            result.data = (word >> (half << 4)) & 0xFFFF;
             result.valid = true;
         } else if (transaction.bytes == 0b0001) {
             const word = self.vdp.palette[index];
-            const byte:u5 = @truncate(addr % 4);
+            const byte:u5 = @truncate(addr & 3);
             result.data = (word >> (byte * 8)) & 0xFF;
             result.valid = true;
         }
@@ -198,34 +198,34 @@ fn accessVram(self: *Device, transaction: Transaction) Transaction {
     if (addr >= State.VRAM_SIZE) return result;
 
     if (transaction.write) {
-        if (transaction.bytes == 0b1111 and addr % 4 == 0) {
+        if (transaction.bytes == 0b1111 and addr & 3 == 0) {
             self.setVram(addr, transaction.data);
             result.valid = true;
-        } else if (transaction.bytes == 0b0011 and addr % 2 == 0) {
+        } else if (transaction.bytes == 0b0011 and addr & 1 == 0) {
             var word = self.getVram(addr);
-            const half:u5 = @truncate(addr % 2);
-            word = word & ~(@as(u32, 0xFFFF) << (half * 16)) | ((transaction.data & 0xFFFF) << (half * 16));
+            const half:u5 = @truncate(addr & 1);
+            word = word & ~(@as(u32, 0xFFFF) << (half << 4)) | ((transaction.data & 0xFFFF) << (half << 4));
             self.setVram(addr, word);
             result.valid = true;
         } else if (transaction.bytes == 0b0001) {
             var word = self.getVram(addr);
-            const byte: u5 = @truncate(addr % 4);
+            const byte: u5 = @truncate(addr & 3);
             word = word & ~(@as(u32, 0xFF) << (byte * 8)) | ((transaction.data & 0xFF) << (byte * 8));
             self.setVram(addr, word);
             result.valid = true;
         }
     } else {
-        if (transaction.bytes == 0b1111 and addr % 4 == 0) {
+        if (transaction.bytes == 0b1111 and addr & 3 == 0) {
             result.data = self.getVram(addr);
             result.valid = true;
-        } else if (transaction.bytes == 0b0011 and addr % 2 == 0) {
+        } else if (transaction.bytes == 0b0011 and addr & 1 == 0) {
             const word = self.getVram(addr);
-            const half:u5 = @truncate(addr % 2);
-            result.data = (word >> (half * 16)) & 0xFFFF;
+            const half:u5 = @truncate(addr & 1);
+            result.data = (word >> (half << 4)) & 0xFFFF;
             result.valid = true;
         } else if (transaction.bytes == 0b0001) {
             const word = self.getVram(addr);
-            const byte: u5 = @truncate(addr % 4);
+            const byte: u5 = @truncate(addr & 3);
             result.data = (word >> (byte * 8)) & 0xFF;
             result.valid = true;
         }
@@ -236,12 +236,12 @@ fn accessVram(self: *Device, transaction: Transaction) Transaction {
 
 inline fn getVram(self: *Device, addr: usize) u32 {
     const vram: []u32 = std.mem.bytesAsSlice(u32, &self.vdp.vram);
-    return vram[addr / 4];
+    return vram[addr >> 2];
 }
 
 inline fn setVram(self: *Device, addr: usize, value: u32) void {
     const vram: []u32 = std.mem.bytesAsSlice(u32, &self.vdp.vram);
-    vram[addr / 4] = value;
+    vram[addr >> 2] = value;
 }
 
 /// Get a sprite attribute as u36 by sprite index and attribute index (0-3)

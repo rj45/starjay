@@ -47,7 +47,7 @@ pub fn access(self: *Sram, transaction: Transaction) Transaction {
             self.mem[transaction.address] = @truncate(transaction.data & 0xFF);
             result.valid = true;
         } else { // slow path for arbitrary byte enables
-            if (transaction.address % 4 != 0) {
+            if (transaction.address & 3 != 0) {
                 return result; // Unaligned access
             }
             const wordPtr: *u32 = @alignCast(@ptrCast(&self.mem[transaction.address]));

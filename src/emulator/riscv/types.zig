@@ -45,8 +45,8 @@ pub const Regs = struct {
         _ = try wr.print("PC: {x:0>8} ", .{pc});
 
     	if( pc_offset >= 0 and pc_offset < ram_amt - 3 ) {
-                ir = image4[pc_offset / 4];
-                _ = try wr.print("[0x{x:0>8}] ", .{ir});
+            ir = image4[pc_offset / 4];
+            _ = try wr.print("[0x{x:0>8}] ", .{ir});
     	} else {
     		_ = try wr.print("[xxxxxxxxxx] ", .{});
             }
