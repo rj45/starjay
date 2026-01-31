@@ -1,23 +1,17 @@
 // (C) 2026 Ryan "rj45" Sanche, MIT License
-//
-// VdpThread: Runs VdpDevice in a separate thread.
-// Uses a request/response model for frame rendering:
-//   - UI thread sends render requests via request_queue
-//   - VDP thread drains shadow queue, renders, sends result via result_queue
-//   - UI thread owns both frame buffers, only lending one at a time
 
 const std = @import("std");
 
 const spsc_queue = @import("spsc_queue");
 
 const Bus = @import("../device/Bus.zig");
-const VdpDevice = @import("VdpDevice.zig");
-const VdpState = @import("VdpState.zig");
+const Device = @import("Device.zig");
+const VdpState = @import("State.zig");
 
 const Transaction = Bus.Transaction;
 const ShadowQueue = Bus.Queue;
 
-pub const VdpThread = @This();
+pub const Thread = @This();
 
 const FrameBuffer = VdpState.FrameBuffer;
 
@@ -41,12 +35,12 @@ pub const RequestQueue = spsc_queue.SpscQueuePo2Unmanaged(RenderRequest);
 pub const ResultQueue = spsc_queue.SpscQueuePo2Unmanaged(RenderResult);
 
 // VDP device (owns VdpState)
-device: VdpDevice,
+device: Device,
 
 // Shadow queue to consume memory write transactions from
 shadow_queue: *ShadowQueue,
 
-// Request/result queues for frame rendering (both owned by VdpThread)
+// Request/result queues for frame rendering (both owned by Thread)
 request_queue: RequestQueue,
 result_queue: ResultQueue,
 
@@ -62,8 +56,8 @@ pub fn init(
     allocator: std.mem.Allocator,
     shadow_queue: *ShadowQueue,
     frame_futex: *std.atomic.Value(u32),
-) !*VdpThread {
-    const self = try allocator.create(VdpThread);
+) !*Thread {
+    const self = try allocator.create(Thread);
     errdefer allocator.destroy(self);
 
     self.shadow_queue = shadow_queue;
@@ -77,24 +71,19 @@ pub fn init(
     self.result_queue = ResultQueue.initCapacity(allocator, 4) catch return error.OutOfMemory;
 
     // Initialize VDP device with a dummy frame buffer (will be set by render requests)
-    self.device.init(allocator, FrameBuffer{
-        .width = 0,
-        .height = 0,
-        .pitch = 0,
-        .pixels = undefined,
-    });
+    self.device = Device.init();
 
     return self;
 }
 
-pub fn deinit(self: *VdpThread) void {
+pub fn deinit(self: *Thread) void {
     self.stop();
     self.request_queue.deinit(self.allocator);
     self.result_queue.deinit(self.allocator);
     self.allocator.destroy(self);
 }
 
-pub fn start(self: *VdpThread) !void {
+pub fn start(self: *Thread) !void {
     if (self.thread != null) return; // Already running
 
     self.running.store(true, .release);
@@ -102,7 +91,7 @@ pub fn start(self: *VdpThread) !void {
     try self.thread.?.setName("starjay/VDP");
 }
 
-pub fn stop(self: *VdpThread) void {
+pub fn stop(self: *Thread) void {
     if (self.thread) |thread| {
         self.running.store(false, .release);
         std.Thread.Futex.wake(self.frame_futex, 10);
@@ -113,13 +102,13 @@ pub fn stop(self: *VdpThread) void {
 
 /// Submit a render request (called by UI thread).
 /// Returns true if the request was queued, false if queue is full.
-pub fn submitRenderRequest(self: *VdpThread, request: RenderRequest) void {
+pub fn submitRenderRequest(self: *Thread, request: RenderRequest) void {
     self.request_queue.push(request);
 }
 
 /// Try to get a completed render result (called by UI thread).
 /// Returns the result if available, null otherwise.
-pub fn tryGetResult(self: *VdpThread) ?RenderResult {
+pub fn tryGetResult(self: *Thread) ?RenderResult {
     if (self.result_queue.front()) |result| {
         const r = result.*;
         self.result_queue.pop();
@@ -130,7 +119,7 @@ pub fn tryGetResult(self: *VdpThread) ?RenderResult {
 
 /// Block waiting for a render result (called by UI thread).
 /// Spins until a result is available.
-pub fn waitForResult(self: *VdpThread) RenderResult {
+pub fn waitForResult(self: *Thread) RenderResult {
     while (true) {
         if (self.tryGetResult()) |result| {
             return result;
@@ -139,7 +128,7 @@ pub fn waitForResult(self: *VdpThread) RenderResult {
     }
 }
 
-fn threadMain(self: *VdpThread) void {
+fn threadMain(self: *Thread) void {
     while (self.running.load(.acquire)) {
         // Check for render requests
         while (self.request_queue.front()) |request| {
@@ -172,7 +161,7 @@ fn threadMain(self: *VdpThread) void {
     }
 }
 
-fn drainShadowQueue(self: *VdpThread) void {
+fn drainShadowQueue(self: *Thread) void {
     // Drain all pending transactions and apply them to the VDP device
     while (self.shadow_queue.front()) |transaction| {
         _ = self.device.access(transaction.*);

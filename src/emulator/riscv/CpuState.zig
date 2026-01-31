@@ -20,7 +20,7 @@ pub const Regs = types.Regs;
 pub const CpuState = @This();
 
 reg: Regs = .{},
-bus: Bus,
+bus: *Bus,
 cycles: usize = 0,
 halted: bool = false,
 log_enabled: bool = true,
@@ -28,7 +28,7 @@ log_enabled: bool = true,
 var console_scratch: [8192]u8 = undefined;
 var console_fifo:std.Deque(u8) = std.Deque(u8).initBuffer(&console_scratch);
 
-pub fn init(bus: Bus) CpuState {
+pub fn init(bus: *Bus) CpuState {
     return .{
         .bus = bus,
     };

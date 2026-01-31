@@ -19,9 +19,9 @@ pub fn Shadow(Device: anytype) type {
         const DeviceShadow = @This();
 
         device: Device,
-        queue: *Queue,
+        queue: ?*Queue,
 
-        pub fn init(device: Device, queue: *Queue) DeviceShadow {
+        pub fn init(device: Device, queue: ?*Queue) DeviceShadow {
             return .{
                 .device = device,
                 .queue = queue,
@@ -31,9 +31,11 @@ pub fn Shadow(Device: anytype) type {
         pub fn access(self: *DeviceShadow, transaction: Transaction) Transaction {
             const result = self.device.access(transaction);
 
-            if (transaction.write) {
-                // Enqueue the write transaction for the other thread to process
-                self.queue.push(result);
+            if (self.queue) |queue| {
+                if (transaction.write) {
+                    // Enqueue the write transaction for the other thread to process
+                    queue.push(result);
+                }
             }
 
             return result;

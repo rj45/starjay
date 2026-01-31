@@ -1,6 +1,6 @@
 // (C) 2026 Ryan "rj45" Sanche, MIT License
 //
-// VdpState for emulating the Video Display Processor hardware
+// State for emulating the Video Display Processor hardware
 
 const std = @import("std");
 
@@ -24,7 +24,7 @@ const SCANLINES_PER_SCREEN: u16 = 741;
 pub const VRAM_SIZE: Addr = 0x4000;
 pub const PALETTE_SIZE: Addr = 512*4;
 
-pub const VdpState = @This();
+pub const State = @This();
 
 
 pub const FrameBuffer = struct {
@@ -57,12 +57,16 @@ initial_delay: u16,
 // VRAM storage (tilemap and tile bitmap data)
 vram: [VRAM_SIZE]u8 align(4),
 
-pub fn init(self: *VdpState, allocator: std.mem.Allocator, frame_buffer: FrameBuffer) void {
-    _ = allocator;
-    self.* = VdpState{
+pub fn init() State {
+    return .{
         .cycle = 0,
         .sy = 0,
-        .frame_buffer = frame_buffer,
+        .frame_buffer = FrameBuffer{
+            .width = 1280,
+            .height = 720,
+            .pitch = 1280,
+            .pixels = undefined,
+        },
         .line_buffer = .{0} ** 256,
         .sprite_addr = undefined,
         .sprite_velocity = undefined,
@@ -77,7 +81,7 @@ pub fn init(self: *VdpState, allocator: std.mem.Allocator, frame_buffer: FrameBu
     };
 }
 
-pub fn emulate_line(self: *VdpState, skip: bool) void {
+pub fn emulate_line(self: *State, skip: bool) void {
     if (self.sy < self.frame_buffer.height and !skip) {
         // The following 3 phases occur simultaneously in hardware per scanline.
         // Since we are emulating on a sequential machine, we do them sequentially here.
@@ -196,7 +200,7 @@ pub fn emulate_line(self: *VdpState, skip: bool) void {
     self.cycle += CYCLES_PER_SCANLINE;
 }
 
-pub fn emulate_frame(self: *VdpState, skip: bool) void {
+pub fn emulate_frame(self: *State, skip: bool) void {
     self.sy = 0;
     for (0..SCANLINES_PER_SCREEN) |_| {
         self.emulate_line(skip);

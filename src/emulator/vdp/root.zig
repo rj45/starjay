@@ -6,9 +6,9 @@ comptime {
 }
 
 const Bus = @import("../device/Bus.zig");
-pub const VdpState = @import("VdpState.zig");
-pub const VdpThread = @import("VdpThread.zig");
-pub const CpuThread = @import("../riscv/CpuThread.zig");
+pub const VdpState = @import("State.zig");
+pub const VdpThread = @import("Thread.zig");
+pub const System = @import("../System.zig");
 
 var gpa: std.mem.Allocator = undefined;
 pub const c = SDLBackend.c;
@@ -28,7 +28,8 @@ var surfaces: [2]*c.SDL_Surface = undefined;
 var front_surface_index: u32 = 0;
 
 // CPU thread and frame synchronization
-var cpu_thread: ?*CpuThread = null;
+var system: *System = undefined;
+var cpu_thread: ?*System.Thread = null;
 var frame_futex: std.atomic.Value(u32) = .init(0);
 
 var run_time: std.time.Timer = undefined;
@@ -50,7 +51,8 @@ pub fn main(allocator: std.mem.Allocator, rom_path: ?[]const u8) !void {
 
     // Start CPU thread if ROM is provided
     if (rom_path) |path| {
-        try start_cpu_thread(allocator, path);
+        system = try System.init(path, true, &shadow_queue, allocator);
+        try start_cpu_thread(allocator);
     }
 
     while (try process_events(null, null)) {
@@ -278,8 +280,8 @@ fn blitToWindow() void {
     _ = c.SDL_UpdateWindowSurface(window);
 }
 
-pub fn start_cpu_thread(allocator: std.mem.Allocator, rom_path: []const u8) !void {
-    cpu_thread = CpuThread.init(allocator, &frame_futex, &shadow_queue, rom_path) catch |err| {
+pub fn start_cpu_thread(allocator: std.mem.Allocator) !void {
+    cpu_thread = System.Thread.init(allocator, &frame_futex, &shadow_queue, system) catch |err| {
         std.debug.print("Failed to create CPU thread: {}\n", .{err});
         return error.OutOfMemory;
     };
@@ -294,6 +296,7 @@ pub fn destroy_cpu_thread() void {
     if (cpu_thread) |cpu| {
         cpu.deinit();
         cpu_thread = null;
+        system.deinit(gpa);
     }
 }
 

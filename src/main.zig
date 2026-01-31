@@ -5,7 +5,7 @@ const clap = @import("clap");
 const emulator = @import("emulator/starjette/root.zig");
 const hl_emu = @import("emulator/starjette/highlevel/root.zig");
 const ll_emu = @import("emulator/starjette/microcoded/root.zig");
-const riscv_emu = @import("emulator/riscv/root.zig");
+const System = @import("emulator/System.zig");
 const debugger = @import("debugger/root.zig");
 const vdp = @import("emulator/vdp/root.zig");
 
@@ -78,7 +78,10 @@ pub fn main() !void {
     if (res.args.rom) |rom| {
         const quiet = res.args.quiet != 0;
         if (res.args.riscv != 0) {
-            try riscv_emu.main(rom, std.math.maxInt(usize), quiet, gpa);
+            var system = try System.init(rom, quiet, null, gpa);
+            defer system.deinit(gpa);
+
+            try system.run(std.math.maxInt(usize));
         } else if (res.args.llemu != 0) {
             try ll_emu.main(rom, std.math.maxInt(usize), quiet, gpa);
         } else {
