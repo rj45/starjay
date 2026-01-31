@@ -49,9 +49,6 @@ sprite_x_width: [512]SpriteXWidth,
 sprite_addr: [512]SpriteAddr,
 sprite_velocity: [512]SpriteVelocity,
 
-active_tilemap_addr: [512]ActiveTilemapAddr,
-active_bitmap_addr: [512]ActiveBitmapAddr,
-active_count: u16,
 initial_delay: u16,
 
 // VRAM storage (tilemap and tile bitmap data)
@@ -72,9 +69,6 @@ pub fn init() State {
         .sprite_velocity = undefined,
         .sprite_x_width = undefined,
         .sprite_y_height = undefined,
-        .active_bitmap_addr = undefined,
-        .active_tilemap_addr = undefined,
-        .active_count = 0,
         .initial_delay = 3*60,
         .palette = .{0} ** 512,
         .vram = .{0} ** VRAM_SIZE,
@@ -87,28 +81,31 @@ pub fn emulate_line(self: *State, skip: bool) void {
         // Since we are emulating on a sequential machine, we do them sequentially here.
 
         // Phase 1: Scan sprites looking for ones on the current line
+        const framebuffer: [*]u32 = self.frame_buffer.pixels;
+        const linebuffer = self.line_buffer[0..];
+        const sprite_y_heights = self.sprite_y_height[0..];
+        const sprite_x_widths = self.sprite_x_width[0..];
+        const sprite_addrs = self.sprite_addr[0..];
+        const linebuffer_u16: [*]u16 = @alignCast(@ptrCast(&linebuffer[0]));
+        const palette = self.palette[0..];
+        const vram_u16: []u16 = std.mem.bytesAsSlice(u16, self.vram[0..]);
+        const pitch = self.frame_buffer.pitch;
         const sy: i32 = @intCast(self.sy);
-        self.active_count = 0;
-        for (0..512) |i| {
-            const sprite_yh: SpriteYHeight = self.sprite_y_height[i];
-
+        const screen_offset: usize = pitch * @as(usize, self.sy);
+        for (sprite_y_heights, sprite_x_widths,sprite_addrs) |sprite_yh, sprite_xw, sprite_addr| {
             const sprite_top: i32 = @intCast(sprite_yh.screen_y.fp.i);
+            if (sy < sprite_top) continue;
+
             const sprite_tile_height: i32 = @intCast(sprite_yh.height);
             const sprite_height: i32 = sprite_tile_height << 4; // height in tiles × 16 pixels
             const sprite_bottom = sprite_top + sprite_height;
 
-            if (sy >= sprite_top and sy < sprite_bottom) {
-                const sprite_xw: SpriteXWidth = self.sprite_x_width[i];
-                const sprite_addr: SpriteAddr = self.sprite_addr[i];
-
+            if (sy < sprite_bottom) {
                 const sprite_line_y = sy - sprite_top;
 
                 const sprite_offset_y:u32 = @bitCast(if (sprite_xw.y_flip)
                     (sprite_height - 1 - sprite_line_y)
                 else sprite_line_y);
-
-                std.debug.assert(sprite_yh.tilemap_size_a == 0);
-                std.debug.assert(sprite_yh.tilemap_size_b == 0);
 
                 const sprite_tilemap_y = (sprite_offset_y >> 4) + @as(u32, sprite_yh.tilemap_y);
                 const tilemap_offset_y = (sprite_tilemap_y << (@as(u5, sprite_yh.tilemap_size_a)+4)) +
@@ -116,63 +113,52 @@ pub fn emulate_line(self: *State, skip: bool) void {
                 const tile_row:u18 = @truncate((sprite_offset_y >> 1) & 7);
 
                 const trunc_tilemap_offset_y: u32 = @bitCast(tilemap_offset_y);
-                const tilemap_addr: u32 = (@as(u32, sprite_addr.tilemap_addr) << 9) + trunc_tilemap_offset_y + @as(u32, sprite_xw.tilemap_x);
-                self.active_tilemap_addr[self.active_count] = ActiveTilemapAddr{
-                    .tilemap_addr = @truncate(tilemap_addr),
+                const tilemap_address: u32 = (@as(u32, sprite_addr.tilemap_addr) << 9) + trunc_tilemap_offset_y + @as(u32, sprite_xw.tilemap_x);
+
+                const tilemap_addr: ActiveTilemapAddr = .{
+                    .tilemap_addr = @truncate(tilemap_address),
                     .tile_count = sprite_xw.width,
                     .x_flip = sprite_xw.x_flip,
                 };
-
-                self.active_bitmap_addr[self.active_count] = ActiveBitmapAddr{
+                const bitmap_addr: ActiveBitmapAddr = .{
                     .tile_bitmap_addr = @as(u18, sprite_addr.tile_bitmap_addr) + @as(u18, tile_row),
                     .lb_addr = @bitCast(sprite_xw.screen_x.fp.i),
                     .unused = 0,
                 };
 
-                self.active_count += 1;
-            }
-        }
+                // Phase 2: Render sprite tiles to line buffer
 
-        // Phase 2: Render sprite tiles to line buffer
-        const screen_offset: usize = self.frame_buffer.pitch * @as(usize, self.sy);
+                var lb_x = @as(usize, bitmap_addr.lb_addr);
 
-        const vram_u16: []u16 = std.mem.bytesAsSlice(u16, self.vram[0..]);
+                for (0..tilemap_addr.tile_count) |tile_index| {
+                    const tilemap_index = @as(usize, tilemap_addr.tilemap_addr) + @as(usize, tile_index);
+                    const tilemap_entry: TilemapEntry = @bitCast(vram_u16[tilemap_index]);
+                    const tile_address = (@as(usize, bitmap_addr.tile_bitmap_addr) << 9) +
+                        (@as(usize, tilemap_entry.tile_index) << 1);
 
-        for (0..self.active_count) |sprite_index| {
-            const tilemap_addr: ActiveTilemapAddr = self.active_tilemap_addr[sprite_index];
-            const bitmap_addr: ActiveBitmapAddr = self.active_bitmap_addr[sprite_index];
+                    for (0..2) |j| {
+                        const tile_pixels = vram_u16[tile_address+j];
+                        const combined_pixels = splitPixelsCombinePalette(tilemap_entry.palette_index, tile_pixels);
 
-            var lb_x = @as(usize, bitmap_addr.lb_addr);
-
-            for (0..tilemap_addr.tile_count) |tile_index| {
-                const tilemap_index = @as(usize, tilemap_addr.tilemap_addr) + @as(usize, tile_index);
-                const tilemap_entry: TilemapEntry = @bitCast(vram_u16[tilemap_index]);
-                const tile_address = (@as(usize, bitmap_addr.tile_bitmap_addr) << 9) +
-                    (@as(usize, tilemap_entry.tile_index) << 1);
-
-                for (0..2) |i| {
-                    const tile_pixels = vram_u16[tile_address+i];
-                    const combined_pixels = splitPixelsCombinePalette(tilemap_entry.palette_index, tile_pixels);
-
-                    const linebuffer_u16: [*]u16 = @alignCast(@ptrCast(&self.line_buffer[0]));
-
-                    inline for (0..8) |j| {
-                        linebuffer_u16[(lb_x+j) & 2047] = combined_pixels[j];
+                        inline for (0..8) |k| {
+                            linebuffer_u16[(lb_x+k) & 2047] = combined_pixels[k];
+                        }
+                        lb_x += 8;
                     }
-                    lb_x += 8;
                 }
             }
         }
 
         // Phase 3: Write line buffer to screen
+        var ptr:[*]u32 = framebuffer[screen_offset..];
         for (0..self.frame_buffer.width >> 3) |x| {
-            const pixel_data: @Vector(8, u16) = @bitCast(self.line_buffer[x]);
-            self.line_buffer[x] = 0; // Clear line buffer for next use
+            const pixel_data: @Vector(8, u16) = @bitCast(linebuffer[x]);
+            linebuffer[x] = 0; // Clear line buffer for next use
 
             // Gather RGB values from palette (indexed lookups are inherently scalar)
             var rgb_values: @Vector(8, u32) = undefined;
             inline for (0..8) |i| {
-                rgb_values[i] = self.palette[pixel_data[i]];
+                rgb_values[i] = palette[pixel_data[i]];
             }
 
             // SIMD: Add alpha channel to all 8 pixels at once
@@ -180,8 +166,12 @@ pub fn emulate_line(self: *State, skip: bool) void {
             const argb_values = rgb_values | alpha_mask;
 
             // Store all 8 pixels at once
-            const dest_ptr: *[8]u32 = @ptrCast(self.frame_buffer.pixels + screen_offset + (x << 3));
-            dest_ptr.* = argb_values;
+            inline for (0..8) |i| {
+                @setRuntimeSafety(false);
+                ptr[i] = argb_values[i];
+            }
+
+            ptr += 8;
         }
     } else if (self.sy == self.frame_buffer.height) {
         if (self.initial_delay > 0) {
@@ -201,15 +191,20 @@ pub fn emulate_line(self: *State, skip: bool) void {
 }
 
 pub fn emulate_frame(self: *State, skip: bool) void {
+    var timer = std.time.Timer.start() catch @panic("no timer");
     self.sy = 0;
     for (0..SCANLINES_PER_SCREEN) |_| {
         self.emulate_line(skip);
+    }
+    const elapsed = timer.read();
+    if (!skip) {
+        std.debug.print("Frame time: {d} us\r\n", .{elapsed / 1_000});
     }
 }
 
 /// Splits a 16 bit tile bitmap data (4 pixels of 4bits each) into 8 u16 pixels,
 /// combining each with the given 5-bit palette index shifted left by 4 bits.
-fn splitPixelsCombinePalette(palette: u5, pixels: u16) @Vector(8, u16) {
+inline fn splitPixelsCombinePalette(palette: u5, pixels: u16) @Vector(8, u16) {
     const paletteSplat: @Vector(8, u16) = @splat(palette);
     const paletteShifted = paletteSplat << @splat(4);
 

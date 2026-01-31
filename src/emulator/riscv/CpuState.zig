@@ -81,10 +81,13 @@ pub fn run(self: *CpuState, clint: *Clint, mem: Memory, max_cycles: usize, fail_
 pub fn runForCycles(self: *CpuState, clint: *Clint, mem: Memory, cycles: u64, fail_on_all_faults: bool) Word {
     clint.mtime = self.cycles;
 
+    var interruptable = false;
+
     // Handle Timer interrupt.
     if (clint.msip and clint.mtimecmp != 0 and clint.mtime >= clint.mtimecmp) {
         self.reg.extraflags &= ~@as(Word, 4); // Clear WFI
         self.reg.mip |= 1 << 7; //MTIP of MIP // https://stackoverflow.com/a/61916199/2926815  Fire interrupt.
+        interruptable = true;
     } else {
         self.reg.mip &= ~(@as(Word, 1) << @as(Word, 7));
     }
@@ -104,6 +107,8 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, mem: Memory, cycles: u64, fa
     const memory_word = std.mem.bytesAsSlice(Word, mem.data);
     const memory_half = std.mem.bytesAsSlice(u16, mem.data);
 
+    var pc: Word = self.reg.pc;
+
     const goal_cycles = self.cycles +% @as(usize, cycles);
     while (self.cycles < goal_cycles) {
         var ir: Word = 0;
@@ -111,8 +116,6 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, mem: Memory, cycles: u64, fa
         var rval: Word = 0;
 
         self.cycles +%= 1;
-
-        var pc: Word = self.reg.pc;
 
         if (pc & 3 != 0) {
             std.debug.print("PC Misalignment fault: {x}\r\n", .{pc});
@@ -229,11 +232,11 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, mem: Memory, cycles: u64, fa
                         }
 
                         if (bytemask == 0b111 and rsval & 3 != 0) {
-                            std.debug.print("Load align fault: pc: {x}, addy: {x}\r\n", .{self.reg.pc, rsval});
+                            std.debug.print("Load align fault: pc: {x}, addy: {x}\r\n", .{pc, rsval});
                             trap = (4 + 1);
                             result.valid = true; // slip load access fault since this is an alignment fault
                         } else if (bytemask == 0b011 and rsval & 1 != 0) {
-                            std.debug.print("Load align fault: pc: {x}, addy: {x}\r\n", .{self.reg.pc, rsval});
+                            std.debug.print("Load align fault: pc: {x}, addy: {x}\r\n", .{pc, rsval});
                             trap = (4 + 1);
                             result.valid = true; // slip load access fault since this is an alignment fault
                         } else {
@@ -249,7 +252,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, mem: Memory, cycles: u64, fa
                     self.cycles +%= result.duration;
 
                     if (!result.valid) {
-                        std.debug.print("Load access fault: pc: {x}, addy: {x}\r\n", .{self.reg.pc, rsval});
+                        std.debug.print("Load access fault: pc: {x}, addy: {x}\r\n", .{pc, rsval});
                         trap = (5 + 1); // Load access fault.
                         rval = rsval;
                     } else {
@@ -271,7 +274,8 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, mem: Memory, cycles: u64, fa
                     rdid = 0;
 
                     if (addy == 0x11100000) { //SYSCON (reboot, poweroff, etc.)
-                        self.reg.pc +%= 4;
+                        pc +%= 4;
+                        self.reg.pc = pc;
                         return rs2; // NOTE: PC will be PC of Syscon.
                     }
 
@@ -284,7 +288,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, mem: Memory, cycles: u64, fa
                             },
                             0b001 => {
                                 if (rel_addy & 1 != 0) {
-                                    std.debug.print("Store align fault: pc: {x}, rel_addy: {x}\r\n", .{self.reg.pc, rel_addy});
+                                    std.debug.print("Store align fault: pc: {x}, rel_addy: {x}\r\n", .{pc, rel_addy});
                                     trap = (2 + 1);
                                 } else {
                                     memory_half[rel_addy >> 1] = @as(u16, @truncate(rs2 & 0xffff));
@@ -292,14 +296,14 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, mem: Memory, cycles: u64, fa
                             },
                             0b010 => {
                                 if (rel_addy & 3 != 0) {
-                                    std.debug.print("Store align fault: pc: {x}, rel_addy: {x}\r\n", .{self.reg.pc, rel_addy});
+                                    std.debug.print("Store align fault: pc: {x}, rel_addy: {x}\r\n", .{pc, rel_addy});
                                     trap = (2 + 1);
                                 } else {
                                     memory_word[rel_addy >> 2] = rs2;
                                 }
                             },
                             else =>  {
-                                std.debug.print("Store access fault: pc: {x}, rel_addy: {x}\r\n", .{self.reg.pc, rel_addy});
+                                std.debug.print("Store access fault: pc: {x}, rel_addy: {x}\r\n", .{pc, rel_addy});
                                 trap = (2 + 1);
                             },
                         }
@@ -605,7 +609,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, mem: Memory, cycles: u64, fa
             if (trap == 0) {
                 if (rdid != 0) {
                     self.reg.regs[rdid] = rval;
-                } else if ((self.reg.mip & (1 << 7) != 0) and (self.reg.mie & (1 << 7) != 0) and (self.reg.mstatus & 0x8 != 0)) { // Write back register.
+                } else if (interruptable and (self.reg.mip & (1 << 7) != 0) and (self.reg.mie & (1 << 7) != 0) and (self.reg.mstatus & 0x8 != 0)) {
                     trap = 0x80000007; // Timer interrupt.
                 }
             }
@@ -615,6 +619,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, mem: Memory, cycles: u64, fa
             if (fail_on_all_faults) {
                 //*printf( "FAULT\r\n" );*/
                 std.debug.print("FAULT: {}\r\n", .{trap});
+                self.reg.pc = pc;
                 return trap;
             } else {
                 trap = handle_exception(ir, trap);
@@ -647,8 +652,11 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, mem: Memory, cycles: u64, fa
                 self.reg.extraflags |= 3;
             }
         }
-        self.reg.pc = pc +% 4;
+        pc +%= 4;
     }
+
+    self.reg.pc = pc;
+
     return 0;
 }
 
