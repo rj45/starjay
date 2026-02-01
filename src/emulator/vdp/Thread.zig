@@ -86,7 +86,7 @@ pub fn start(self: *Thread) !void {
 
     self.running.store(true, .release);
     self.thread = try std.Thread.spawn(.{}, threadMain, .{self});
-    try self.thread.?.setName("starjay/VDP");
+    self.thread.?.setName("starjay/VDP") catch {}; // doesn't work on mac, don't care
 }
 
 pub fn stop(self: *Thread) void {

@@ -104,7 +104,7 @@ pub fn start(self: *Thread) !void {
     self.running.store(true, .release);
 
     self.thread = try std.Thread.spawn(.{}, threadMain, .{self});
-    try self.thread.?.setName("starjay/CPU");
+    self.thread.?.setName("starjay/CPU") catch {};
 }
 
 pub fn stop(self: *Thread) void {
