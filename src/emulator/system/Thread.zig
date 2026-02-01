@@ -15,7 +15,7 @@ const System = @import("../System.zig");
 pub const Thread = @This();
 
 // Timing constants
-pub const CYCLES_PER_FRAME: u64 = 1440 * 741 / 2; // 741 scanlines, 1440 cycles per scanline, running at half speed
+pub const BUS_CYCLES_PER_FRAME: u64 = 1440 * 741; // 741 scanlines, 1440 cycles per scanline
 const FRAME_TIME_NS: u64 = 16_627_502; // ~60 FPS
 
 // Command from coordinator to CPU thread
@@ -48,14 +48,11 @@ frame_futex: *std.atomic.Value(u32),
 
 // Thread state
 thread: ?std.Thread,
+bus_cycles: System.Bus.Cycle,
 frame_number: u64,
 timer: std.time.Timer,
 allocator: std.mem.Allocator,
 running: std.atomic.Value(bool),
-
-// Adaptive cycle scaling
-// When running too slow, reduce cycles per frame to allow VDP to skip frames
-cycle_divisor: u32,
 
 pub fn init(
     allocator: std.mem.Allocator,
@@ -69,20 +66,18 @@ pub fn init(
     // Initialize basic state
     self.vdp_queue = vdp_queue;
     self.thread = null;
+    self.bus_cycles = 0;
     self.frame_number = 0;
     self.allocator = allocator;
     self.frame_futex = frame_futex;
 
-    // Initialize adaptive cycle scaling
-    self.cycle_divisor = 1;
-
     self.timer = try std.time.Timer.start();
 
     // Initialize command/completion queues
-    self.command_queue = CommandQueue.initCapacity(allocator, 4) catch return error.OutOfMemory;
+    self.command_queue = try CommandQueue.initCapacity(allocator, 4);
     errdefer self.command_queue.deinit(allocator);
 
-    self.completion_queue = CompletionQueue.initCapacity(allocator, 4) catch return error.OutOfMemory;
+    self.completion_queue = try CompletionQueue.initCapacity(allocator, 4);
     errdefer self.completion_queue.deinit(allocator);
 
     self.system = system;
@@ -104,7 +99,7 @@ pub fn start(self: *Thread) !void {
     self.running.store(true, .release);
 
     self.thread = try std.Thread.spawn(.{}, threadMain, .{self});
-    self.thread.?.setName("starjay/CPU") catch {};
+    self.thread.?.setName("starjay/CPU") catch {}; // doesn't work on mac, don't care
 }
 
 pub fn stop(self: *Thread) void {
@@ -155,7 +150,7 @@ fn threadMain(self: *Thread) void {
 
             switch (cmd) {
                 .run_frame => {
-                    const adjusted_cycles = CYCLES_PER_FRAME / @as(u64, self.cycle_divisor);
+                    const adjusted_cycles = BUS_CYCLES_PER_FRAME / @as(u64, self.system.cpu.cycle_divisor);
                     const cycle_goal = self.system.cpu.cycles +% adjusted_cycles;
 
                     const start_time = self.timer.read();
@@ -170,16 +165,18 @@ fn threadMain(self: *Thread) void {
                     }
 
                     const elapsed_ns = self.timer.read() - start_time;
+                    std.debug.print("CPU frame took: {} us\r\n", .{elapsed_ns/1000});
 
-                    if (elapsed_ns > (FRAME_TIME_NS*2/self.cycle_divisor)) {
+                    if (elapsed_ns > FRAME_TIME_NS) {
                         slow_frames += 1;
                         if (slow_frames > 8) {
+                            const full_frame_time = elapsed_ns * self.system.cpu.cycle_divisor;
                             const ratio = std.math.ceilPowerOfTwo(u32,
-                                @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(elapsed_ns)) / @as(f32, @floatFromInt(FRAME_TIME_NS))))
+                                @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(full_frame_time)) / @as(f32, @floatFromInt(FRAME_TIME_NS))))
                             ) catch 64;
-                            if (ratio > self.cycle_divisor) {
-                                self.cycle_divisor = ratio;
-                                std.debug.print("Frame {} slow ({} ns), increasing cycle_divisor to {}\r\n", .{self.frame_number, elapsed_ns, self.cycle_divisor});
+                            if (ratio > self.system.cpu.cycle_divisor) {
+                                self.system.cpu.cycle_divisor = ratio;
+                                std.debug.print("Frame {} slow ({} ns), increasing cycle_divisor to {}\r\n", .{self.frame_number, elapsed_ns, self.system.cpu.cycle_divisor});
                             }
                         }
                     } else {
@@ -187,7 +184,7 @@ fn threadMain(self: *Thread) void {
                     }
                     if ((self.frame_number % (60*30)) == 0) {
                         const fps = @as(f32, 1_000_000_000) / @as(f32, @floatFromInt(elapsed_ns));
-                        std.debug.print("Frame {} completed in {} ns ({:.2} FPS), cycle_divisor = {}\r\n", .{self.frame_number, elapsed_ns, fps, self.cycle_divisor});
+                        std.debug.print("Frame {} completed in {} ns ({:.2} FPS), cycle_divisor = {}\r\n", .{self.frame_number, elapsed_ns, fps, self.system.cpu.cycle_divisor});
                     }
 
                     if (retval != 0 and retval != 1) {
@@ -203,6 +200,12 @@ fn threadMain(self: *Thread) void {
                         self.completion_queue.push(.{ .cpu_halted = error_level });
                         return;
                     }
+
+                    self.bus_cycles += BUS_CYCLES_PER_FRAME;
+
+                    // Tick the PSGs
+                    self.system.psg1.runUntil(self.bus_cycles);
+                    self.system.psg2.runUntil(self.bus_cycles);
 
                     // Signal frame completion
                     self.completion_queue.push(.{

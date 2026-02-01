@@ -24,6 +24,7 @@ bus: *Bus,
 cycles: usize = 0,
 halted: bool = false,
 log_enabled: bool = true,
+cycle_divisor: u32 = 2,
 
 pub const Memory = struct {
      data: []align(4) u8,
@@ -126,7 +127,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, mem: Memory, cycles: u64, fa
                 ir = memory_word[offset >> 2];
             } else {
                 const fetch = self.bus.access(.{
-                    .cycle = @truncate(self.cycles),
+                    .cycle = @truncate(self.cycles*self.cycle_divisor),
                     .address = pc,
                     .bytes = 0b1111,
                     .write = false,
@@ -241,7 +242,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, mem: Memory, cycles: u64, fa
                             result.valid = true; // slip load access fault since this is an alignment fault
                         } else {
                             result = self.bus.access(.{
-                                .cycle = @truncate(self.cycles),
+                                .cycle = @truncate(self.cycles*self.cycle_divisor),
                                 .address = rsval,
                                 .bytes = bytemask,
                                 .write = false,
@@ -321,7 +322,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, mem: Memory, cycles: u64, fa
                         };
 
                         const result = self.bus.access(.{
-                            .cycle = @truncate(self.cycles),
+                            .cycle = @truncate(self.cycles*self.cycle_divisor),
                             .address = addy,
                             .bytes = bytemask,
                             .data = rs2,
@@ -528,7 +529,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, mem: Memory, cycles: u64, fa
                     const irmid: Word = (ir >> 27) & 0x1f;
 
                     const amoload = self.bus.access(.{
-                        .cycle = @truncate(self.cycles),
+                        .cycle = @truncate(self.cycles*self.cycle_divisor),
                         .address = rs1,
                         .bytes = 0b1111,
                         .write = false,
@@ -588,7 +589,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, mem: Memory, cycles: u64, fa
                     }
                     if (dowrite) {
                         const amostore = self.bus.access(.{
-                            .cycle = @truncate(self.cycles),
+                            .cycle = @truncate(self.cycles*self.cycle_divisor),
                             .address = rs1,
                             .bytes = 0b1111,
                             .write = true,

@@ -1,10 +1,12 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
-    const target = b.standardTargetOptions(.{});
+    var target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const sdl2 = b.option(bool, "sdl2", "Build for SDL2 instead of SDL3") orelse false;
     const sdl3 = !sdl2;
+
+    target.query.cpu_model = .baseline;
 
     // For dvui and SDL, never use Debug mode; use ReleaseSafe instead.
     const ui_opt_mode: @TypeOf(optimize) = if (optimize == .Debug) .ReleaseSafe else optimize;

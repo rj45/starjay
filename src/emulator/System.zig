@@ -9,6 +9,7 @@ pub const Device = @import("device/Device.zig");
 pub const Clint = @import("device/Clint.zig");
 pub const Sram = @import("device/Sram.zig");
 pub const Uart = @import("device/Uart.zig");
+pub const Ay38910 = @import("device/Ay38910.zig");
 pub const Shadow = @import("device/shadow.zig").Shadow;
 pub const Vdp = @import("Vdp.zig");
 pub const Memory = riscv.CpuState.Memory;
@@ -23,7 +24,18 @@ pub const DEVICE_TABLE = riscv.DEVICE_TABLE;
 pub const CYCLES_PER_FRAME: u64 = 1440 * 741; // 741 scanlines, 1440 cycles per scanline
 const FRAME_TIME_NS: u64 = 16_627_502; // ~60 FPS
 
+pub const SOUND_SAMPLE_HZ: comptime_int = 48000;
+
 // Memory map constants
+pub const CLINT_BASE: u32 = 0x1100_0000;
+pub const CLINT_SIZE: u32 = 0x0000_C000;
+pub const UART_BASE: u32 = 0x1000_0000;
+pub const UART_SIZE: u32 = 0x0000_0020;
+pub const PSG1_BASE: u32 = 0x1300_0000;
+pub const PSG1_SIZE: u32 = 0x0000_0010;
+pub const PSG2_BASE: u32 = PSG1_BASE + PSG1_SIZE;
+pub const PSG2_SIZE: u32 = PSG1_SIZE;
+pub const SRAM_BASE: u32 = RAM_IMAGE_OFFSET;
 pub const VDP_BASE: u32 = 0x2000_0000;
 pub const VDP_SIZE: u32 = Vdp.Device.TOTAL_SIZE;
 
@@ -32,8 +44,10 @@ pub const System = @This();
 memory: Memory,
 bus: Bus,
 clint: Clint,
-uart: Uart,
+uart: *Uart,
 sram: Sram,
+psg1: Ay38910,
+psg2: Ay38910,
 cpu: riscv.CpuState,
 vdp_shadow: Shadow(Vdp.Device),
 
@@ -55,11 +69,17 @@ pub fn init(rom_file: []const u8, quiet: bool, vdp_queue: ?*Bus.Queue, gpa: std.
     errdefer self.bus.deinit();
 
     self.clint = Clint.init();
-    try self.bus.attach(Device.init(&self.clint, 0x11000000, 0x1100C000));
+    try self.bus.attach(Device.init(&self.clint, CLINT_BASE, CLINT_BASE + CLINT_SIZE));
 
-    self.uart = try Uart.init();
-    errdefer self.uart.deinit();
-    try self.bus.attach(Device.init(&self.uart, 0x10000000, 0x10000020));
+    self.uart = try Uart.init(gpa);
+    errdefer self.uart.deinit(gpa);
+    try self.bus.attach(Device.init(self.uart, UART_BASE, UART_BASE + UART_SIZE));
+
+    self.psg1 = try Ay38910.init(.{ .sound_hz = SOUND_SAMPLE_HZ }, gpa);
+    try self.bus.attach(Device.init(&self.psg1, PSG1_BASE, PSG1_BASE + PSG1_SIZE));
+
+    self.psg2 = try Ay38910.init(.{ .sound_hz = SOUND_SAMPLE_HZ }, gpa);
+    try self.bus.attach(Device.init(&self.psg2, PSG2_BASE, PSG2_BASE + PSG2_SIZE));
 
     self.sram = Sram.init(self.memory.data);
     try self.sram.loadRom(rom_file);
@@ -93,7 +113,9 @@ pub fn init(rom_file: []const u8, quiet: bool, vdp_queue: ?*Bus.Queue, gpa: std.
 
 pub fn deinit(self: *System, gpa: std.mem.Allocator) void {
     self.bus.deinit();
-    self.uart.deinit();
+    self.uart.deinit(gpa);
+    self.psg1.deinit(gpa);
+    self.psg2.deinit(gpa);
     gpa.free(self.memory.data);
     gpa.destroy(self);
 }

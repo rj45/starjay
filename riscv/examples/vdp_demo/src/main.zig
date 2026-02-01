@@ -3,6 +3,7 @@ const std = @import("std");
 // I am not really sure why using the root namespace here doesn't work. The workaround
 // was to export a variable assigned to @This(), and that worked. Maybe a Zig bug?
 const term = @import("term.zig").term;
+const ay3 = @import("ay38910.zig").ay38910;
 
 pub const TilemapEntry = packed struct(u16) {
     tile_index: u8,
@@ -71,12 +72,19 @@ const SYSCON_REG_ADDR:usize = 0x11100000;
 const SPRITE_TABLE_ADDR:usize = 0x20000000;
 const PALETTE_BASE: usize = 0x20003000;
 const VRAM_BASE: usize = 0x20004000;
+pub const PSG1_BASE: u32 = 0x1300_0000;
+pub const PSG1_SIZE: u32 = 0x0000_0010;
+pub const PSG2_BASE: u32 = PSG1_BASE + PSG1_SIZE;
+pub const PSG2_SIZE: u32 = PSG1_SIZE;
+
 
 const uart_buf_reg = @volatileCast(@as(*u32, @ptrFromInt(UART_BUF_REG_ADDR)));
 const syscon = @volatileCast(@as(*u32, @ptrFromInt(SYSCON_REG_ADDR)));
 const sprite_table = @volatileCast(@as(*SpriteTable, @ptrFromInt(SPRITE_TABLE_ADDR)));
 const palette = @volatileCast(@as(*[512]u32, @ptrFromInt(PALETTE_BASE)));
 const vram = @volatileCast(@as(*[16384]u8, @ptrFromInt(VRAM_BASE)));
+const psg1 = @volatileCast(@as(*[4]u32, @ptrFromInt(PSG1_BASE)));
+const psg2 = @volatileCast(@as(*[4]u32, @ptrFromInt(PSG2_BASE)));
 
 const palette_data = @embedFile("palette.bin");
 const tilemap_data = @embedFile("tilemap.bin");
@@ -85,6 +93,19 @@ const tile_bitmap_data = @embedFile("tiles.bin");
 export fn kmain() noreturn {
     const console = term.getWriter();
     const tile_bitmap_addr = if ((tilemap_data.len % 512) == 0) tilemap_data.len / 512 else (tilemap_data.len / 512) + 1;
+
+    // const ay3_regs: ay3.Regs = .{
+    //     .tone_a = 252, //(ay3.CHIP_FREQ / 16) / 440, // A4
+    //     .volume_a = .{
+    //         .envelope_enable = false,
+    //         .level = 0x0F,
+    //     },
+    //     .mixer = .{
+    //         .tone_a_disable = false,
+    //     },
+    // };
+    // ay3_regs.write(psg1);
+
 
     for (0..512) |i| {
         // my lame attempt at pseudo-randomness (doesn't work, but the pattern is pretty)

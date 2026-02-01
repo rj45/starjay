@@ -20,15 +20,16 @@ write_buffer: [4096]u8 = undefined,
 
 pub const Uart = @This();
 
-pub fn init() !Uart {
-    var uart: Uart = .{};
+pub fn init(gpa: std.mem.Allocator) !*Uart {
+    var uart: *Uart = try gpa.create(Uart);
     uart.tty = try Tty.init(uart.read_buffer[0..], uart.write_buffer[0..]);
     return uart;
 }
 
-pub fn deinit(self: *Uart) void {
+pub fn deinit(self: *Uart, gpa: std.mem.Allocator) void {
     self.flush();
     self.tty.deinit();
+    gpa.destroy(self);
 }
 
 pub fn flush(self: *Uart) void {

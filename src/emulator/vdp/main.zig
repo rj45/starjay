@@ -31,6 +31,9 @@ var system: *System = undefined;
 var cpu_thread: ?*System.Thread = null;
 var frame_futex: std.atomic.Value(u32) = .init(0);
 
+// Audio
+var audio_stream: ?*c.SDL_AudioStream = null;
+
 var run_time: std.time.Timer = undefined;
 var frame_count: u64 = 0;
 var pending_frames: u64 = 0;
@@ -43,8 +46,6 @@ pub fn main(allocator: std.mem.Allocator, rom_path: ?[]const u8) !void {
     }
     SDLBackend.enableSDLLogging();
 
-    run_time = try std.time.Timer.start();
-
     // app_init is a stand-in for what your application is already doing to set things up
     try open_vdp_window(allocator);
 
@@ -54,8 +55,11 @@ pub fn main(allocator: std.mem.Allocator, rom_path: ?[]const u8) !void {
         try start_cpu_thread(allocator);
     }
 
+    run_time = try std.time.Timer.start();
+    last_blit_time = run_time.read();
+
     while (try process_events(null, null)) {
-        if (!run_frame()) {
+        if (!runFrame()) {
             break;
         }
     }
@@ -154,10 +158,10 @@ fn getWindowFromEvent(event: *const c.SDL_Event) ?*c.SDL_Window {
 
 /// Main frame loop: coordinate CPU and VDP threads
 /// This runs once per monitor refresh (vsync)
-pub fn run_frame() bool {
+pub fn runFrame() bool {
     const current_time = run_time.read();
     const expected_frames = @max(1, current_time / frame_time_ns);
-    var frames_to_do = @min(3, expected_frames - (frame_count + pending_frames));
+    var frames_to_do = @min(5, expected_frames - (frame_count + pending_frames));
 
     // While we are behind, try to catch up by skipping frames and running the CPU as fast as possible
     while (frames_to_do > 1) {
@@ -232,16 +236,21 @@ pub fn run_frame() bool {
         }
     }
 
+    // If the cpu thread is running, write audio samples
+    if (cpu_thread) |_| {
+        writeAudio();
+    }
+
     // Blit front surface to window
     // NOTE: this will wait for vsync
     blitToWindow();
     const current_blit_time = run_time.read();
-    // const frame_time = current_blit_time - last_blit_time;
+    const frame_time = current_blit_time - last_blit_time;
     last_blit_time = current_blit_time;
 
-    // if (frame_time > (frame_time_ns+(frame_time_ns / 2))) {
-    //     std.debug.print("Warning: Blit took too long: {} us\r\n", .{frame_time/1000});
-    // }
+    if (frame_time > (frame_time_ns+(frame_time_ns / 2))) {
+        std.debug.print("Warning: Frame took too long: {} us\r\n", .{frame_time/1000});
+    }
 
     return true;
 }
@@ -279,6 +288,54 @@ fn blitToWindow() void {
     _ = c.SDL_UpdateWindowSurface(window);
 }
 
+fn writeAudio() void {
+    var audio_buffer: [8192]f32 = undefined;
+    var audio_samples: usize = 0;
+    var psg1q = &system.psg1.queue;
+    var psg2q = &system.psg2.queue;
+
+    while ((audio_samples + 2) < audio_buffer.len) {
+        if (psg1q.front()) |s1| {
+            if (psg2q.front()) |s2| {
+                // TODO: fix this when properly implementing TurboSound support
+                const sample = (s1.* + s2.*) * 0.25;
+                audio_buffer[audio_samples + 0] = sample;
+                audio_buffer[audio_samples + 1] = sample;
+                audio_samples += 2;
+
+                psg1q.pop();
+                psg2q.pop();
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+
+    if (audio_samples > 0) {
+        if (audio_stream) |stream| {
+            var nonzero: usize = 0;
+            var max: f32 = std.math.floatMin(f32);
+            var min: f32 = std.math.floatMax(f32);
+            for (0..audio_samples) |i| {
+                if (@abs(audio_buffer[i]) > 0.00001) {
+                    nonzero+=1;
+                }
+                if (audio_buffer[i] > max) {
+                    max = audio_buffer[i];
+                }
+                if (audio_buffer[i] < min) {
+                    min = audio_buffer[i];
+                }
+            }
+            // std.debug.print("Putting {} samples, {} are non-zero, range: {}-{}\r\n", .{audio_samples, nonzero, min, max});
+            const size: c_int = @truncate(@as(isize, @bitCast(audio_samples * @sizeOf(f32))));
+            _ = c.SDL_PutAudioStreamData(stream, @ptrCast(&audio_buffer[0]), size);
+        }
+    }
+}
+
 pub fn start_cpu_thread(allocator: std.mem.Allocator) !void {
     cpu_thread = System.Thread.init(allocator, &frame_futex, &shadow_queue, system) catch |err| {
         std.debug.print("Failed to create CPU thread: {}\n", .{err});
@@ -302,7 +359,7 @@ pub fn destroy_cpu_thread() void {
 pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
     gpa = allocator;
 
-    if (c.SDL_Init(c.SDL_INIT_VIDEO) != if (SDLBackend.sdl3) true else 0) {
+    if (c.SDL_Init(c.SDL_INIT_VIDEO | c.SDL_INIT_AUDIO) != if (SDLBackend.sdl3) true else 0) {
         std.debug.print("Couldn't initialize SDL: {s}\n", .{c.SDL_GetError()});
         return error.BackendError;
     }
@@ -330,6 +387,18 @@ pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
             std.debug.print("Failed to create surface 1: {s}\n", .{c.SDL_GetError()});
             return error.BackendError;
         };
+        const audio_spec: c.SDL_AudioSpec = .{
+            .freq = System.SOUND_SAMPLE_HZ,
+            .format = c.SDL_AUDIO_F32,
+            .channels = 2,
+        };
+        audio_stream = c.SDL_OpenAudioDeviceStream(c.SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &audio_spec, null, null) orelse blk: {
+            std.debug.print("Failed to open audio stream: {s}\n", .{c.SDL_GetError()});
+            break :blk null;
+        };
+        if (audio_stream) |stream| {
+            _ = c.SDL_ResumeAudioStreamDevice(stream);
+        }
     } else {
         window = c.SDL_CreateWindow("StarJay Fantasy Console", c.SDL_WINDOWPOS_UNDEFINED, c.SDL_WINDOWPOS_UNDEFINED, @as(c_int, @intCast(content_width)), @as(c_int, @intCast(content_height)), c.SDL_WINDOW_ALLOW_HIGHDPI | c.SDL_WINDOW_RESIZABLE | hidden_flag) orelse {
             std.debug.print("Failed to open window: {s}\n", .{c.SDL_GetError()});
@@ -365,8 +434,6 @@ pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
         std.debug.print("Failed to start VDP thread: {}\n", .{err});
         return error.BackendError;
     };
-
-    last_blit_time = run_time.read();
 }
 
 pub fn destroy_vdp_window() void {
@@ -380,6 +447,10 @@ pub fn destroy_vdp_window() void {
     if (SDLBackend.sdl3) {
         _ = c.SDL_DestroySurface(surfaces[0]);
         _ = c.SDL_DestroySurface(surfaces[1]);
+        if (audio_stream) |stream| {
+            _ = c.SDL_DestroyAudioStream(stream);
+            audio_stream = null;
+        }
     } else {
         _ = c.SDL_FreeSurface(surfaces[0]);
         _ = c.SDL_FreeSurface(surfaces[1]);

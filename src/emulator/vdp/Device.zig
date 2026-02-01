@@ -158,7 +158,7 @@ fn accessPalette(self: *Device, transaction: Transaction) Transaction {
             result.valid = true;
         } else if (transaction.bytes == 0b0011 and addr & 1 == 0) {
             var word = self.vdp.palette[index];
-            const half: u5 = @truncate(addr & 1);
+            const half: u5 = @truncate((addr >> 1) & 1);
             word = word & ~(@as(u32, 0xFFFF) << (half * 16)) | ((transaction.data & 0xFFFF) << (half * 16));
             self.vdp.palette[index] = word;
             result.valid = true;
@@ -245,7 +245,7 @@ inline fn setVram(self: *Device, addr: usize, value: u32) void {
 }
 
 /// Get a sprite attribute as u36 by sprite index and attribute index (0-3)
-fn getSpriteAttr36(self: *Device, sprite_index: usize, attr_index: usize) u36 {
+inline fn getSpriteAttr36(self: *Device, sprite_index: usize, attr_index: usize) u36 {
     return switch (attr_index) {
         0 => @bitCast(self.vdp.sprite_y_height[sprite_index]),
         1 => @bitCast(self.vdp.sprite_x_width[sprite_index]),
@@ -256,7 +256,7 @@ fn getSpriteAttr36(self: *Device, sprite_index: usize, attr_index: usize) u36 {
 }
 
 /// Set a sprite attribute from u36 by sprite index and attribute index (0-3)
-fn setSpriteAttr36(self: *Device, sprite_index: usize, attr_index: usize, value: u36) void {
+inline fn setSpriteAttr36(self: *Device, sprite_index: usize, attr_index: usize, value: u36) void {
     switch (attr_index) {
         0 => self.vdp.sprite_y_height[sprite_index] = @bitCast(value),
         1 => self.vdp.sprite_x_width[sprite_index] = @bitCast(value),

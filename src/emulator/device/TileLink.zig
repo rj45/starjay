@@ -92,3 +92,49 @@ pub const ChannelD = packed struct(u128) {
         ReleaseAck = 6,
     };
 };
+
+pub const Bus = struct {
+    a: ChannelA,
+    d: ChannelD,
+};
+
+pub const DeviceDesc = struct {
+    address: Addr,
+    size: Addr,
+    device: type,
+};
+
+pub fn Interconnect(comptime devices: anytype) type {
+    const fields = @typeInfo(@TypeOf(devices)).Struct.fields;
+    var struct_fields: [fields.len]std.builtin.Type.StructField = undefined;
+    for (fields, 0..) |field, i| {
+        const device_info = @field(devices, field.name);
+        struct_fields[i] = .{
+            .name = field.name,
+            .type = device_info.device,
+        };
+    }
+
+    const InterconnectType = @Type(.{
+        .Struct = .{
+            .fields = struct_fields,
+        },
+    });
+
+    return struct {
+        pub const DeviceStruct = InterconnectType;
+
+        pub fn init(gpa: std.mem.Allocator) !DeviceStruct {
+            var self = try gpa.create(DeviceStruct);
+            errdefer gpa.destroy(self);
+
+            for (fields) |field| {
+                const device_info = @field(devices, field.name);
+                @field(self, field.name) = try device_info.device.init();
+                errdefer @field(self, field.name).deinit();
+            }
+
+            return self;
+        }
+    };
+}

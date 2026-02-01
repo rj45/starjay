@@ -16,38 +16,38 @@ pub const FixedPoint = packed union {
     fp: Parts,
 
     const Parts = packed struct(u16) {
-        f: u4,
-        i: i12,
+        f: u4 = 0,
+        i: i12 = 0,
     };
 };
 
 pub const SpriteYHeight = packed struct(u36) {
-    screen_y: FixedPoint,
-    tilemap_y: u8,
-    height: u8,
-    tilemap_size_b: u2,
-    tilemap_size_a: u2,
+    screen_y: FixedPoint = .{.value = 0},
+    tilemap_y: u8 = 0,
+    height: u8 = 0,
+    tilemap_size_b: u2 = 0,
+    tilemap_size_a: u2 = 0,
 };
 
 pub const SpriteXWidth = packed struct(u36) {
-    screen_x: FixedPoint,
-    tilemap_x: u8,
-    width: u8,
-    x_flip: bool,
-    y_flip: bool,
-    unused: u2,
+    screen_x: FixedPoint = .{.value = 0},
+    tilemap_x: u8 = 0,
+    width: u8 = 0,
+    x_flip: bool = false,
+    y_flip: bool = false,
+    unused: u2 = 0,
 };
 
 pub const SpriteAddr = packed struct(u36) {
-    tile_bitmap_addr: u16,
-    tilemap_addr: u16,
-    unused: u4,
+    tile_bitmap_addr: u16 = 0,
+    tilemap_addr: u16 = 0,
+    unused: u4 = 0,
 };
 
 pub const SpriteVelocity = packed struct(u36) {
-    y_velocity: FixedPoint,
-    x_velocity: FixedPoint,
-    unused: u4,
+    y_velocity: FixedPoint = .{.value = 0},
+    x_velocity: FixedPoint = .{.value = 0},
+    unused: u4 = 0,
 };
 
 pub const ActiveTilemapAddr = packed struct(u36) {
