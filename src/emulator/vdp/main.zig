@@ -361,8 +361,8 @@ pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
     };
 
     // Start the VDP thread
-    vdp_thread.start() catch {
-        std.debug.print("Failed to start VDP thread\n", .{});
+    vdp_thread.start() catch |err| {
+        std.debug.print("Failed to start VDP thread: {}\n", .{err});
         return error.BackendError;
     };
 
