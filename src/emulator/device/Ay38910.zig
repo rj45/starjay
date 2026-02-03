@@ -14,7 +14,10 @@ const Transaction = Bus.Transaction;
 
 pub const Queue = spsc_queue.SpscQueuePo2Unmanaged(f32);
 
-const CHIP_FREQ = 1773500; // Hz -- PAL ZXSpectrum
+// const CHIP_FREQ = 1_773_500; // Hz -- PAL ZXSpectrum
+
+const CHIP_FREQ = 1_750_000; // Hz -- Pentagon ZXSpectrum clone
+
 
 // system bus runs at 64 MHz, so to get the CHIP_FREQ we count this many ticks
 const COUNT_PER_TICK: comptime_float = 64000000 / CHIP_FREQ;
@@ -170,7 +173,6 @@ pub fn access(self: *Ay38910, transaction: Transaction) Transaction {
     result.duration += 1; // assume 1 cycle per access
 
     if (transaction.write) {
-        std.debug.print("AY-3-8910 write: addr={x}, data={x}, bytes={b}\r\n", .{transaction.address, transaction.data, transaction.bytes});
         self.runUntil(transaction.start_cycle());
 
         var word = transaction.data;
@@ -182,9 +184,7 @@ pub fn access(self: *Ay38910, transaction: Transaction) Transaction {
             word >>= 8;
         }
         result.valid = true;
-        std.debug.print("AY-3-8910 regs: {x}\r\n", .{self.regs});
         self.updateValues();
-        std.debug.print("AY-3-8910 updated values\r\n", .{});
     } else {
         var data: u32 = 0;
         var addr = transaction.address;
