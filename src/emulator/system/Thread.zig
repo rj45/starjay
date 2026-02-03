@@ -165,7 +165,7 @@ fn threadMain(self: *Thread) void {
                     }
 
                     const elapsed_ns = self.timer.read() - start_time;
-                    std.debug.print("CPU frame took: {} us\r\n", .{elapsed_ns/1000});
+                    //std.debug.print("CPU frame took: {} us\r\n", .{elapsed_ns/1000});
 
                     if (elapsed_ns > FRAME_TIME_NS) {
                         slow_frames += 1;

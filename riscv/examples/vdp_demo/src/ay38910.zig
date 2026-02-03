@@ -3,7 +3,8 @@
 
 pub const ay38910 = @This();
 
-pub const CHIP_FREQ = 1773500; // Hz -- PAL ZXSpectrum
+// pub const CHIP_FREQ = 1773500; // Hz -- PAL ZXSpectrum
+pub const CHIP_FREQ = 1750000; // Hz -- Pentagon ZXSpectrum clone
 
 
 // compiler bug: nested packed structs cause a hang in symantic analysis
@@ -30,7 +31,7 @@ pub const Regs = struct {
         _unused: u2 = 0,
     };
 
-    pub const Volume = packed struct {
+    pub const Volume = packed struct(u8) {
         level: u4 = 0,
         envelope_enable: bool = false,
         _unused: u3 = 0,
@@ -86,5 +87,29 @@ pub const Regs = struct {
         // envelope_shape: u4 = 0,
         // _pad4: u20 = 0,
         base_addr[3] = ((@as(u32, self.envelope_period) >> 8) & 0xFF) | (@as(u32, self.envelope_shape & 0x0F) << 8);
+    }
+};
+
+// ============================================================================
+// TurboSound (Dual AY) Registers
+// ============================================================================
+
+pub const TurboSoundRegs = struct {
+    psg1: Regs,
+    psg2: Regs,
+
+    pub fn init() TurboSoundRegs {
+        return .{
+            .psg1 = Regs.init(),
+            .psg2 = Regs.init(),
+        };
+    }
+
+    pub fn chip(self: *TurboSoundRegs, index: usize) *Regs {
+        return switch (index) {
+            0 => &self.psg1,
+            1 => &self.psg2,
+            else => @panic("Invalid PSG index"),
+        };
     }
 };

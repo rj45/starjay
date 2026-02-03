@@ -25,11 +25,12 @@ var vdp_thread: *Vdp.Thread = undefined;
 var shadow_queue: Bus.Queue = undefined;
 var surfaces: [2]*c.SDL_Surface = undefined;
 var front_surface_index: u32 = 0;
+var vdp_frame_futex: std.atomic.Value(u32) = .init(0);
 
 // CPU thread and frame synchronization
 var system: *System = undefined;
 var cpu_thread: ?*System.Thread = null;
-var frame_futex: std.atomic.Value(u32) = .init(0);
+var cpu_frame_futex: std.atomic.Value(u32) = .init(0);
 
 // Audio
 var audio_stream: ?*c.SDL_AudioStream = null;
@@ -173,9 +174,14 @@ pub fn runFrame() bool {
         frames_to_do -= 1;
 
         // If the frame_futex is the expected value (1)
-        if (frame_futex.cmpxchgWeak(1, 0, .release, .acquire) == null) {
+        if (vdp_frame_futex.cmpxchgWeak(1, 0, .release, .acquire) == null) {
             // Wake any waiting threads
-            std.Thread.Futex.wake(&frame_futex, 10);
+            std.Thread.Futex.wake(&vdp_frame_futex, 10);
+        }
+
+        if (cpu_frame_futex.cmpxchgWeak(1, 0, .release, .acquire) == null) {
+            // Wake any waiting threads
+            std.Thread.Futex.wake(&cpu_frame_futex, 10);
         }
     }
 
@@ -230,9 +236,14 @@ pub fn runFrame() bool {
         pending_frames += 1;
 
         // If the frame_futex is the expected value (1)
-        if (frame_futex.cmpxchgWeak(1, 0, .release, .acquire) == null) {
+        if (vdp_frame_futex.cmpxchgWeak(1, 0, .release, .acquire) == null) {
             // Wake any waiting threads
-            std.Thread.Futex.wake(&frame_futex, 10);
+            std.Thread.Futex.wake(&vdp_frame_futex, 10);
+        }
+
+        if (cpu_frame_futex.cmpxchgWeak(1, 0, .release, .acquire) == null) {
+            // Wake any waiting threads
+            std.Thread.Futex.wake(&cpu_frame_futex, 10);
         }
     }
 
@@ -289,22 +300,37 @@ fn blitToWindow() void {
 }
 
 fn writeAudio() void {
-    var audio_buffer: [8192]f32 = undefined;
+    var audio_buffer: [65536]f32 = undefined;
     var audio_samples: usize = 0;
-    var psg1q = &system.psg1.queue;
-    var psg2q = &system.psg2.queue;
+    var psg1_left = &system.psg1.left_queue;
+    var psg1_right = &system.psg1.right_queue;
+    var psg2_left = &system.psg2.left_queue;
+    var psg2_right = &system.psg2.right_queue;
+
 
     while ((audio_samples + 2) < audio_buffer.len) {
-        if (psg1q.front()) |s1| {
-            if (psg2q.front()) |s2| {
-                // TODO: fix this when properly implementing TurboSound support
-                const sample = (s1.* + s2.*) * 0.25;
-                audio_buffer[audio_samples + 0] = sample;
-                audio_buffer[audio_samples + 1] = sample;
-                audio_samples += 2;
+        if (psg1_left.front()) |s1_left| {
+            if (psg2_left.front()) |s2_left| {
+                if (psg1_right.front()) |s1_right| {
+                    if (psg2_right.front()) |s2_right| {
+                        // TODO: fix this when properly implementing TurboSound support
+                        const factor = @sqrt(0.5);
+                        const left_sample = (factor * s1_left.* + factor * s2_left.*);
+                        audio_buffer[audio_samples + 0] = left_sample;
+                        const right_sample = (factor * s1_right.* + factor * s2_right.*);
+                        audio_buffer[audio_samples + 1] = right_sample;
+                        audio_samples += 2;
 
-                psg1q.pop();
-                psg2q.pop();
+                        psg1_left.pop();
+                        psg1_right.pop();
+                        psg2_left.pop();
+                        psg2_right.pop();
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
             } else {
                 break;
             }
@@ -337,7 +363,7 @@ fn writeAudio() void {
 }
 
 pub fn start_cpu_thread(allocator: std.mem.Allocator) !void {
-    cpu_thread = System.Thread.init(allocator, &frame_futex, &shadow_queue, system) catch |err| {
+    cpu_thread = System.Thread.init(allocator, &cpu_frame_futex, &shadow_queue, system) catch |err| {
         std.debug.print("Failed to create CPU thread: {}\n", .{err});
         return error.OutOfMemory;
     };
@@ -424,7 +450,7 @@ pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
     };
 
     // Initialize VDP thread
-    vdp_thread = Vdp.Thread.init(allocator, &shadow_queue, &frame_futex) catch {
+    vdp_thread = Vdp.Thread.init(allocator, &shadow_queue, &vdp_frame_futex) catch {
         std.debug.print("Failed to create VDP thread\n", .{});
         return error.OutOfMemory;
     };

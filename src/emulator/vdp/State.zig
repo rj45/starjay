@@ -198,7 +198,8 @@ pub fn emulate_frame(self: *State, skip: bool) void {
     }
     const elapsed = timer.read();
     if (!skip) {
-        std.debug.print("Frame time: {d} us\r\n", .{elapsed / 1_000});
+        //std.debug.print("Frame time: {d} us\r\n", .{elapsed / 1_000});
+        _ = elapsed;
     }
 }
 

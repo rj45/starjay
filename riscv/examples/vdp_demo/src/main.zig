@@ -4,6 +4,9 @@ const std = @import("std");
 // was to export a variable assigned to @This(), and that worked. Maybe a Zig bug?
 const term = @import("term.zig").term;
 const ay3 = @import("ay38910.zig").ay38910;
+const pt3 = @import("pt3.zig").pt3;
+
+const song_data = @embedFile("we'll_be_alright.pt3");
 
 pub const TilemapEntry = packed struct(u16) {
     tile_index: u8,
@@ -68,6 +71,7 @@ pub const SpriteTable = struct {
 };
 
 const UART_BUF_REG_ADDR:usize = 0x10000000;
+const CLINT_BASE: u32 = 0x1100_0000;
 const SYSCON_REG_ADDR:usize = 0x11100000;
 const SPRITE_TABLE_ADDR:usize = 0x20000000;
 const PALETTE_BASE: usize = 0x20003000;
@@ -78,33 +82,37 @@ pub const PSG2_BASE: u32 = PSG1_BASE + PSG1_SIZE;
 pub const PSG2_SIZE: u32 = PSG1_SIZE;
 
 
-const uart_buf_reg = @volatileCast(@as(*u32, @ptrFromInt(UART_BUF_REG_ADDR)));
-const syscon = @volatileCast(@as(*u32, @ptrFromInt(SYSCON_REG_ADDR)));
-const sprite_table = @volatileCast(@as(*SpriteTable, @ptrFromInt(SPRITE_TABLE_ADDR)));
-const palette = @volatileCast(@as(*[512]u32, @ptrFromInt(PALETTE_BASE)));
-const vram = @volatileCast(@as(*[16384]u8, @ptrFromInt(VRAM_BASE)));
-const psg1 = @volatileCast(@as(*[4]u32, @ptrFromInt(PSG1_BASE)));
-const psg2 = @volatileCast(@as(*[4]u32, @ptrFromInt(PSG2_BASE)));
+const uart_buf_reg: * volatile u32 = @ptrFromInt(UART_BUF_REG_ADDR);
+const clint_mtime_lo: * volatile u32 = @ptrFromInt(CLINT_BASE+0xBFF8);
+const clint_mtime_hi: * volatile u32 = @ptrFromInt(CLINT_BASE+0xBFFC);
+const syscon: * volatile u32 = @ptrFromInt(SYSCON_REG_ADDR);
+const sprite_table: * volatile SpriteTable = @ptrFromInt(SPRITE_TABLE_ADDR);
+const palette: * volatile [512]u32 = @ptrFromInt(PALETTE_BASE);
+const vram: * volatile [16384]u8 = @ptrFromInt(VRAM_BASE);
+const psg1: * volatile [4]u32 = @ptrFromInt(PSG1_BASE);
+const psg2: * volatile [4]u32 = @ptrFromInt(PSG2_BASE);
 
 const palette_data = @embedFile("palette.bin");
 const tilemap_data = @embedFile("tilemap.bin");
 const tile_bitmap_data = @embedFile("tiles.bin");
 
+var player: pt3.Pt3Player = undefined;
+
+fn readClintMtime() u64 {
+    // Read the 64-bit mtime value atomically
+    while (true) {
+        const hi1 = clint_mtime_hi.*;
+        const lo = clint_mtime_lo.*;
+        const hi2 = clint_mtime_hi.*;
+        if (hi1 == hi2) {
+            return (@as(u64, hi1) << 32) | @as(u64, lo);
+        }
+    }
+}
+
 export fn kmain() noreturn {
     const console = term.getWriter();
     const tile_bitmap_addr = if ((tilemap_data.len % 512) == 0) tilemap_data.len / 512 else (tilemap_data.len / 512) + 1;
-
-    // const ay3_regs: ay3.Regs = .{
-    //     .tone_a = 252, //(ay3.CHIP_FREQ / 16) / 440, // A4
-    //     .volume_a = .{
-    //         .envelope_enable = false,
-    //         .level = 0x0F,
-    //     },
-    //     .mixer = .{
-    //         .tone_a_disable = false,
-    //     },
-    // };
-    // ay3_regs.write(psg1);
 
 
     for (0..512) |i| {
@@ -171,13 +179,60 @@ export fn kmain() noreturn {
     @memcpy(vram[0..tilemap_data.len], tilemap_data);
     @memcpy(vram[tile_bitmap_addr_start..tile_bitmap_addr_start+tile_bitmap_data.len], tile_bitmap_data);
 
+    player.init(song_data) catch |err| {
+        console.print("Failed to init PT3 player: {}\r\n", .{err}) catch {};
+        console.flush() catch {};
+        while (true) {}
+    };
+
     console.print("Hellorld from StarJay land!!!\r\n", .{}) catch {};
+    console.print("You are listening to: {s}\r\n", .{player.header.songinfo}) catch {};
+    console.print("  Dual AY3 (TurboSound)? {}\r\n", .{player.is_turbosound}) catch {};
     console.flush() catch {};
+
+    const initial_time = readClintMtime();
+    const tick_duration = 2500; // 64 MHz clock is divided by 512 for the clint, so 50 Hz is (64M/512) / 50 = 2500
+    var next_tick = initial_time + tick_duration;
+
+    console.print("Clint time: {}, next tick: {}\r\n", .{initial_time, next_tick}) catch {};
+    console.flush() catch {};
+
+    // var wait_counter: u32 = 0;
+    while (true) {
+        const current_time = readClintMtime();
+
+        // console.print("Clint time: {}, next tick: {}\r\n", .{current_time, next_tick}) catch {};
+        // console.flush() catch {};
+
+        if (current_time >= next_tick) {
+            next_tick += tick_duration;
+
+            const regs = player.playFrame();
+            // console.print("PT3 Frame: Tone A: {}, Tone B: {}, Tone C: {}\r\n", .{regs.psg1.tone_a, regs.psg1.tone_b, regs.psg1.tone_c}) catch {};
+            // console.flush() catch {};
+            regs.psg1.write(psg1);
+            // regs.psg2.write(psg2);
+
+            const time_after = readClintMtime();
+            if (time_after > next_tick) {
+                console.print("Warning: PT3 frame took too long! time_after: {}, next_tick: {}\r\n", .{time_after, next_tick}) catch {};
+                console.flush() catch {};
+            }
+        }
+
+        // // spin wait for a bit
+        // for (0..10000) |i| {
+        //     wait_counter +%= i;
+        // }
+    }
+
+    // // prevent it getting optimized away
+    // console.print("Spin result: {}\r\n", .{wait_counter}) catch {};
+    // console.flush() catch {};
 
     // You can send a power down like so if you wish to exit the emulator:
     // syscon.* = 0x5555;
 
-    while (true) {
-
-    }
+    // spin wait forever
+    while (true) {}
 }

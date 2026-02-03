@@ -69,19 +69,71 @@ fn accessSpriteAttrLo(self: *Device, transaction: Transaction) Transaction {
     const byte_offset = addr & 3;
 
     if (sprite_index >= 512) return result;
-    if (byte_offset != 0 or transaction.bytes != 0b1111) {
-        // For now, only support aligned 32-bit accesses
-        // TODO: Support partial/unaligned accesses
-        return result;
-    }
+
 
     if (transaction.write) {
-        const current_36 = self.getSpriteAttr36(sprite_index, attr_offset);
-        // Keep high 4 bits, replace low 32 bits
-        const new_36: u36 = (current_36 & 0xF_00000000) | @as(u36, transaction.data);
-        self.setSpriteAttr36(sprite_index, attr_offset, new_36);
-        result.valid = true;
+        switch (transaction.bytes) {
+            0b1111 => {
+                const current_36 = self.getSpriteAttr36(sprite_index, attr_offset);
+                // Keep high 4 bits, replace low 32 bits
+                const new_36: u36 = (current_36 & 0xF_00000000) | @as(u36, transaction.data);
+                self.setSpriteAttr36(sprite_index, attr_offset, new_36);
+                result.valid = true;
+            },
+            0b0011 => {
+                const current_36 = self.getSpriteAttr36(sprite_index, attr_offset);
+                switch (byte_offset) {
+                    0 => {
+                        const new_36: u36 = (current_36 & 0xF_FFFF0000) | @as(u36, transaction.data & 0xFFFF);
+                        self.setSpriteAttr36(sprite_index, attr_offset, new_36);
+                        result.valid = true;
+                    },
+                    2 => {
+                        const new_36: u36 = (current_36 & 0xF_0000FFFF) | (@as(u36, transaction.data & 0xFFFF) << 16);
+                        self.setSpriteAttr36(sprite_index, attr_offset, new_36);
+                        result.valid = true;
+                    },
+                    else => return result,
+                }
+
+            },
+            0b0001 => {
+                const current_36 = self.getSpriteAttr36(sprite_index, attr_offset);
+                switch (byte_offset) {
+                    0 => {
+                        const new_36: u36 = (current_36 & 0xF_FFFF_FF00) | @as(u36, transaction.data & 0xFF);
+                        self.setSpriteAttr36(sprite_index, attr_offset, new_36);
+                        result.valid = true;
+                    },
+                    1 => {
+                        const new_36: u36 = (current_36 & 0xF_FFFF_00FF) | (@as(u36, transaction.data & 0xFF) << 8);
+                        self.setSpriteAttr36(sprite_index, attr_offset, new_36);
+                        result.valid = true;
+                    },
+                    2 => {
+                        const new_36: u36 = (current_36 & 0xF_FF00_FFFF) | (@as(u36, transaction.data & 0xFF) << 16);
+                        self.setSpriteAttr36(sprite_index, attr_offset, new_36);
+                        result.valid = true;
+                    },
+                    3 => {
+                        const new_36: u36 = (current_36 & 0xF_00FF_FFFF) | (@as(u36, transaction.data & 0xFF) << 24);
+                        self.setSpriteAttr36(sprite_index, attr_offset, new_36);
+                        result.valid = true;
+                    },
+                    else => return result,
+                }
+            },
+            else => return result,
+        }
+
+
     } else {
+        if (byte_offset != 0 or transaction.bytes != 0b1111) {
+            // For now, only support aligned 32-bit accesses
+            // TODO: Support partial/unaligned accesses
+            return result;
+        }
+
         const val = self.getSpriteAttr36(sprite_index, attr_offset);
         result.data = @truncate(val);
         result.valid = true;

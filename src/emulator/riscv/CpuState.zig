@@ -17,6 +17,8 @@ pub const SWord = types.SWord;
 pub const WORDBYTES = types.WORDBYTES;
 pub const Regs = types.Regs;
 
+pub const CLINT_DIVISOR = 512;
+
 pub const CpuState = @This();
 
 reg: Regs = .{},
@@ -80,7 +82,7 @@ pub fn run(self: *CpuState, clint: *Clint, mem: Memory, max_cycles: usize, fail_
 }
 
 pub fn runForCycles(self: *CpuState, clint: *Clint, mem: Memory, cycles: u64, fail_on_all_faults: bool) Word {
-    clint.mtime = self.cycles;
+    clint.mtime = (self.cycles * @as(u64, self.cycle_divisor)) / CLINT_DIVISOR;
 
     var interruptable = false;
 
@@ -199,8 +201,6 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, mem: Memory, cycles: u64, fa
                     const rsval: Word = rs1 +% imm;
                     const sub_op: u3 = @as(u3, @truncate((ir >> 12) & 0x7));
 
-                    clint.mtime = self.cycles; // make sure the clint time is up to date for memory-mapped timer reads
-
                     var result: Bus.Transaction = undefined;
                     if (rsval >= mem.start_address and rsval < mem.end_address) {
                         const rel_addy = rsval - mem.start_address;
@@ -223,6 +223,9 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, mem: Memory, cycles: u64, fa
                             else => trap = (2 + 1),
                         }
                     } else {
+                        // make sure the clint time is up to date for memory-mapped timer reads
+                        clint.mtime = (self.cycles * @as(u64, self.cycle_divisor)) / CLINT_DIVISOR;
+
                         var bytemask: u4 = 0;
                         switch (sub_op) {
                             //LB, LH, LW, LBU, LHU
@@ -253,7 +256,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, mem: Memory, cycles: u64, fa
                     self.cycles +%= result.duration;
 
                     if (!result.valid) {
-                        std.debug.print("Load access fault: pc: {x}, addy: {x}\r\n", .{pc, rsval});
+                        std.debug.print("Load access fault: pc: {x}, addy: {x}, mask: {b}, lower bits: {b}\r\n", .{pc, rsval, result.bytes, rsval & 3});
                         trap = (5 + 1); // Load access fault.
                         rval = rsval;
                     } else {
@@ -332,7 +335,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, mem: Memory, cycles: u64, fa
                         self.cycles +%= result.duration;
 
                         if (!result.valid) {
-                            std.debug.print("Store access fault: pc: {x}, addy: {x}\r\n", .{self.reg.pc, addy});
+                            std.debug.print("Store access fault: pc: {x}, addy: {x}, mask: {b}, lower bits: {b}\r\n", .{self.reg.pc, addy, result.bytes, addy & 3});
                             trap = (7 + 1); // Store access fault.
                             rval = addy;
                         }
