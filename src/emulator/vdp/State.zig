@@ -49,8 +49,6 @@ sprite_x_width: [512]SpriteXWidth,
 sprite_addr: [512]SpriteAddr,
 sprite_velocity: [512]SpriteVelocity,
 
-initial_delay: u16,
-
 // VRAM storage (tilemap and tile bitmap data)
 vram: [VRAM_SIZE]u8 align(4),
 
@@ -69,7 +67,6 @@ pub fn init() State {
         .sprite_velocity = [_]SpriteVelocity{.{}} ** 512,
         .sprite_x_width = [_]SpriteXWidth{.{}} ** 512,
         .sprite_y_height = [_]SpriteYHeight{.{}} ** 512,
-        .initial_delay = 3*60,
         .palette = .{0} ** 512,
         .vram = .{0} ** VRAM_SIZE,
     };
@@ -174,15 +171,11 @@ pub fn emulate_line(self: *State, skip: bool) void {
             ptr += 8;
         }
     } else if (self.sy == self.frame_buffer.height) {
-        if (self.initial_delay > 0) {
-            self.initial_delay -= 1;
-        } else {
-            // Update sprite positions at the end of the visible frame
-            for (0..512) |i| {
-                const sprite_vel = self.sprite_velocity[i];
-                self.sprite_x_width[i].screen_x.value +%= sprite_vel.x_velocity.value;
-                self.sprite_y_height[i].screen_y.value +%= sprite_vel.y_velocity.value;
-            }
+        // Update sprite positions at the end of the visible frame
+        for (0..512) |i| {
+            const sprite_vel = self.sprite_velocity[i];
+            self.sprite_x_width[i].screen_x.value +%= sprite_vel.x_velocity.value;
+            self.sprite_y_height[i].screen_y.value +%= sprite_vel.y_velocity.value;
         }
     }
 

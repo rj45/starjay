@@ -81,7 +81,8 @@ pub const PSG1_SIZE: u32 = 0x0000_0010;
 pub const PSG2_BASE: u32 = PSG1_BASE + PSG1_SIZE;
 pub const PSG2_SIZE: u32 = PSG1_SIZE;
 
-
+// NOTE: volatile here is important as MMIO devices can have side-effects and the compiler
+// needs to know this in order not to optimize them away.
 const uart_buf_reg: * volatile u32 = @ptrFromInt(UART_BUF_REG_ADDR);
 const clint_mtime_lo: * volatile u32 = @ptrFromInt(CLINT_BASE+0xBFF8);
 const clint_mtime_hi: * volatile u32 = @ptrFromInt(CLINT_BASE+0xBFFC);
@@ -91,6 +92,10 @@ const palette: * volatile [512]u32 = @ptrFromInt(PALETTE_BASE);
 const vram: * volatile [16384]u8 = @ptrFromInt(VRAM_BASE);
 const psg1: * volatile [4]u32 = @ptrFromInt(PSG1_BASE);
 const psg2: * volatile [4]u32 = @ptrFromInt(PSG2_BASE);
+
+// volatile spin counter to prevent optimization out of spin wait loops
+var spin_counter: u32 = 0;
+const vol_spin_counter: *volatile u32 = &spin_counter;
 
 const palette_data = @embedFile("palette.bin");
 const tilemap_data = @embedFile("tilemap.bin");
@@ -112,36 +117,27 @@ fn readClintMtime() u64 {
 
 export fn kmain() noreturn {
     const console = term.getWriter();
-    const tile_bitmap_addr = if ((tilemap_data.len % 512) == 0) tilemap_data.len / 512 else (tilemap_data.len / 512) + 1;
-
+    const tile_bitmap_addr = if ((tilemap_data.len & 0x1ff) == 0) tilemap_data.len >> 9 else (tilemap_data.len >> 9) + 1;
 
     for (0..512) |i| {
-        // my lame attempt at pseudo-randomness (doesn't work, but the pattern is pretty)
-        const i_32: u32 = @truncate(i);
-        const x_vel_32: u32 = (((((i_32 + ((i_32 / 32)*13) +% 0x811c9dc5) & 0xffffffff) *% 0x01000193) & 0xffffffff) % 32);
-        const x_vel_u16: u15 = @truncate(x_vel_32);
-        const x_vel_i16: i16 = @as(i16, x_vel_u16) - 16;
-
-        const y_vel_32: u32 = (((((i_32 + ((i_32 / 32)*13) + 512 +% 0x811c9dc5) & 0xffffffff) *% 0x01000193) & 0xffffffff) % 32);
-        const y_vel_u16: u15 = @truncate(y_vel_32);
-        const y_vel_i16: i16 = @as(i16, y_vel_u16) - 16;
-
         const i_mod_32: u11 = @truncate(i % 32);
         const i_div_32: u11 = @truncate(i / 32);
+
+        sprite_table.sprite[i].sprite_velocity = SpriteVelocity{
+            .x_velocity = .{
+                .value = 0,
+            },
+            .y_velocity = .{
+                .value = 0,
+            },
+        };
 
         sprite_table.sprite[i].sprite_addr = .{
             .tile_bitmap_addr = @truncate(tile_bitmap_addr),
             .tilemap_addr = 0,
         };
 
-        sprite_table.sprite[i].sprite_velocity = SpriteVelocity{
-            .x_velocity = .{
-                .value = x_vel_i16,
-            },
-            .y_velocity = .{
-                .value = y_vel_i16,
-            },
-        };
+
 
         sprite_table.sprite[i].sprite_x_width = SpriteXWidth{
             .screen_x = .{ .fp = .{.i = @as(i12, (i_mod_32*17)+384), .f = 0} },
@@ -174,7 +170,7 @@ export fn kmain() noreturn {
         palette[i] = palette_data_u32[i];
     }
 
-    const tile_bitmap_addr_start = tile_bitmap_addr * 1024;
+    const tile_bitmap_addr_start = tile_bitmap_addr << 10;
 
     @memcpy(vram[0..tilemap_data.len], tilemap_data);
     @memcpy(vram[tile_bitmap_addr_start..tile_bitmap_addr_start+tile_bitmap_data.len], tile_bitmap_data);
@@ -194,10 +190,11 @@ export fn kmain() noreturn {
     const tick_duration = 2500; // 64 MHz clock is divided by 512 for the clint, so 50 Hz is (64M/512) / 50 = 2500
     var next_tick = initial_time + tick_duration;
 
+    var initial_delay: i32 = 14*50+25; // 14 sec
+
     console.print("Clint time: {}, next tick: {}\r\n", .{initial_time, next_tick}) catch {};
     console.flush() catch {};
 
-    // var wait_counter: u32 = 0;
     while (true) {
         const current_time = readClintMtime();
 
@@ -218,17 +215,43 @@ export fn kmain() noreturn {
                 console.print("Warning: PT3 frame took too long! time_after: {}, next_tick: {}\r\n", .{time_after, next_tick}) catch {};
                 console.flush() catch {};
             }
+
+            if (initial_delay >= 0) {
+                initial_delay -= 1;
+            }
+            if (initial_delay == 0) {
+                for (0..512) |i| {
+                    // my lame attempt at pseudo-randomness (doesn't work, but the pattern is pretty)
+                    const i_32: u32 = @truncate(i);
+                    const x_vel_32: u32 = (((((i_32 + ((i_32 / 32)*13) +% 0x811c9dc5) & 0xffffffff) *% 0x01000193) & 0xffffffff) % 32);
+                    const x_vel_u16: u15 = @truncate(x_vel_32);
+                    const x_vel_i16: i16 = @as(i16, x_vel_u16) - 16;
+
+                    const y_vel_32: u32 = (((((i_32 + ((i_32 / 32)*13) + 512 +% 0x811c9dc5) & 0xffffffff) *% 0x01000193) & 0xffffffff) % 32);
+                    const y_vel_u16: u15 = @truncate(y_vel_32);
+                    const y_vel_i16: i16 = @as(i16, y_vel_u16) - 16;
+
+                    sprite_table.sprite[i].sprite_velocity = SpriteVelocity{
+                        .x_velocity = .{
+                            .value = x_vel_i16,
+                        },
+                        .y_velocity = .{
+                            .value = y_vel_i16,
+                        },
+                    };
+                }
+            }
         }
 
-        // // spin wait for a bit
-        // for (0..10000) |i| {
-        //     wait_counter +%= i;
-        // }
+        // spin wait for a bit -- this avoids hitting the clint every cycle
+        // MMIO in the emulator is slow and thus utilizes more CPU / power
+        // even better would be to use an interrupt and WFI instruction
+        if ((next_tick - current_time) > 250) {
+            for (0..10000) |i| {
+                vol_spin_counter.* +%= i; // volatile to prevent it from being optimized out
+            }
+        }
     }
-
-    // // prevent it getting optimized away
-    // console.print("Spin result: {}\r\n", .{wait_counter}) catch {};
-    // console.flush() catch {};
 
     // You can send a power down like so if you wish to exit the emulator:
     // syscon.* = 0x5555;
