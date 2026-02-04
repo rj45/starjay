@@ -7,15 +7,15 @@ pub fn build(b: *std.Build) void {
     const sdl3 = !sdl2;
 
     // For dvui and SDL, never use Debug mode; use ReleaseSafe instead.
-    const ui_opt_mode: @TypeOf(optimize) = if (optimize == .Debug) .ReleaseSafe else optimize;
+    const fast_debug_build: @TypeOf(optimize) = if (optimize == .Debug) .ReleaseSafe else optimize;
 
     const dvui_dep = if (sdl3) b.dependency("dvui", .{
         .target = target,
-        .optimize = ui_opt_mode,
+        .optimize = fast_debug_build,
         .backend = .sdl3,
     }) else b.dependency("dvui", .{
         .target = target,
-        .optimize = ui_opt_mode,
+        .optimize = fast_debug_build,
         .backend = .sdl2,
     });
 
@@ -26,15 +26,18 @@ pub fn build(b: *std.Build) void {
 
     const spsc_queue = b.dependency("spsc_queue", .{
         .target = target,
-        .optimize = optimize,
+        .optimize = fast_debug_build,
     });
 
     const exe = b.addExecutable(.{
         .name = "starjay",
+        .use_llvm = true, // Prevent using zig's built-in codegen, since the code it produces is too slow
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .stack_check = if (optimize == .Debug or optimize == .ReleaseSafe) true else false,
+            .stack_protector = if (optimize == .Debug or optimize == .ReleaseSafe) true else false,
             .imports = &.{
                 .{ .name = "dvui", .module = if (sdl3) dvui_dep.module("dvui_sdl3") else dvui_dep.module("dvui_sdl2") },
                 .{ .name = "backend", .module = if (sdl3) dvui_dep.module("sdl3") else dvui_dep.module("sdl2") },

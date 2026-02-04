@@ -190,6 +190,8 @@ right: f64 = 0,
 // Track last envelope shape for edge-triggered reset
 last_envelope_shape: u4 = 0,
 
+drop_warned: bool = false,
+
 pub fn init(opts: Options, gpa: std.mem.Allocator) !Ay38910 {
     // The number of samples per bus cycle (which will be less than 1.0)
     const partial_sample_amt: f64 = @as(f64, @floatFromInt(opts.sound_hz)) / BUS_FREQ;
@@ -262,7 +264,6 @@ pub fn reset(self: *Ay38910) void {
     self.updateValues();
 }
 
-// do not modify this function, it should be working fine
 // this runs at the bus speed (64 MHz) and handles register accesses
 pub fn access(self: *Ay38910, transaction: Transaction) Transaction {
     var result = transaction;
@@ -636,10 +637,16 @@ pub inline fn tick(self: *Ay38910) void {
 
         // Push stereo samples to output queue
         if (!self.left_queue.tryPush(@floatCast(self.left))) {
-            std.debug.print("Warning: AY-3-8910 sample queue full, dropping left sample\r\n", .{});
+            if (!self.drop_warned) {
+                std.debug.print("Warning: AY-3-8910 sample queue full, dropping sample\r\n", .{});
+                self.drop_warned = true;
+            }
         }
         if (!self.right_queue.tryPush(@floatCast(self.right))) {
-            std.debug.print("Warning: AY-3-8910 sample queue full, dropping right sample\r\n", .{});
+            if (!self.drop_warned) {
+                std.debug.print("Warning: AY-3-8910 sample queue full, dropping sample\r\n", .{});
+                self.drop_warned = true;
+            }
         }
     }
 }

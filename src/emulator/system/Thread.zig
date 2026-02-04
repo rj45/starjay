@@ -4,7 +4,6 @@
 
 const std = @import("std");
 
-const spsc_queue = @import("spsc_queue");
 const chan = @import("../../lib/chan.zig");
 
 const System = @import("../System.zig");
@@ -128,15 +127,14 @@ fn threadMain(self: *Thread) void {
                         ) catch 64;
                         if (ratio > self.system.cpu.cycle_divisor) {
                             self.system.cpu.cycle_divisor = ratio;
-                            std.debug.print("Frame {} slow ({} ns), increasing cycle_divisor to {}\r\n", .{self.frame_number, elapsed_ns, self.system.cpu.cycle_divisor});
+                            std.debug.print("Frame {} slow ({} us), increasing cycle_divisor to {}\r\n", .{self.frame_number, elapsed_ns/1000, self.system.cpu.cycle_divisor});
                         }
                     }
                 } else {
                     slow_frames = 0;
                 }
                 if ((self.frame_number % (60*30)) == 0) {
-                    const fps = @as(f32, 1_000_000_000) / @as(f32, @floatFromInt(elapsed_ns));
-                    std.debug.print("Frame {} completed in {} ns ({:.2} FPS), cycle_divisor = {}\r\n", .{self.frame_number, elapsed_ns, fps, self.system.cpu.cycle_divisor});
+                    std.debug.print("Frame {} CPU completed in {} us, cycle_divisor = {}\r\n", .{self.frame_number, elapsed_ns/1000, self.system.cpu.cycle_divisor});
                 }
 
                 if (retval != 0 and retval != 1) {
@@ -159,15 +157,27 @@ fn threadMain(self: *Thread) void {
 
                 self.bus_cycles += BUS_CYCLES_PER_FRAME;
 
+                const psg_start_time = self.timer.read();
                 self.system.psg1.runUntil(self.bus_cycles);
                 self.system.psg2.runUntil(self.bus_cycles);
+                const psg_elapsed_ns = self.timer.read() - psg_start_time;
+                if ((self.frame_number % (60*30)) == 0) {
+                    std.debug.print("Frame {} PSGs completed in {} us\r\n", .{self.frame_number, psg_elapsed_ns/1000});
+                }
+
+                const full_elapsed_ns = self.timer.read() - start_time;
+                if ((self.frame_number % (60*30)) == 0) {
+                    const fps = @as(f32, 1_000_000_000) / @as(f32, @floatFromInt(full_elapsed_ns));
+                    std.debug.print("Full Frame {} completed in {} us ({} fps), cycle_divisor = {}\r\n", .{self.frame_number, full_elapsed_ns / 1000, fps, self.system.cpu.cycle_divisor});
+                }
 
                 // Signal frame completion
                 self.ui_channel.send(.{ .cpu_frame = .{
                     .frame_number = self.frame_number,
                     .cycles = self.bus_cycles,
                 }}) catch {
-                    std.debug.print("Failed to send cpu_frame message to UI channel\r\n", .{});
+                    std.debug.print("Error: Failed to send cpu_frame message to UI channel\r\n", .{});
+                    return;
                 };
 
                 self.frame_number += 1;

@@ -26,11 +26,10 @@ var vdp_thread: *Vdp.Thread = undefined;
 var shadow_queue: Bus.Queue = undefined;
 var surfaces: [2]*c.SDL_Surface = undefined;
 var front_surface_index: u32 = 0;
-var vdp_frame_futex: std.atomic.Value(u32) = .init(0);
 
 // CPU thread and frame synchronization
 var system: *System = undefined;
-var cpu_thread: ?*System.Thread = null;
+var system_thread: *System.Thread = undefined;
 
 // Audio
 var audio_stream: ?*c.SDL_AudioStream = null;
@@ -39,7 +38,8 @@ var channel: ui.chan.Channel = undefined;
 
 var run_time: std.time.Timer = undefined;
 var frame_count: u64 = 0;
-var pending_frames: u64 = 0;
+var cpu_pending: u32 = 0;
+var vdp_pending: u32 = 0;
 var last_blit_time: u64 = 0;
 
 pub fn main(allocator: std.mem.Allocator, rom_path: ?[]const u8) !void {
@@ -52,14 +52,10 @@ pub fn main(allocator: std.mem.Allocator, rom_path: ?[]const u8) !void {
     channel = ui.chan.Channel.init(allocator);
     defer channel.deinit();
 
-    // app_init is a stand-in for what your application is already doing to set things up
     try open_vdp_window(allocator);
 
-    // Start CPU thread if ROM is provided
-    if (rom_path) |path| {
-        system = try System.init(path, true, &shadow_queue, allocator);
-        try start_cpu_thread(allocator);
-    }
+    system = try System.init(rom_path, true, &shadow_queue, allocator);
+    try start_system_thread(allocator);
 
     run_time = try std.time.Timer.start();
     last_blit_time = run_time.read();
@@ -71,7 +67,7 @@ pub fn main(allocator: std.mem.Allocator, rom_path: ?[]const u8) !void {
     }
 
     destroy_vdp_window();
-    destroy_cpu_thread();
+    destroy_system_thread();
 
     c.SDL_Quit();
 }
@@ -167,89 +163,53 @@ fn getWindowFromEvent(event: *const c.SDL_Event) ?*c.SDL_Window {
 pub fn runFrame() !bool {
     const current_time = run_time.read();
     const expected_frames = @max(1, current_time / frame_time_ns);
-    var frames_to_do = @min(5, expected_frames - (frame_count + pending_frames));
+    var frames_to_do = @min(5, expected_frames - (frame_count + @min(cpu_pending, vdp_pending)));
 
     // While we are behind, try to catch up by skipping frames and running the CPU as fast as possible
     while (frames_to_do > 1) {
-        if (cpu_thread) |cpu| {
-            try cpu.submitCommand(.fast_frame);
-        }
-        submitVdpRenderRequest(true);
-        pending_frames += 1;
+        cpu_pending += 1;
+        try system_thread.submitCommand(.fast_frame);
+
+        vdp_pending += 1;
+        try submitRenderCommand(true);
+
         frames_to_do -= 1;
-
-        // If the frame_futex is the expected value (1)
-        if (vdp_frame_futex.cmpxchgWeak(1, 0, .release, .acquire) == null) {
-            // Wake any waiting threads
-            std.Thread.Futex.wake(&vdp_frame_futex, 10);
-        }
     }
-
-    var cpu_pending = pending_frames;
-    var vdp_pending = pending_frames;
 
     while (cpu_pending > 0 or vdp_pending > 0) {
-        // Check for CPU frame completion
-        if (cpu_pending > 0) {
-            if (cpu_thread) |_| {
-                if (channel.receive()) |msg| {
-                    switch (msg) {
-                        .cpu_halt => |halt| {
-                            std.debug.print("error_level: {}\r\n", .{halt.error_level});
+        if (channel.receive()) |msg| {
+            switch (msg) {
+                .cpu_halt => |halt| {
+                    std.debug.print("error_level: {}\r\n", .{halt.error_level});
 
-                            return false; // Stop main loop
-                        },
-                        .vdp_frame => |result| {
-                            vdp_pending -= 1;
-                            front_surface_index = result.index;
-                            frame_count += 1;
-                            pending_frames -= 1;
-                        },
-                        .cpu_frame => |_| {
-                            cpu_pending -= 1;
-                        }
-                    }
+                    return false; // Stop main loop
+                },
+                .vdp_frame => |result| {
+                    vdp_pending -= 1;
+                    front_surface_index = result.index;
+                    frame_count += 1;
+                },
+                .cpu_frame => |_| {
+                    cpu_pending -= 1;
                 }
-            } else {
-                // No CPU thread, assume frame is done
-                cpu_pending -= 1;
             }
+        } else {
+            std.debug.print("UI channel prematurely closed: exiting\r\n", .{});
+            return false;
         }
-
-        // Check for VDP render completion
-        if (vdp_pending > 0) {
-            if (vdp_thread.tryGetResult()) |result| {
-                vdp_pending -= 1;
-                front_surface_index = result.index;
-                frame_count += 1;
-                pending_frames -= 1;
-            }
-        }
-
-        std.atomic.spinLoopHint();
-
-        // TODO: sleep?
     }
+
 
     // Queue another frame while we blit and wait for vsync
     if (frames_to_do > 0) {
-        if (cpu_thread) |cpu| {
-            try cpu.submitCommand(.full_frame);
-        }
-        submitVdpRenderRequest(false);
-        pending_frames += 1;
+        cpu_pending += 1;
+        try system_thread.submitCommand(.full_frame);
 
-        // If the frame_futex is the expected value (1)
-        if (vdp_frame_futex.cmpxchgWeak(1, 0, .release, .acquire) == null) {
-            // Wake any waiting threads
-            std.Thread.Futex.wake(&vdp_frame_futex, 10);
-        }
+        vdp_pending += 1;
+        try submitRenderCommand(false);
     }
 
-    // If the cpu thread is running, write audio samples
-    if (cpu_thread) |_| {
-        writeAudio();
-    }
+    writeAudio();
 
     // Blit front surface to window
     // NOTE: this will wait for vsync
@@ -265,11 +225,11 @@ pub fn runFrame() !bool {
     return true;
 }
 
-fn submitVdpRenderRequest(skip: bool) void {
+fn submitRenderCommand(skip: bool) !void {
     const back_index = 1 - front_surface_index;
     const back_surface = surfaces[back_index];
 
-    vdp_thread.submitRenderRequest(.{
+    try vdp_thread.submitRenderCommand(.{
         .buffer = @ptrCast(@alignCast(back_surface.pixels.?)),
         .width = content_width,
         .height = content_height,
@@ -361,24 +321,21 @@ fn writeAudio() void {
     }
 }
 
-pub fn start_cpu_thread(allocator: std.mem.Allocator) !void {
-    cpu_thread = System.Thread.init(allocator, &channel, &shadow_queue, system) catch |err| {
+pub fn start_system_thread(allocator: std.mem.Allocator) !void {
+    system_thread = System.Thread.init(allocator, &channel, &shadow_queue, system) catch |err| {
         std.debug.print("Failed to create CPU thread: {}\n", .{err});
         return error.OutOfMemory;
     };
 
-    cpu_thread.?.start() catch {
+    system_thread.start() catch {
         std.debug.print("Failed to start CPU thread\n", .{});
         return error.BackendError;
     };
 }
 
-pub fn destroy_cpu_thread() void {
-    if (cpu_thread) |cpu| {
-        cpu.deinit();
-        cpu_thread = null;
-        system.deinit(gpa);
-    }
+pub fn destroy_system_thread() void {
+    system_thread.deinit();
+    system.deinit(gpa);
 }
 
 pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
@@ -449,7 +406,7 @@ pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
     };
 
     // Initialize VDP thread
-    vdp_thread = Vdp.Thread.init(allocator, &shadow_queue, &vdp_frame_futex) catch {
+    vdp_thread = Vdp.Thread.init(allocator, &shadow_queue, &channel) catch {
         std.debug.print("Failed to create VDP thread\n", .{});
         return error.OutOfMemory;
     };

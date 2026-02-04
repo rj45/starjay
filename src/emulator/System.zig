@@ -51,7 +51,7 @@ psg2: Ay38910,
 cpu: riscv.CpuState,
 vdp_shadow: Shadow(Vdp.Device),
 
-pub fn init(rom_file: []const u8, quiet: bool, vdp_queue: ?*Bus.Queue, gpa: std.mem.Allocator) !*System {
+pub fn init(rom_file: ?[]const u8, quiet: bool, vdp_queue: ?*Bus.Queue, gpa: std.mem.Allocator) !*System {
     var self = try gpa.create(System);
     errdefer gpa.destroy(self);
 
@@ -82,7 +82,11 @@ pub fn init(rom_file: []const u8, quiet: bool, vdp_queue: ?*Bus.Queue, gpa: std.
     try self.bus.attach(Device.init(&self.psg2, PSG2_BASE, PSG2_BASE + PSG2_SIZE));
 
     self.sram = Sram.init(self.memory.data);
-    try self.sram.loadRom(rom_file);
+    if (rom_file) |path| {
+        try self.sram.loadRom(path);
+    } else {
+        // TODO: some sort of default WFI loop?
+    }
     try self.bus.attach(Device.init(&self.sram, self.memory.start_address, self.memory.end_address));
 
     self.vdp_shadow = Shadow(Vdp.Device).init(Vdp.Device.init(), vdp_queue);

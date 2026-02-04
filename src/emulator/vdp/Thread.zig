@@ -2,11 +2,12 @@
 
 const std = @import("std");
 
-const spsc_queue = @import("spsc_queue");
+const chan = @import("../../lib/chan.zig");
 
 const Bus = @import("../device/Bus.zig");
 const Device = @import("Device.zig");
 const State = @import("State.zig");
+const ui = @import("../ui.zig");
 
 const Transaction = Bus.Transaction;
 const ShadowQueue = Bus.Queue;
@@ -14,7 +15,7 @@ const ShadowQueue = Bus.Queue;
 pub const Thread = @This();
 
 /// Render request sent from UI thread to VDP thread
-pub const RenderRequest = struct {
+pub const RenderCommand = struct {
     index: u32,
     buffer: [*]u32,
     width: u32,
@@ -23,14 +24,7 @@ pub const RenderRequest = struct {
     skip: bool,
 };
 
-/// Render result sent from VDP thread back to UI thread
-pub const RenderResult = struct {
-    buffer: [*]u32,
-    index: u32,
-};
-
-pub const RequestQueue = spsc_queue.SpscQueuePo2Unmanaged(RenderRequest);
-pub const ResultQueue = spsc_queue.SpscQueuePo2Unmanaged(RenderResult);
+pub const CommandChannel = chan.Channel(RenderCommand);
 
 // VDP device (owns State)
 device: Device,
@@ -38,14 +32,16 @@ device: Device,
 // Shadow queue to consume memory write transactions from
 shadow_queue: *ShadowQueue,
 
-// Request/result queues for frame rendering (both owned by Thread)
-request_queue: RequestQueue,
-result_queue: ResultQueue,
+// UI communication channel
+ui_channel: *ui.chan.Channel,
+frame_count: u64,
+timer: std.time.Timer,
+
+// Command channel for rendering
+command_chan: CommandChannel,
 
 // Thread control
 thread: ?std.Thread,
-running: std.atomic.Value(bool),
-frame_futex: *std.atomic.Value(u32),
 
 // Allocator for cleanup
 allocator: std.mem.Allocator,
@@ -53,22 +49,19 @@ allocator: std.mem.Allocator,
 pub fn init(
     allocator: std.mem.Allocator,
     shadow_queue: *ShadowQueue,
-    frame_futex: *std.atomic.Value(u32),
+    ui_channel: *ui.chan.Channel,
 ) !*Thread {
     const self = try allocator.create(Thread);
     errdefer allocator.destroy(self);
 
     self.shadow_queue = shadow_queue;
     self.thread = null;
-    self.running = std.atomic.Value(bool).init(false);
-    self.frame_futex = frame_futex;
+    self.ui_channel = ui_channel;
     self.allocator = allocator;
+    self.frame_count = 0;
 
-    // Initialize queues (small capacity is fine, typically 1-2 in flight)
-    self.request_queue = RequestQueue.initCapacity(allocator, 4) catch return error.OutOfMemory;
-    self.result_queue = ResultQueue.initCapacity(allocator, 4) catch return error.OutOfMemory;
+    self.command_chan = CommandChannel.init(allocator);
 
-    // Initialize VDP device with a dummy frame buffer (will be set by render requests)
     self.device = Device.init();
 
     return self;
@@ -76,23 +69,22 @@ pub fn init(
 
 pub fn deinit(self: *Thread) void {
     self.stop();
-    self.request_queue.deinit(self.allocator);
-    self.result_queue.deinit(self.allocator);
+    self.command_chan.deinit();
     self.allocator.destroy(self);
 }
 
 pub fn start(self: *Thread) !void {
     if (self.thread != null) return; // Already running
 
-    self.running.store(true, .release);
+    self.timer = try std.time.Timer.start();
+
     self.thread = try std.Thread.spawn(.{}, threadMain, .{self});
     self.thread.?.setName("starjay/VDP") catch {}; // doesn't work on mac, don't care
 }
 
 pub fn stop(self: *Thread) void {
     if (self.thread) |thread| {
-        self.running.store(false, .release);
-        std.Thread.Futex.wake(self.frame_futex, 10);
+        self.command_chan.close();
         thread.join();
         self.thread = null;
     }
@@ -100,62 +92,39 @@ pub fn stop(self: *Thread) void {
 
 /// Submit a render request (called by UI thread).
 /// Returns true if the request was queued, false if queue is full.
-pub fn submitRenderRequest(self: *Thread, request: RenderRequest) void {
-    self.request_queue.push(request);
-}
-
-/// Try to get a completed render result (called by UI thread).
-/// Returns the result if available, null otherwise.
-pub fn tryGetResult(self: *Thread) ?RenderResult {
-    if (self.result_queue.front()) |result| {
-        const r = result.*;
-        self.result_queue.pop();
-        return r;
-    }
-    return null;
-}
-
-/// Block waiting for a render result (called by UI thread).
-/// Spins until a result is available.
-pub fn waitForResult(self: *Thread) RenderResult {
-    while (true) {
-        if (self.tryGetResult()) |result| {
-            return result;
-        }
-        std.atomic.spinLoopHint();
-    }
+pub fn submitRenderCommand(self: *Thread, request: RenderCommand) !void {
+    try self.command_chan.send(request);
 }
 
 fn threadMain(self: *Thread) void {
-    while (self.running.load(.acquire)) {
-        // Check for render requests
-        while (self.request_queue.front()) |request| {
-            const req = request.*;
-            self.request_queue.pop();
+    while (self.command_chan.receive()) |req| {
+        // Always drain shadow queue (memory writes from CPU)
+        self.drainShadowQueue();
 
-            // Always drain shadow queue (memory writes from CPU)
-            self.drainShadowQueue();
+        // Set up frame buffer from request
+        self.device.vdp.frame_buffer = State.FrameBuffer{
+            .width = req.width,
+            .height = req.height,
+            .pitch = req.pitch,
+            .pixels = req.buffer,
+        };
 
-            // Set up frame buffer from request
-            self.device.vdp.frame_buffer = State.FrameBuffer{
-                .width = req.width,
-                .height = req.height,
-                .pitch = req.pitch,
-                .pixels = req.buffer,
-            };
+        // Render the frame
+        const start_time = self.timer.read();
+        self.device.vdp.emulate_frame(req.skip);
+        const elapsed_ns = self.timer.read() - start_time;
 
-            // Render the frame
-            self.device.vdp.emulate_frame(req.skip);
-
-            // Send result back to UI thread
-            self.result_queue.push(.{ .index = req.index, .buffer = req.buffer });
+        if ((self.frame_count % (60*30)) == 0) {
+            std.debug.print("Frame {} VDP completed in {} us\r\n", .{self.frame_count, elapsed_ns/1000});
         }
 
-        if (self.running.load(.acquire)) {
-            // Wait for the next frame
-            self.frame_futex.store(1, .release);
-            std.Thread.Futex.wait(self.frame_futex, 1);
-        }
+        // Send result back to UI thread
+        self.ui_channel.send(.{ .vdp_frame = .{ .index = req.index, .frame_number = self.frame_count }}) catch {
+            std.debug.print("Error: VDP UI channel send failure {}\n", .{req.index});
+            return;
+        };
+
+        self.frame_count += 1;
     }
 }
 
