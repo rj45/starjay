@@ -382,6 +382,8 @@ pub fn destroy_system_thread() void {
 
 pub fn destroy_audio_thread() void {
     audio_thread.deinit();
+    psg1_queue.deinit(gpa);
+    psg2_queue.deinit(gpa);
 }
 
 pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
