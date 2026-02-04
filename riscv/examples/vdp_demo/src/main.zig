@@ -190,7 +190,7 @@ export fn kmain() noreturn {
     const tick_duration = 2500; // 64 MHz clock is divided by 512 for the clint, so 50 Hz is (64M/512) / 50 = 2500
     var next_tick = initial_time + tick_duration;
 
-    var initial_delay: i32 = 14*50+25; // 14 sec
+    var initial_delay: i32 = 14*50+25; // 14.5 sec, when the intro beat drop happens
 
     console.print("Clint time: {}, next tick: {}\r\n", .{initial_time, next_tick}) catch {};
     console.flush() catch {};

@@ -3,6 +3,7 @@ pub const riscv = @import("riscv/root.zig");
 pub const device = @import("device/root.zig");
 pub const vdp = @import("Vdp.zig");
 pub const System = @import("System.zig");
+pub const Audio = @import("Audio.zig");
 pub const ui = @import("ui.zig");
 
 test {

@@ -10,6 +10,7 @@ pub const Message = union(enum) {
     cpu_halt: CpuHalt,
     cpu_frame: CpuFrame,
     vdp_frame: VdpFrame,
+    audio_frame: AudioFrame,
 
     pub const CpuHalt = struct {
         error_level: u32,
@@ -23,5 +24,10 @@ pub const Message = union(enum) {
     pub const VdpFrame = struct {
         frame_number: u64,
         index: u32,
+    };
+
+    pub const AudioFrame = struct {
+        frame_number: u64,
+        cycles: Bus.Cycle,
     };
 };

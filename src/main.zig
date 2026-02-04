@@ -79,7 +79,7 @@ pub fn main() !void {
     if (res.args.rom) |rom| {
         const quiet = res.args.quiet != 0;
         if (res.args.riscv != 0) {
-            var system = try System.init(rom, quiet, null, gpa);
+            var system = try System.init(rom, quiet, null, null, null, gpa);
             defer system.deinit(gpa);
 
             try system.run(std.math.maxInt(usize));

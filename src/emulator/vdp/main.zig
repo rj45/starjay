@@ -8,6 +8,7 @@ comptime {
 const Bus = @import("../device/Bus.zig");
 const System = @import("../System.zig");
 const Vdp = @import("../Vdp.zig");
+const Audio = @import("../Audio.zig");
 const ui = @import("../ui.zig");
 
 var gpa: std.mem.Allocator = undefined;
@@ -23,7 +24,7 @@ var window_surface: *c.SDL_Surface = undefined;
 
 // VDP thread and double buffering with two SDL surfaces
 var vdp_thread: *Vdp.Thread = undefined;
-var shadow_queue: Bus.Queue = undefined;
+var vdp_queue: Bus.Queue = undefined;
 var surfaces: [2]*c.SDL_Surface = undefined;
 var front_surface_index: u32 = 0;
 
@@ -33,6 +34,9 @@ var system_thread: *System.Thread = undefined;
 
 // Audio
 var audio_stream: ?*c.SDL_AudioStream = null;
+var audio_thread: *Audio.Thread = undefined;
+var psg1_queue: Bus.Queue = undefined;
+var psg2_queue: Bus.Queue = undefined;
 
 var channel: ui.chan.Channel = undefined;
 
@@ -40,6 +44,7 @@ var run_time: std.time.Timer = undefined;
 var frame_count: u64 = 0;
 var cpu_pending: u32 = 0;
 var vdp_pending: u32 = 0;
+var audio_pending: u32 = 0;
 var last_blit_time: u64 = 0;
 
 pub fn main(allocator: std.mem.Allocator, rom_path: ?[]const u8) !void {
@@ -52,10 +57,17 @@ pub fn main(allocator: std.mem.Allocator, rom_path: ?[]const u8) !void {
     channel = ui.chan.Channel.init(allocator);
     defer channel.deinit();
 
-    try open_vdp_window(allocator);
+    defer c.SDL_Quit();
 
-    system = try System.init(rom_path, true, &shadow_queue, allocator);
+    try open_vdp_window(allocator);
+    defer destroy_vdp_window();
+
+    try start_audio_thread(allocator);
+    defer destroy_audio_thread();
+
+    system = try System.init(rom_path, true, &vdp_queue, &psg1_queue, &psg2_queue, allocator);
     try start_system_thread(allocator);
+    defer destroy_system_thread();
 
     run_time = try std.time.Timer.start();
     last_blit_time = run_time.read();
@@ -65,11 +77,6 @@ pub fn main(allocator: std.mem.Allocator, rom_path: ?[]const u8) !void {
             break;
         }
     }
-
-    destroy_vdp_window();
-    destroy_system_thread();
-
-    c.SDL_Quit();
 }
 
 pub fn process_events(backend: ?*SDLBackend, dvwin: ?*dvui.Window) !bool {
@@ -170,6 +177,9 @@ pub fn runFrame() !bool {
         cpu_pending += 1;
         try system_thread.submitCommand(.fast_frame);
 
+        audio_pending += 1;
+        try audio_thread.submitCommand(.fast_frame);
+
         vdp_pending += 1;
         try submitRenderCommand(true);
 
@@ -191,7 +201,10 @@ pub fn runFrame() !bool {
                 },
                 .cpu_frame => |_| {
                     cpu_pending -= 1;
-                }
+                },
+                .audio_frame => |_| {
+                    audio_pending -= 1;
+                },
             }
         } else {
             std.debug.print("UI channel prematurely closed: exiting\r\n", .{});
@@ -205,6 +218,9 @@ pub fn runFrame() !bool {
         cpu_pending += 1;
         try system_thread.submitCommand(.full_frame);
 
+        audio_pending += 1;
+        try audio_thread.submitCommand(.full_frame);
+
         vdp_pending += 1;
         try submitRenderCommand(false);
     }
@@ -217,6 +233,11 @@ pub fn runFrame() !bool {
     const current_blit_time = run_time.read();
     const frame_time = current_blit_time - last_blit_time;
     last_blit_time = current_blit_time;
+
+    if ((frame_count % (60*30)) == 1) {
+        const fps = @as(f32, 1_000_000_000) / @as(f32, @floatFromInt(frame_time));
+        std.debug.print("Full Frame {} completed in {} us ({} fps)\r\n", .{frame_count, frame_time / 1000, fps});
+    }
 
     if (frame_time > (frame_time_ns+(frame_time_ns / 2))) {
         std.debug.print("Warning: Frame took too long: {} us\r\n", .{frame_time/1000});
@@ -261,11 +282,10 @@ fn blitToWindow() void {
 fn writeAudio() void {
     var audio_buffer: [65536]f32 = undefined;
     var audio_samples: usize = 0;
-    var psg1_left = &system.psg1.left_queue;
-    var psg1_right = &system.psg1.right_queue;
-    var psg2_left = &system.psg2.left_queue;
-    var psg2_right = &system.psg2.right_queue;
-
+    var psg1_left = &audio_thread.psg1.left_queue;
+    var psg1_right = &audio_thread.psg1.right_queue;
+    var psg2_left = &audio_thread.psg2.left_queue;
+    var psg2_right = &audio_thread.psg2.right_queue;
 
     while ((audio_samples + 2) < audio_buffer.len) {
         if (psg1_left.front()) |s1_left| {
@@ -322,7 +342,7 @@ fn writeAudio() void {
 }
 
 pub fn start_system_thread(allocator: std.mem.Allocator) !void {
-    system_thread = System.Thread.init(allocator, &channel, &shadow_queue, system) catch |err| {
+    system_thread = System.Thread.init(allocator, &channel, &vdp_queue, system) catch |err| {
         std.debug.print("Failed to create CPU thread: {}\n", .{err});
         return error.OutOfMemory;
     };
@@ -333,9 +353,35 @@ pub fn start_system_thread(allocator: std.mem.Allocator) !void {
     };
 }
 
+pub fn start_audio_thread(allocator: std.mem.Allocator) !void {
+    psg1_queue = Bus.Queue.initCapacity(allocator, 0x2000) catch {
+        std.debug.print("Failed to create psg1 queue\n", .{});
+        return error.OutOfMemory;
+    };
+
+    psg2_queue = Bus.Queue.initCapacity(allocator, 0x2000) catch {
+        std.debug.print("Failed to create psg2 queue\n", .{});
+        return error.OutOfMemory;
+    };
+
+    audio_thread = Audio.Thread.init(allocator, &channel, &psg1_queue, &psg2_queue) catch |err| {
+        std.debug.print("Failed to create audio thread: {}\n", .{err});
+        return error.OutOfMemory;
+    };
+
+    audio_thread.start() catch {
+        std.debug.print("Failed to start audio thread\n", .{});
+        return error.BackendError;
+    };
+}
+
 pub fn destroy_system_thread() void {
     system_thread.deinit();
     system.deinit(gpa);
+}
+
+pub fn destroy_audio_thread() void {
+    audio_thread.deinit();
 }
 
 pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
@@ -370,7 +416,7 @@ pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
             return error.BackendError;
         };
         const audio_spec: c.SDL_AudioSpec = .{
-            .freq = System.SOUND_SAMPLE_HZ,
+            .freq = Audio.Thread.SOUND_SAMPLE_HZ,
             .format = c.SDL_AUDIO_F32,
             .channels = 2,
         };
@@ -400,13 +446,13 @@ pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
     }
 
     // Initialize shadow queue for CPU writes to VDP memory
-    shadow_queue = Bus.Queue.initCapacity(allocator, 0x200000) catch {
+    vdp_queue = Bus.Queue.initCapacity(allocator, 0x200000) catch {
         std.debug.print("Failed to create shadow queue\n", .{});
         return error.OutOfMemory;
     };
 
     // Initialize VDP thread
-    vdp_thread = Vdp.Thread.init(allocator, &shadow_queue, &channel) catch {
+    vdp_thread = Vdp.Thread.init(allocator, &vdp_queue, &channel) catch {
         std.debug.print("Failed to create VDP thread\n", .{});
         return error.OutOfMemory;
     };
@@ -423,7 +469,7 @@ pub fn destroy_vdp_window() void {
     vdp_thread.deinit();
 
     // Free shadow queue
-    shadow_queue.deinit(gpa);
+    vdp_queue.deinit(gpa);
 
     // Destroy surfaces
     if (SDLBackend.sdl3) {

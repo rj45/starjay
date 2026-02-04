@@ -5,7 +5,7 @@
 const std = @import("std");
 const spsc_queue = @import("spsc_queue");
 
-const Bus = @import("Bus.zig");
+const Bus = @import("../device/Bus.zig");
 
 const Word = Bus.Word;
 const Addr = Bus.Addr;

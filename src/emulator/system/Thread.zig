@@ -157,20 +157,6 @@ fn threadMain(self: *Thread) void {
 
                 self.bus_cycles += BUS_CYCLES_PER_FRAME;
 
-                const psg_start_time = self.timer.read();
-                self.system.psg1.runUntil(self.bus_cycles);
-                self.system.psg2.runUntil(self.bus_cycles);
-                const psg_elapsed_ns = self.timer.read() - psg_start_time;
-                if ((self.frame_number % (60*30)) == 0) {
-                    std.debug.print("Frame {} PSGs completed in {} us\r\n", .{self.frame_number, psg_elapsed_ns/1000});
-                }
-
-                const full_elapsed_ns = self.timer.read() - start_time;
-                if ((self.frame_number % (60*30)) == 0) {
-                    const fps = @as(f32, 1_000_000_000) / @as(f32, @floatFromInt(full_elapsed_ns));
-                    std.debug.print("Full Frame {} completed in {} us ({} fps), cycle_divisor = {}\r\n", .{self.frame_number, full_elapsed_ns / 1000, fps, self.system.cpu.cycle_divisor});
-                }
-
                 // Signal frame completion
                 self.ui_channel.send(.{ .cpu_frame = .{
                     .frame_number = self.frame_number,
