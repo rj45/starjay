@@ -8,6 +8,7 @@ const ll_emu = @import("emulator/starjette/microcoded/root.zig");
 const System = @import("emulator/System.zig");
 const debugger = @import("debugger/root.zig");
 const vdp = @import("emulator/vdp/main.zig");
+const chan = @import("lib/chan.zig"); // for the tests
 
 var gpa_instance = std.heap.GeneralPurposeAllocator(.{}){};
 const gpa = gpa_instance.allocator();

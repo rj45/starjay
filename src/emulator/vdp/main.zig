@@ -8,6 +8,7 @@ comptime {
 const Bus = @import("../device/Bus.zig");
 const System = @import("../System.zig");
 const Vdp = @import("../Vdp.zig");
+const ui = @import("../ui.zig");
 
 var gpa: std.mem.Allocator = undefined;
 const c = SDLBackend.c;
@@ -30,10 +31,11 @@ var vdp_frame_futex: std.atomic.Value(u32) = .init(0);
 // CPU thread and frame synchronization
 var system: *System = undefined;
 var cpu_thread: ?*System.Thread = null;
-var cpu_frame_futex: std.atomic.Value(u32) = .init(0);
 
 // Audio
 var audio_stream: ?*c.SDL_AudioStream = null;
+
+var channel: ui.chan.Channel = undefined;
 
 var run_time: std.time.Timer = undefined;
 var frame_count: u64 = 0;
@@ -46,6 +48,9 @@ pub fn main(allocator: std.mem.Allocator, rom_path: ?[]const u8) !void {
         dvui.Backend.Common.windowsAttachConsole() catch {};
     }
     SDLBackend.enableSDLLogging();
+
+    channel = ui.chan.Channel.init(allocator);
+    defer channel.deinit();
 
     // app_init is a stand-in for what your application is already doing to set things up
     try open_vdp_window(allocator);
@@ -60,7 +65,7 @@ pub fn main(allocator: std.mem.Allocator, rom_path: ?[]const u8) !void {
     last_blit_time = run_time.read();
 
     while (try process_events(null, null)) {
-        if (!runFrame()) {
+        if (!try runFrame()) {
             break;
         }
     }
@@ -159,7 +164,7 @@ fn getWindowFromEvent(event: *const c.SDL_Event) ?*c.SDL_Window {
 
 /// Main frame loop: coordinate CPU and VDP threads
 /// This runs once per monitor refresh (vsync)
-pub fn runFrame() bool {
+pub fn runFrame() !bool {
     const current_time = run_time.read();
     const expected_frames = @max(1, current_time / frame_time_ns);
     var frames_to_do = @min(5, expected_frames - (frame_count + pending_frames));
@@ -167,7 +172,7 @@ pub fn runFrame() bool {
     // While we are behind, try to catch up by skipping frames and running the CPU as fast as possible
     while (frames_to_do > 1) {
         if (cpu_thread) |cpu| {
-            cpu.submitCommand(.run_frame);
+            try cpu.submitCommand(.fast_frame);
         }
         submitVdpRenderRequest(true);
         pending_frames += 1;
@@ -178,11 +183,6 @@ pub fn runFrame() bool {
             // Wake any waiting threads
             std.Thread.Futex.wake(&vdp_frame_futex, 10);
         }
-
-        if (cpu_frame_futex.cmpxchgWeak(1, 0, .release, .acquire) == null) {
-            // Wake any waiting threads
-            std.Thread.Futex.wake(&cpu_frame_futex, 10);
-        }
     }
 
     var cpu_pending = pending_frames;
@@ -191,19 +191,23 @@ pub fn runFrame() bool {
     while (cpu_pending > 0 or vdp_pending > 0) {
         // Check for CPU frame completion
         if (cpu_pending > 0) {
-            if (cpu_thread) |cpu| {
-                if (cpu.tryGetCompletion()) |result| {
-                    cpu_pending -= 1;
-
-                    switch (result) {
-                        .cpu_halted => |error_level| {
-                            std.debug.print("error_level: {}\r\n", .{error_level});
+            if (cpu_thread) |_| {
+                if (channel.receive()) |msg| {
+                    switch (msg) {
+                        .cpu_halt => |halt| {
+                            std.debug.print("error_level: {}\r\n", .{halt.error_level});
 
                             return false; // Stop main loop
                         },
-                        .frame_complete => {
-                            // Normal frame completion
+                        .vdp_frame => |result| {
+                            vdp_pending -= 1;
+                            front_surface_index = result.index;
+                            frame_count += 1;
+                            pending_frames -= 1;
                         },
+                        .cpu_frame => |_| {
+                            cpu_pending -= 1;
+                        }
                     }
                 }
             } else {
@@ -230,7 +234,7 @@ pub fn runFrame() bool {
     // Queue another frame while we blit and wait for vsync
     if (frames_to_do > 0) {
         if (cpu_thread) |cpu| {
-            cpu.submitCommand(.run_frame);
+            try cpu.submitCommand(.full_frame);
         }
         submitVdpRenderRequest(false);
         pending_frames += 1;
@@ -239,11 +243,6 @@ pub fn runFrame() bool {
         if (vdp_frame_futex.cmpxchgWeak(1, 0, .release, .acquire) == null) {
             // Wake any waiting threads
             std.Thread.Futex.wake(&vdp_frame_futex, 10);
-        }
-
-        if (cpu_frame_futex.cmpxchgWeak(1, 0, .release, .acquire) == null) {
-            // Wake any waiting threads
-            std.Thread.Futex.wake(&cpu_frame_futex, 10);
         }
     }
 
@@ -363,7 +362,7 @@ fn writeAudio() void {
 }
 
 pub fn start_cpu_thread(allocator: std.mem.Allocator) !void {
-    cpu_thread = System.Thread.init(allocator, &cpu_frame_futex, &shadow_queue, system) catch |err| {
+    cpu_thread = System.Thread.init(allocator, &channel, &shadow_queue, system) catch |err| {
         std.debug.print("Failed to create CPU thread: {}\n", .{err});
         return error.OutOfMemory;
     };
