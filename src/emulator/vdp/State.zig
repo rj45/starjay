@@ -21,7 +21,7 @@ pub const Cycle = u64;
 
 const CYCLES_PER_SCANLINE: Cycle = 1440; // 1280 plus h-blank
 const SCANLINES_PER_SCREEN: u16 = 741;
-pub const VRAM_SIZE: Addr = 0x4000;
+pub const VRAM_SIZE: Addr = 0x8000;
 pub const PALETTE_SIZE: Addr = 512*4;
 
 pub const State = @This();

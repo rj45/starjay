@@ -34,6 +34,7 @@ var system_thread: *System.Thread = undefined;
 
 // Audio
 var audio_stream: ?*c.SDL_AudioStream = null;
+var audio_started: bool = false;
 var audio_thread: *Audio.Thread = undefined;
 var psg1_queue: Bus.Queue = undefined;
 var psg2_queue: Bus.Queue = undefined;
@@ -234,11 +235,6 @@ pub fn runFrame() !bool {
     const frame_time = current_blit_time - last_blit_time;
     last_blit_time = current_blit_time;
 
-    if ((frame_count % (60*30)) == 1) {
-        const fps = @as(f32, 1_000_000_000) / @as(f32, @floatFromInt(frame_time));
-        std.debug.print("Full Frame {} completed in {} us ({} fps)\r\n", .{frame_count, frame_time / 1000, fps});
-    }
-
     if (frame_time > (frame_time_ns+(frame_time_ns / 2))) {
         std.debug.print("Warning: Frame took too long: {} us\r\n", .{frame_time/1000});
     }
@@ -287,6 +283,8 @@ fn writeAudio() void {
     var psg2_left = &audio_thread.psg2.left_queue;
     var psg2_right = &audio_thread.psg2.right_queue;
 
+    var nonzero: bool = false;
+
     while ((audio_samples + 2) < audio_buffer.len) {
         if (psg1_left.front()) |s1_left| {
             if (psg2_left.front()) |s2_left| {
@@ -299,6 +297,10 @@ fn writeAudio() void {
                         const right_sample = (factor * s1_right.* + factor * s2_right.*);
                         audio_buffer[audio_samples + 1] = right_sample;
                         audio_samples += 2;
+
+                        if (@abs(left_sample) > 0.00001 or @abs(right_sample) > 0.00001) {
+                            nonzero = true;
+                        }
 
                         psg1_left.pop();
                         psg1_right.pop();
@@ -320,23 +322,16 @@ fn writeAudio() void {
 
     if (audio_samples > 0) {
         if (audio_stream) |stream| {
-            var nonzero: usize = 0;
-            var max: f32 = std.math.floatMin(f32);
-            var min: f32 = std.math.floatMax(f32);
-            for (0..audio_samples) |i| {
-                if (@abs(audio_buffer[i]) > 0.00001) {
-                    nonzero+=1;
-                }
-                if (audio_buffer[i] > max) {
-                    max = audio_buffer[i];
-                }
-                if (audio_buffer[i] < min) {
-                    min = audio_buffer[i];
-                }
+            if (nonzero and !audio_started) {
+                std.debug.print("Audio started at frame {} with {} samples\r\n", .{frame_count, audio_samples});
+                audio_started = true;
+                _ = c.SDL_ResumeAudioStreamDevice(stream);
             }
-            // std.debug.print("Putting {} samples, {} are non-zero, range: {}-{}\r\n", .{audio_samples, nonzero, min, max});
-            const size: c_int = @truncate(@as(isize, @bitCast(audio_samples * @sizeOf(f32))));
-            _ = c.SDL_PutAudioStreamData(stream, @ptrCast(&audio_buffer[0]), size);
+
+            if (audio_started) {
+                const size: c_int = @truncate(@as(isize, @bitCast(audio_samples * @sizeOf(f32))));
+                _ = c.SDL_PutAudioStreamData(stream, @ptrCast(&audio_buffer[0]), size);
+            }
         }
     }
 }
@@ -426,9 +421,6 @@ pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
             std.debug.print("Failed to open audio stream: {s}\n", .{c.SDL_GetError()});
             break :blk null;
         };
-        if (audio_stream) |stream| {
-            _ = c.SDL_ResumeAudioStreamDevice(stream);
-        }
     } else {
         window = c.SDL_CreateWindow("StarJay Fantasy Console", c.SDL_WINDOWPOS_UNDEFINED, c.SDL_WINDOWPOS_UNDEFINED, @as(c_int, @intCast(content_width)), @as(c_int, @intCast(content_height)), c.SDL_WINDOW_ALLOW_HIGHDPI | c.SDL_WINDOW_RESIZABLE | hidden_flag) orelse {
             std.debug.print("Failed to open window: {s}\n", .{c.SDL_GetError()});

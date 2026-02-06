@@ -23,6 +23,10 @@ pub const PALETTE_BASE: Addr = 0x3000;
 pub const VRAM_BASE: Addr = 0x4000;
 pub const TOTAL_SIZE: Addr = VRAM_BASE + State.VRAM_SIZE;
 
+// Palette entries are only 24 bits, they are aligned to 32 bits for convenience
+// Writes to the upper 8 bits are ignored (masked out) and read as zero.
+pub const PALETTE_MASK: comptime_int = 0xFFFFFF;
+
 // VDP state (owns the sprite attribute arrays)
 vdp: State,
 
@@ -66,10 +70,8 @@ fn accessSpriteAttrLo(self: *Device, transaction: Transaction) Transaction {
     // Each sprite has 16 bytes (4 attributes × 4 bytes)
     const sprite_index = addr >> 4;
     const attr_offset = (addr & 0xf) >> 2;
-    const byte_offset = addr & 3;
 
     if (sprite_index >= 512) return result;
-
 
     if (transaction.write) {
         switch (transaction.bytes) {
@@ -82,61 +84,43 @@ fn accessSpriteAttrLo(self: *Device, transaction: Transaction) Transaction {
             },
             0b0011 => {
                 const current_36 = self.getSpriteAttr36(sprite_index, attr_offset);
-                switch (byte_offset) {
-                    0 => {
-                        const new_36: u36 = (current_36 & 0xF_FFFF0000) | @as(u36, transaction.data & 0xFFFF);
-                        self.setSpriteAttr36(sprite_index, attr_offset, new_36);
-                        result.valid = true;
-                    },
-                    2 => {
-                        const new_36: u36 = (current_36 & 0xF_0000FFFF) | (@as(u36, transaction.data & 0xFFFF) << 16);
-                        self.setSpriteAttr36(sprite_index, attr_offset, new_36);
-                        result.valid = true;
-                    },
-                    else => return result,
-                }
-
+                const shift:u5 = @truncate(((addr >> 1) & 1) << 4); // either 0 or 16
+                const new_36: u36 = (current_36 & ~(@as(u36, 0xFFFF) << shift)) | @as(u36, (transaction.data & 0xFFFF) << shift);
+                self.setSpriteAttr36(sprite_index, attr_offset, new_36);
+                result.valid = true;
             },
             0b0001 => {
                 const current_36 = self.getSpriteAttr36(sprite_index, attr_offset);
-                switch (byte_offset) {
-                    0 => {
-                        const new_36: u36 = (current_36 & 0xF_FFFF_FF00) | @as(u36, transaction.data & 0xFF);
-                        self.setSpriteAttr36(sprite_index, attr_offset, new_36);
-                        result.valid = true;
-                    },
-                    1 => {
-                        const new_36: u36 = (current_36 & 0xF_FFFF_00FF) | (@as(u36, transaction.data & 0xFF) << 8);
-                        self.setSpriteAttr36(sprite_index, attr_offset, new_36);
-                        result.valid = true;
-                    },
-                    2 => {
-                        const new_36: u36 = (current_36 & 0xF_FF00_FFFF) | (@as(u36, transaction.data & 0xFF) << 16);
-                        self.setSpriteAttr36(sprite_index, attr_offset, new_36);
-                        result.valid = true;
-                    },
-                    3 => {
-                        const new_36: u36 = (current_36 & 0xF_00FF_FFFF) | (@as(u36, transaction.data & 0xFF) << 24);
-                        self.setSpriteAttr36(sprite_index, attr_offset, new_36);
-                        result.valid = true;
-                    },
-                    else => return result,
-                }
+                const shift:u5 = @truncate((addr & 3) << 3); // either 0, 8, 16, or 24
+                const new_36: u36 = (current_36 & ~(@as(u36, 0xFF) << shift)) | @as(u36, (transaction.data & 0xFF) << shift);
+                self.setSpriteAttr36(sprite_index, attr_offset, new_36);
+                result.valid = true;
             },
             else => return result,
         }
 
 
     } else {
-        if (byte_offset != 0 or transaction.bytes != 0b1111) {
-            // For now, only support aligned 32-bit accesses
-            // TODO: Support partial/unaligned accesses
-            return result;
+        switch (transaction.bytes) {
+            0b1111 => {
+                const val = self.getSpriteAttr36(sprite_index, attr_offset);
+                result.data = @truncate(val);
+                result.valid = true;
+            },
+            0b0011 => {
+                const current_36 = self.getSpriteAttr36(sprite_index, attr_offset);
+                const shift:u5 = @truncate(((addr >> 1) & 1) << 4); // either 0 or 16
+                result.data = @truncate((current_36 >> shift) & 0xFFFF);
+                result.valid = true;
+            },
+            0b0001 => {
+                const current_36 = self.getSpriteAttr36(sprite_index, attr_offset);
+                const shift:u5 = @truncate((addr & 3) << 3); // either 0, 8, 16, or 24
+                result.data = @truncate((current_36 >> shift) & 0xFF);
+                result.valid = true;
+            },
+            else => return result,
         }
-
-        const val = self.getSpriteAttr36(sprite_index, attr_offset);
-        result.data = @truncate(val);
-        result.valid = true;
     }
 
     return result;
@@ -206,19 +190,19 @@ fn accessPalette(self: *Device, transaction: Transaction) Transaction {
 
     if (transaction.write) {
         if (transaction.bytes == 0b1111 and addr & 3 == 0) {
-            self.vdp.palette[index] = transaction.data;
+            self.vdp.palette[index] = transaction.data & PALETTE_MASK;
             result.valid = true;
         } else if (transaction.bytes == 0b0011 and addr & 1 == 0) {
             var word = self.vdp.palette[index];
-            const half: u5 = @truncate((addr >> 1) & 1);
-            word = word & ~(@as(u32, 0xFFFF) << (half * 16)) | ((transaction.data & 0xFFFF) << (half * 16));
-            self.vdp.palette[index] = word;
+            const shift:u5 = @truncate(((addr >> 1) & 1) << 4); // either 0 or 16
+            word = word & ~(@as(u32, 0xFFFF) << shift) | ((transaction.data & 0xFFFF) << shift);
+            self.vdp.palette[index] = word & PALETTE_MASK;
             result.valid = true;
         } else if (transaction.bytes == 0b0001) {
             var word = self.vdp.palette[index];
-            const byte:u5 = @truncate(addr & 3);
-            word = word & ~(@as(u32, 0xFF) << (byte * 8)) | ((transaction.data & 0xFF) << (byte * 8));
-            self.vdp.palette[index] = word;
+            const shift:u5 = @truncate((addr & 3) << 3); // either 0, 8, 16, or 24
+            word = word & ~(@as(u32, 0xFF) << shift) | ((transaction.data & 0xFF) << shift);
+            self.vdp.palette[index] = word & PALETTE_MASK;
             result.valid = true;
         }
     } else {
@@ -227,13 +211,13 @@ fn accessPalette(self: *Device, transaction: Transaction) Transaction {
             result.valid = true;
         } else if (transaction.bytes == 0b0011 and addr & 1 == 0) {
             const word = self.vdp.palette[index];
-            const half: u5 = @truncate(addr & 1);
-            result.data = (word >> (half << 4)) & 0xFFFF;
+            const shift:u5 = @truncate(((addr >> 1) & 1) << 4); // either 0 or 16
+            result.data = (word >> shift) & 0xFFFF;
             result.valid = true;
         } else if (transaction.bytes == 0b0001) {
             const word = self.vdp.palette[index];
-            const byte:u5 = @truncate(addr & 3);
-            result.data = (word >> (byte * 8)) & 0xFF;
+            const shift:u5 = @truncate((addr & 3) << 3); // either 0, 8, 16, or 24
+            result.data = (word >> shift) & 0xFF;
             result.valid = true;
         }
     }
@@ -255,14 +239,14 @@ fn accessVram(self: *Device, transaction: Transaction) Transaction {
             result.valid = true;
         } else if (transaction.bytes == 0b0011 and addr & 1 == 0) {
             var word = self.getVram(addr);
-            const half:u5 = @truncate(addr & 1);
-            word = word & ~(@as(u32, 0xFFFF) << (half << 4)) | ((transaction.data & 0xFFFF) << (half << 4));
+            const shift:u5 = @truncate(((addr >> 1) & 1) << 4); // either 0 or 16
+            word = word & ~(@as(u32, 0xFFFF) << shift) | ((transaction.data & 0xFFFF) << shift);
             self.setVram(addr, word);
             result.valid = true;
         } else if (transaction.bytes == 0b0001) {
             var word = self.getVram(addr);
             const byte: u5 = @truncate(addr & 3);
-            word = word & ~(@as(u32, 0xFF) << (byte * 8)) | ((transaction.data & 0xFF) << (byte * 8));
+            word = word & ~(@as(u32, 0xFF) << (byte << 3)) | ((transaction.data & 0xFF) << (byte << 3));
             self.setVram(addr, word);
             result.valid = true;
         }
@@ -272,13 +256,13 @@ fn accessVram(self: *Device, transaction: Transaction) Transaction {
             result.valid = true;
         } else if (transaction.bytes == 0b0011 and addr & 1 == 0) {
             const word = self.getVram(addr);
-            const half:u5 = @truncate(addr & 1);
-            result.data = (word >> (half << 4)) & 0xFFFF;
+            const shift:u5 = @truncate(((addr >> 1) & 1) << 4); // either 0 or 16
+            result.data = (word >> shift) & 0xFFFF;
             result.valid = true;
         } else if (transaction.bytes == 0b0001) {
             const word = self.getVram(addr);
-            const byte: u5 = @truncate(addr & 3);
-            result.data = (word >> (byte * 8)) & 0xFF;
+            const shift:u5 = @truncate((addr & 3) << 3); // either 0, 8, 16, or 24
+            result.data = (word >> shift) & 0xFF;
             result.valid = true;
         }
     }

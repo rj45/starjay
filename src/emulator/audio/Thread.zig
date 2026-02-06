@@ -16,7 +16,7 @@ pub const Thread = @This();
 pub const BUS_CYCLES_PER_FRAME: u64 = 1440 * 741; // 741 scanlines, 1440 cycles per scanline
 const FRAME_TIME_NS: u64 = 16_627_502; // ~60 FPS
 
-pub const SOUND_SAMPLE_HZ: comptime_int = 48000;
+pub const SOUND_SAMPLE_HZ: comptime_int = 44100;
 
 // Command from UI to Audio thread
 pub const Command = union(enum) {

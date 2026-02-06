@@ -9,22 +9,80 @@ const ay38910 = @import("ay38910.zig").ay38910;
 
 pub const pt3 = @This();
 
+/// Search for PT3 signature in file data starting at given offset.
+/// Returns the offset where signature was found, or null if not found.
+fn findPt3Signature(data: []const u8, start: usize) ?usize {
+    const sig_pt3 = "ProTracker 3.";
+    const sig_vt2 = "Vortex Tracker II";
+
+    if (start >= data.len) return null;
+
+    var i = start;
+    while (i + sig_vt2.len <= data.len) : (i += 1) {
+        if (std.mem.startsWith(u8, data[i..], sig_pt3) or
+            std.mem.startsWith(u8, data[i..], sig_vt2))
+        {
+            return i;
+        }
+    }
+    return null;
+}
+
 pub const Pt3Player = struct {
-    // File data
-    data: []const u8,
-    header: Pt3Header,
+    state: [2]ChipState,
+    is_turbosound: bool,
+    output: ay38910.TurboSoundRegs,
+
+    /// Returns the header from the first chip (primary module)
+    pub fn header(self: *const Pt3Player) *const Pt3Header {
+        return &self.state[0].header;
+    }
+
+    pub fn init(self: *Pt3Player, file_data: []const u8) !void {
+        self.output = ay38910.TurboSoundRegs.init();
+        self.state = [_]ChipState{.{}} ** 2;
+        self.is_turbosound = false;
+
+        // Initialize chip 0 with first module
+        try self.state[0].init(file_data, &self.output.psg1);
+
+        // Search for second PT3 signature (TurboSound)
+        // Start searching after the header (0x63 = header size 0x62 + 1)
+        if (findPt3Signature(file_data, 0x63)) |offset| {
+            self.is_turbosound = true;
+            try self.state[1].init(file_data[offset..], &self.output.psg2);
+        } else {
+            // Non-TurboSound: chip 1 uses same module data but won't be played
+            self.is_turbosound = false;
+            try self.state[1].init(file_data, &self.output.psg2);
+        }
+    }
+
+    pub fn playFrame(self: *Pt3Player) *const ay38910.TurboSoundRegs {
+        self.state[0].playFrame();
+        if (self.is_turbosound) {
+            self.state[1].playFrame();
+        }
+        return &self.output;
+    }
+};
+
+/// Self-contained chip state with module data and playback methods.
+/// Each ChipState represents a complete PT3 module for one AY-3-8910 chip.
+pub const ChipState = struct {
+    // Module data
+    data: []const u8 = &.{},
+    header: Pt3Header = std.mem.zeroes(Pt3Header),
+    version: u8 = 6,
+    positions: []const u8 = &.{},
 
     // Playback state
-    state: [2]ChipState, // For TurboSound: [0] = chip 0, [1] = chip 1
-    is_turbosound: bool,
-    ts_offset: u8, // 0x20 = not TurboSound, else pattern offset for chip 1
-    version: u8,
+    channels: [3]ChannelState = [_]ChannelState{.{}} ** 3,
+    common: CommonState = .{},
+    envelope_shape_set: bool = false,
 
-    // Position tracking
-    positions: []const u8,
-
-    // Output registers
-    output: ay38910.TurboSoundRegs,
+    // Output - pointer to the Regs struct for this chip
+    regs: *ay38910.Regs = undefined,
 
     pub const CommonState = struct {
         env_base: u16 = 0,
@@ -37,12 +95,6 @@ pub const Pt3Player = struct {
         delay: u8 = 0, // Tempo
         delay_counter: u8 = 1,
         current_position: u8 = 0,
-    };
-
-    pub const ChipState = struct {
-        channels: [3]ChannelState = [_]ChannelState{.{}} ** 3,
-        common: CommonState = .{},
-        envelope_shape_set: bool = false, // Flag for envelope shape change this frame
     };
 
     pub const ChannelState = struct {
@@ -79,68 +131,74 @@ pub const Pt3Player = struct {
         ton_delta: i16 = 0, // For portamento
     };
 
-    pub fn init(self: *Pt3Player, file_data: []const u8) !void {
-        self.* = .{
-            .data = file_data,
-            .header = std.mem.zeroes(Pt3Header),
-            .state = [_]ChipState{.{}} ** 2,
-            .is_turbosound = false,
-            .ts_offset = 0x20,
-            .version = 6,
-            .positions = undefined,
-            .output = ay38910.TurboSoundRegs.init(),
-        };
+    pub fn init(self: *ChipState, module_data: []const u8, output_regs: *ay38910.Regs) !void {
+        self.data = module_data;
+        self.regs = output_regs;
+        self.header = std.mem.zeroes(Pt3Header);
+        self.channels = [_]ChannelState{.{}} ** 3;
+        self.common = .{};
+        self.regs.envelope_shape = 0xf;
+        self.envelope_shape_set = false;
 
-        try Pt3Header.parse(&self.header, file_data);
+        try Pt3Header.parse(&self.header, module_data);
 
-        // Validate signature
+        // Validate and detect version
         if (std.mem.eql(u8, self.header.songinfo[0..13], "ProTracker 3.")) {
             self.version = if (self.header.songinfo[13] >= '0' and self.header.songinfo[13] <= '9')
                 self.header.songinfo[13] - '0'
             else
                 6;
-        } else if (std.mem.eql(u8, self.header.songinfo[0..21], "Vortex Tracker II 1.0")) {
+        } else if (std.mem.eql(u8, self.header.songinfo[0..17], "Vortex Tracker II")) {
             self.version = 6;
         } else {
             return error.InvalidSignature;
         }
 
         // Find position list
-        const pos_start: u32 = Pt3Header.SIZE;
+        const pos_start: usize = Pt3Header.SIZE;
         var pos_end = pos_start;
-        while (pos_end < file_data.len and file_data[pos_end] != 0xFF) {
+        while (pos_end < module_data.len and module_data[pos_end] != 0xFF) {
             pos_end += 1;
         }
+        self.positions = module_data[pos_start..pos_end];
 
-        // TODO: this is not how you handle turbosound mode properly...
-        self.is_turbosound = self.header.mode != 0x20;
-        self.ts_offset = self.header.mode;
-        self.positions = file_data[pos_start..pos_end];
-
-        // Initialize chip 0
-        self.state[0].common.delay = self.header.tempo;
-        self.state[0].common.delay_counter = 1;
-        self.state[0].common.current_position = 0;
-
-        // Initialize channels for chip 0
-        self.initChannels(0);
-
-        // Load first pattern for chip 0
-        self.loadPatternAddresses(0);
-
-        // Initialize chip 1 for TurboSound
-        if (self.is_turbosound) {
-            self.state[1].common.delay = self.header.tempo;
-            self.state[1].common.delay_counter = 1;
-            self.state[1].common.current_position = 0;
-            self.initChannels(1);
-            self.loadPatternAddresses(1);
-        }
+        // Initialize playback
+        self.common.delay = self.header.tempo;
+        self.common.delay_counter = 1;
+        self.common.current_position = 0;
+        self.initChannels();
+        self.loadPatternAddresses();
     }
 
-    fn initChannels(self: *Pt3Player, chip: usize) void {
+    pub fn playFrame(self: *ChipState) void {
+        self.common.delay_counter -= 1;
+        if (self.common.delay_counter == 0) {
+            // Channel A triggers pattern advance check
+            self.channels[0].note_skip_counter -= 1;
+            if (self.channels[0].note_skip_counter == 0) {
+                if (self.data[self.channels[0].address_in_pattern] == 0) {
+                    self.advancePosition();
+                }
+                self.parseChannel(0);
+            }
+
+            // Channels B, C
+            for (1..3) |chan| {
+                self.channels[chan].note_skip_counter -= 1;
+                if (self.channels[chan].note_skip_counter == 0) {
+                    self.parseChannel(chan);
+                }
+            }
+
+            self.common.delay_counter = self.common.delay;
+        }
+
+        self.synthesize();
+    }
+
+    fn initChannels(self: *ChipState) void {
         for (0..3) |chan| {
-            var state = &self.state[chip].channels[chan];
+            var state = &self.channels[chan];
 
             // Load ornament 0
             state.ornament_pointer = self.header.ornament_offsets[0];
@@ -165,96 +223,33 @@ pub const Pt3Player = struct {
         }
     }
 
-    fn loadPatternAddresses(self: *Pt3Player, chip: usize) void {
-        var i: usize = self.positions[self.state[chip].common.current_position];
-
-        // TurboSound pattern mirroring
-        if (self.ts_offset != 0x20 and chip == 1) {
-            i = @as(usize, self.ts_offset) * 3 - 3 - i;
-        }
+    fn loadPatternAddresses(self: *ChipState) void {
+        const i: usize = self.positions[self.common.current_position];
 
         for (0..3) |chan| {
             const addr = std.mem.readInt(u16, self.data[self.header.patterns_offset + (i + chan) * 2 ..][0..2], .little);
-            self.state[chip].channels[chan].address_in_pattern = addr;
+            self.channels[chan].address_in_pattern = addr;
         }
     }
 
-    pub fn playFrame(self: *Pt3Player) *const ay38910.TurboSoundRegs {
-        // Reset envelope shape flags for this frame
-        self.state[0].envelope_shape_set = false;
-        self.state[1].envelope_shape_set = false;
-
-        // Process chip 0
-        self.state[0].common.delay_counter -= 1;
-        if (self.state[0].common.delay_counter == 0) {
-            // Channel A triggers pattern advance check
-            self.state[0].channels[0].note_skip_counter -= 1;
-            if (self.state[0].channels[0].note_skip_counter == 0) {
-                if (self.data[self.state[0].channels[0].address_in_pattern] == 0) {
-                    self.advancePosition(0);
-                }
-                self.parseChannel(0, 0);
-            }
-
-            // Channels B, C
-            for (1..3) |chan| {
-                self.state[0].channels[chan].note_skip_counter -= 1;
-                if (self.state[0].channels[chan].note_skip_counter == 0) {
-                    self.parseChannel(0, chan);
-                }
-            }
-
-            self.state[0].common.delay_counter = self.state[0].common.delay;
+    fn advancePosition(self: *ChipState) void {
+        self.common.current_position += 1;
+        if (self.common.current_position >= self.positions.len) {
+            self.common.current_position = self.header.loop_position;
         }
 
-        // TurboSound chip 1
-        if (self.is_turbosound) {
-            self.state[1].common.delay_counter -= 1;
-            if (self.state[1].common.delay_counter == 0) {
-                self.state[1].channels[0].note_skip_counter -= 1;
-                if (self.state[1].channels[0].note_skip_counter == 0) {
-                    if (self.data[self.state[1].channels[0].address_in_pattern] == 0) {
-                        self.advancePosition(1);
-                    }
-                    self.parseChannel(1, 0);
-                }
-
-                for (1..3) |chan| {
-                    self.state[1].channels[chan].note_skip_counter -= 1;
-                    if (self.state[1].channels[chan].note_skip_counter == 0) {
-                        self.parseChannel(1, chan);
-                    }
-                }
-
-                self.state[1].common.delay_counter = self.state[1].common.delay;
-            }
-        }
-
-        self.synthesize();
-        return &self.output;
-    }
-
-    fn advancePosition(self: *Pt3Player, chip: usize) void {
-        self.state[chip].common.current_position += 1;
-        if (self.state[chip].common.current_position >= self.positions.len) {
-            self.state[chip].common.current_position = self.header.loop_position;
-        }
-
-        var i: usize = self.positions[self.state[chip].common.current_position];
-        if (self.ts_offset != 0x20 and chip == 1) {
-            i = @as(usize, self.ts_offset) * 3 - 3 - i;
-        }
+        const i: usize = self.positions[self.common.current_position];
 
         for (0..3) |chan| {
             const addr = std.mem.readInt(u16, self.data[self.header.patterns_offset + (i + chan) * 2 ..][0..2], .little);
-            self.state[chip].channels[chan].address_in_pattern = addr;
+            self.channels[chan].address_in_pattern = addr;
         }
 
-        self.state[chip].common.noise_base = 0;
+        self.common.noise_base = 0;
     }
 
-    fn parseChannel(self: *Pt3Player, chip: usize, chan: usize) void {
-        var state = &self.state[chip].channels[chan];
+    fn parseChannel(self: *ChipState, chan: usize) void {
+        var state = &self.channels[chan];
         var offset: usize = state.address_in_pattern;
 
         // Capture previous values for portamento
@@ -317,14 +312,14 @@ pub const Pt3Player = struct {
             } else if (cmd >= 0xb2) {
                 // Set envelope
                 state.envelope_enabled = true;
-                self.output.chip(chip).envelope_shape = @truncate(cmd - 0xb1);
-                self.state[chip].envelope_shape_set = true;
+                self.regs.envelope_shape = @truncate(cmd - 0xb1);
+                self.envelope_shape_set = true;
                 // C reads hi then lo (big endian)
-                self.state[chip].common.env_base = (@as(u16, self.data[offset]) << 8) | self.data[offset + 1];
+                self.common.env_base = (@as(u16, self.data[offset]) << 8) | self.data[offset + 1];
                 offset += 2;
                 state.position_in_ornament = 0;
-                self.state[chip].common.cur_env_slide = 0;
-                self.state[chip].common.cur_env_delay = 0;
+                self.common.cur_env_slide = 0;
+                self.common.cur_env_delay = 0;
             } else if (cmd == 0xb1) {
                 // Skip lines - NO subtract!
                 state.number_of_notes_to_skip = self.data[offset];
@@ -358,15 +353,15 @@ pub const Pt3Player = struct {
                 state.position_in_ornament = 0;
             } else if (cmd >= 0x20) {
                 // Set noise base
-                self.state[chip].common.noise_base = @truncate(cmd - 0x20);
+                self.common.noise_base = @truncate(cmd - 0x20);
             } else if (cmd >= 0x11) {
                 // Set envelope + sample
-                self.output.chip(chip).envelope_shape = @truncate(cmd - 0x10);
-                self.state[chip].envelope_shape_set = true;
-                self.state[chip].common.env_base = (@as(u16, self.data[offset]) << 8) | self.data[offset + 1];
+                self.regs.envelope_shape = @truncate(cmd - 0x10);
+                self.envelope_shape_set = true;
+                self.common.env_base = (@as(u16, self.data[offset]) << 8) | self.data[offset + 1];
                 offset += 2;
-                self.state[chip].common.cur_env_slide = 0;
-                self.state[chip].common.cur_env_delay = 0;
+                self.common.cur_env_slide = 0;
+                self.common.cur_env_delay = 0;
                 state.envelope_enabled = true;
 
                 // Load sample from next byte (divide by 2!)
@@ -447,14 +442,14 @@ pub const Pt3Player = struct {
                 state.current_ton_sliding = 0;
             } else if (count == flags[8]) {
                 // Envelope slide
-                self.state[chip].common.env_delay = @intCast(self.data[offset]);
+                self.common.env_delay = @intCast(self.data[offset]);
                 offset += 1;
-                self.state[chip].common.cur_env_delay = self.state[chip].common.env_delay;
-                self.state[chip].common.env_slide_add = std.mem.readInt(i16, self.data[offset..][0..2], .little);
+                self.common.cur_env_delay = self.common.env_delay;
+                self.common.env_slide_add = std.mem.readInt(i16, self.data[offset..][0..2], .little);
                 offset += 2;
             } else if (count == flags[9]) {
                 // Tempo
-                self.state[chip].common.delay = self.data[offset];
+                self.common.delay = self.data[offset];
                 offset += 1;
             }
             count -= 1;
@@ -464,76 +459,42 @@ pub const Pt3Player = struct {
         state.note_skip_counter = @intCast(state.number_of_notes_to_skip);
     }
 
-    fn synthesize(self: *Pt3Player) void {
+    fn synthesize(self: *ChipState) void {
         var add_to_env: i16 = 0;
         var temp_mixer: u8 = 0;
 
-        // Process chip 0 channels
         for (0..3) |chan| {
-            add_to_env += self.changeRegisters(0, chan, &temp_mixer);
+            add_to_env += self.changeRegisters(chan, &temp_mixer);
         }
 
-        // Set chip 0 registers
-        self.output.psg1.tone_a = @truncate(self.state[0].channels[0].ton);
-        self.output.psg1.tone_b = @truncate(self.state[0].channels[1].ton);
-        self.output.psg1.tone_c = @truncate(self.state[0].channels[2].ton);
+        // Write to self.regs (points to psg1 or psg2)
+        self.regs.tone_a = @truncate(self.channels[0].ton);
+        self.regs.tone_b = @truncate(self.channels[1].ton);
+        self.regs.tone_c = @truncate(self.channels[2].ton);
 
-        self.output.psg1.noise_period = @truncate((self.state[0].common.noise_base +% self.state[0].common.add_to_noise) & 0x1f);
-        self.output.psg1.mixer = @bitCast(temp_mixer);
+        self.regs.noise_period = @truncate((self.common.noise_base +% self.common.add_to_noise) & 0x1f);
+        self.regs.mixer = @bitCast(temp_mixer);
 
-        self.output.psg1.volume_a = @bitCast(self.state[0].channels[0].amplitude);
-        self.output.psg1.volume_b = @bitCast(self.state[0].channels[1].amplitude);
-        self.output.psg1.volume_c = @bitCast(self.state[0].channels[2].amplitude);
+        self.regs.volume_a = @bitCast(self.channels[0].amplitude);
+        self.regs.volume_b = @bitCast(self.channels[1].amplitude);
+        self.regs.volume_c = @bitCast(self.channels[2].amplitude);
 
-        const env0: u16 = @bitCast(@as(i16, @truncate(@as(i32, self.state[0].common.env_base) +
-            add_to_env + self.state[0].common.cur_env_slide)));
-        self.output.psg1.envelope_period = env0;
+        const env: u16 = @bitCast(@as(i16, @truncate(@as(i32, self.common.env_base) +
+            add_to_env + self.common.cur_env_slide)));
+        self.regs.envelope_period = env;
 
-        // Envelope slide for chip 0
-        if (self.state[0].common.cur_env_delay > 0) {
-            self.state[0].common.cur_env_delay -= 1;
-            if (self.state[0].common.cur_env_delay == 0) {
-                self.state[0].common.cur_env_delay = self.state[0].common.env_delay;
-                self.state[0].common.cur_env_slide += self.state[0].common.env_slide_add;
-            }
-        }
-
-        // Process chip 1 for TurboSound
-        if (self.is_turbosound) {
-            add_to_env = 0;
-            temp_mixer = 0;
-
-            for (0..3) |chan| {
-                add_to_env += self.changeRegisters(1, chan, &temp_mixer);
-            }
-
-            self.output.psg2.tone_a = @truncate(self.state[1].channels[0].ton);
-            self.output.psg2.tone_b = @truncate(self.state[1].channels[1].ton);
-            self.output.psg2.tone_c = @truncate(self.state[1].channels[2].ton);
-
-            self.output.psg2.noise_period = @truncate((self.state[1].common.noise_base +% self.state[1].common.add_to_noise) & 0x1f);
-            self.output.psg2.mixer = @bitCast(temp_mixer);
-
-            self.output.psg2.volume_a = @bitCast(self.state[1].channels[0].amplitude);
-            self.output.psg2.volume_b = @bitCast(self.state[1].channels[1].amplitude);
-            self.output.psg2.volume_c = @bitCast(self.state[1].channels[2].amplitude);
-
-            const env1: u16 = @bitCast(@as(i16, @truncate(@as(i32, self.state[1].common.env_base) +
-                add_to_env + self.state[1].common.cur_env_slide)));
-            self.output.psg2.envelope_period = env1;
-
-            if (self.state[1].common.cur_env_delay > 0) {
-                self.state[1].common.cur_env_delay -= 1;
-                if (self.state[1].common.cur_env_delay == 0) {
-                    self.state[1].common.cur_env_delay = self.state[1].common.env_delay;
-                    self.state[1].common.cur_env_slide += self.state[1].common.env_slide_add;
-                }
+        // Envelope slide
+        if (self.common.cur_env_delay > 0) {
+            self.common.cur_env_delay -= 1;
+            if (self.common.cur_env_delay == 0) {
+                self.common.cur_env_delay = self.common.env_delay;
+                self.common.cur_env_slide += self.common.env_slide_add;
             }
         }
     }
 
-    fn changeRegisters(self: *Pt3Player, chip: usize, chan: usize, temp_mixer: *u8) i16 {
-        var state = &self.state[chip].channels[chan];
+    fn changeRegisters(self: *ChipState, chan: usize, temp_mixer: *u8) i16 {
+        var state = &self.channels[chan];
         var add_to_env: i16 = 0;
 
         if (state.enabled) {
@@ -607,8 +568,8 @@ pub const Pt3Player = struct {
                 if (b1 & 0x20 != 0) state.current_envelope_sliding = j_env;
                 add_to_env += j_env;
             } else {
-                self.state[chip].common.add_to_noise = @truncate((b0 >> 1) +% @as(u8, @bitCast(@as(i8, @truncate(state.current_noise_sliding)))));
-                if (b1 & 0x20 != 0) state.current_noise_sliding = @as(i16, @intCast(@as(i8, @bitCast(self.state[chip].common.add_to_noise))));
+                self.common.add_to_noise = @truncate((b0 >> 1) +% @as(u8, @bitCast(@as(i8, @truncate(state.current_noise_sliding)))));
+                if (b1 & 0x20 != 0) state.current_noise_sliding = @as(i16, @intCast(@as(i8, @bitCast(self.common.add_to_noise))));
             }
 
             // Mixer
@@ -637,7 +598,7 @@ pub const Pt3Player = struct {
         return add_to_env;
     }
 
-    fn getFreq(self: *const Pt3Player, note: u8) u16 {
+    fn getFreq(self: *const ChipState, note: u8) u16 {
         return switch (self.header.freq_table_num) {
             0 => if (self.version <= 3) TABLE_PT_33_34R[note] else TABLE_PT_34_35[note],
             1 => TABLE_ST[note],
@@ -655,7 +616,7 @@ pub const Pt3Header = struct {
     pub const SIZE = 0x62 + 1 + 1 + 1 + 1 + 1 + 2 + (32 * 2) + (16 * 2);
 
     songinfo: [0x62]u8,
-    mode: u8, // 0x20 = single AY, else TurboSound pattern offset
+    mode: u8, // 0x20 = single AY, else TurboSound pattern offset (legacy, not used for detection)
     freq_table_num: u8, // 0-4
     tempo: u8, // Initial tempo (ticks per row)
     length: u8, // Song length (unused)

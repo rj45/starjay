@@ -18,7 +18,10 @@ pub const Ay38910 = @This();
 
 // const CHIP_FREQ = 1_773_500; // Hz -- PAL ZXSpectrum
 
-const CHIP_FREQ = 1_750_000; // Hz -- Pentagon ZXSpectrum clone
+// const CHIP_FREQ = 1_750_000; // Hz -- Pentagon ZXSpectrum clone
+
+const CHIP_FREQ = 1_714_286; // Hz -- A ZXSpectrum clone??? (used by KUVO)
+
 const BUS_FREQ = 64_000_000; // Hz -- 64 MHz bus clock
 
 // ayumi constants
@@ -54,13 +57,14 @@ pub const PanMode = enum { linear, equal_power };
 
 pub const Options = struct {
     sound_hz: u32, // host sound frequency (number of samples per second)
+
+    // TODO: make these configurable from the ROM via MMIO register
     clock_rate: f64 = CHIP_FREQ, // chip clock rate in Hz
-    is_ym: bool = false, // true for YM2149, false for AY-3-8910
+    is_ym: bool = true, // true for YM2149, false for AY-3-8910
 };
 
 // misc constants
 const NUM_CHANNELS = 3;
-const FIXEDPOINT_SCALE = 16; // error accumulation precision boost
 
 // registers
 pub const REG = struct {
@@ -150,6 +154,7 @@ partial_sample: f64 = 0, // accumulator for sample timing
 regs: Regs = .{},
 left_queue: Queue = undefined, // output sample queue
 right_queue: Queue = undefined, // output sample queue
+tone_threshold: u12 = 0,
 
 // Tone channels
 channels: [NUM_CHANNELS]ToneChannel = [_]ToneChannel{.{}} ** NUM_CHANNELS,
@@ -201,13 +206,29 @@ pub fn init(opts: Options, gpa: std.mem.Allocator) !Ay38910 {
     const partial_tick_amt = opts.clock_rate / (@as(f64, @floatFromInt(opts.sound_hz)) * 8.0 * DECIMATE_FACTOR);
     std.debug.assert(partial_tick_amt < 1.0);
 
+    // emitting frequencies above the nyquist frequency causes lots of problems, so we need to determine a limit
+    // to the tone period values based on the clock rate and sound sample rate
+    var tone_threshold:u12 = 1;
+    while ((opts.clock_rate / (16 * @as(f64, @floatFromInt(tone_threshold)))) > @as(f64, @floatFromInt(opts.sound_hz / 2))) {
+        tone_threshold += 1;
+    }
+
+    std.debug.print("tone_threshold: {}\r\n", .{tone_threshold});
+
     var self = Ay38910{
         .partial_sample_amt = partial_sample_amt,
         .partial_tick_amt = partial_tick_amt,
+        .tone_threshold = @as(u12, tone_threshold),
         .dac_table = if (opts.is_ym) &YM_dac_table else &AY_dac_table,
     };
     self.left_queue = try Queue.initCapacity(gpa, 65536);
     self.right_queue = try Queue.initCapacity(gpa, 65536);
+
+    // TODO: make this configurable from the ROM via mmio register
+    self.setPan(0, 0.25, .equal_power);
+    self.setPan(0, 0.5, .equal_power);
+    self.setPan(0, 0.75, .equal_power);
+
     self.reset();
     return self;
 }
@@ -331,8 +352,13 @@ fn updateTone(self: *Ay38910, index: usize) i32 {
     var ch = &self.channels[index];
     ch.tone_counter += 1;
     if (ch.tone_counter >= ch.tone_period) {
-        ch.tone_counter = 0;
-        ch.tone ^= 1;
+        ch.tone_counter -= ch.tone_period;
+        if (ch.tone_period <= self.tone_threshold) {
+            // don't toggle if below threshold, but still allow amplitude modulation via the volume/envelope
+            ch.tone = 1;
+        } else {
+            ch.tone ^= 1;
+        }
     }
     return ch.tone;
 }
@@ -340,7 +366,7 @@ fn updateTone(self: *Ay38910, index: usize) i32 {
 fn updateNoise(self: *Ay38910) i32 {
     self.noise_counter += 1;
     if (self.noise_counter >= (self.noise_period << 1)) {
-        self.noise_counter = 0;
+        self.noise_counter -= (self.noise_period << 1);
         // 17-bit LFSR: feedback from bits 0 and 3
         const bit0x3: i32 = (self.noise ^ (self.noise >> 3)) & 1;
         self.noise = (self.noise >> 1) | (bit0x3 << 16);
