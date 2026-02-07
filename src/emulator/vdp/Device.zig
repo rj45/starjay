@@ -98,8 +98,6 @@ fn accessSpriteAttrLo(self: *Device, transaction: Transaction) Transaction {
             },
             else => return result,
         }
-
-
     } else {
         switch (transaction.bytes) {
             0b1111 => {
@@ -137,7 +135,7 @@ fn accessSpriteHigh(self: *Device, transaction: Transaction) Transaction {
     const byte_offset = addr & 3;
 
     if (sprite_index >= 512) return result;
-    if (byte_offset != 0 or transaction.bytes != 0b1111 ) {
+    if (byte_offset != 0 or (transaction.bytes != 0b1111 and transaction.bytes != 0b0011)) {
         // For now, only support aligned 32-bit accesses
         return result;
     }

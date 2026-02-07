@@ -22,9 +22,9 @@ pub const FixedPoint = packed union {
     value: i16,
     fp: Parts,
 
-    const Parts = packed struct(u16) {
-        f: u4,
-        i: i12,
+    const Parts = packed struct(i16) {
+        f: u4 = 0,
+        i: i12 = 0,
     };
 };
 
@@ -46,8 +46,8 @@ pub const SpriteAddr = packed struct(u32) {
 };
 
 pub const SpriteVelocity = packed struct(u32) {
-    y_velocity: FixedPoint,
-    x_velocity: FixedPoint,
+    y_velocity: FixedPoint = .{.value = 0},
+    x_velocity: FixedPoint = .{.value = 0},
 };
 
 pub const SpriteHigh = packed struct(u32) {

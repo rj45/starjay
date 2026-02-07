@@ -61,67 +61,6 @@ export fn kmain() noreturn {
     const console = term.getWriter();
     // const tile_bitmap_addr = if ((bird_tilemap_data.len & 0x1ff) == 0) bird_tilemap_data.len >> 9 else (bird_tilemap_data.len >> 9) + 1;
 
-    // for (0..512) |i| {
-    //     const i_mod_32: u11 = @truncate(i % 32);
-    //     const i_div_32: u11 = @truncate(i / 32);
-
-    //     vdp.sprite_table.sprite[i].sprite_velocity = SpriteVelocity{
-    //         .x_velocity = .{
-    //             .value = 0,
-    //         },
-    //         .y_velocity = .{
-    //             .value = 0,
-    //         },
-    //     };
-
-    //     vdp.sprite_table.sprite[i].sprite_addr = .{
-    //         .tile_bitmap_addr = @truncate(tile_bitmap_addr),
-    //         .tilemap_addr = 0,
-    //     };
-
-
-
-    //     vdp.sprite_table.sprite[i].sprite_x_width = SpriteXWidth{
-    //         .screen_x = .{ .fp = .{.i = @as(i12, (i_mod_32*17)+384), .f = 0} },
-    //         .tilemap_x = @truncate(i_mod_32),
-    //         .width = 1,
-    //     };
-
-    //     vdp.sprite_table.sprite[i].sprite_y_height = SpriteYHeight{
-    //         .screen_y = .{ .fp = .{.i = @as(i12, (i_div_32 * 33)+104), .f = 0} },
-    //         .tilemap_y = @truncate(i_div_32*2),
-    //         .height = 2,
-    //     };
-    //     vdp.sprite_table.sprite_extra[i] = SpriteHigh{
-    //         // width/stride of tilemap given by formula ((1 << (tilemap_size_a+4)) + (1 << (tilemap_size_b+4)))
-    //         // This allows sizes of 32 to 256 tiles in width, but also odd sizes like 80 for text buffers
-    //         // Height is not specified -- it's just the height of the sprite plus its Y position, so up to 512 tiles
-    //         .tilemap_size_b = 0,
-    //         .tilemap_size_a = 0,
-    //         .x_flip = false,
-    //         .y_flip = false,
-    //         .unused1 = 0,
-    //         .unused2 = 0,
-    //         .unused3 = 0,
-    //         .unused4 = 0,
-    //     };
-    // }
-
-    // const bird_palette_data_u32 = std.mem.bytesAsSlice(u32, bird_palette_data);
-    // for (0..512) |i| {
-    //     palette[i] = bird_palette_data_u32[i];
-    // }
-
-    // const tile_bitmap_addr_start = tile_bitmap_addr << 10;
-
-    // @memcpy(vdp.vram[0..bird_tilemap_data.len], bird_tilemap_data);
-    // @memcpy(vdp.vram[tile_bitmap_addr_start..tile_bitmap_addr_start+bird_tile_bitmap_data.len], bird_tile_bitmap_data);
-
-    const cover_palette_data_u32 = std.mem.bytesAsSlice(u32, cover_palette_data);
-    for (0..496) |i| {
-        vdp.palette[i] = cover_palette_data_u32[i];
-    }
-
     vdp.palette[496] = 0x00000000; // transparent color for text
     var value: u32 = 0;
     for (496..512) |i| {
@@ -136,8 +75,7 @@ export fn kmain() noreturn {
     @memcpy(vdp.vram[font_tile_bitmap_addr..font_tile_bitmap_addr+font_tile_bitmap_data.len], font_tile_bitmap_data);
 
     const cover_tilemap_addr = cover_tile_bitmap_data.len;
-    @memcpy(vdp.vram[0..cover_tile_bitmap_data.len], cover_tile_bitmap_data);
-    @memcpy(vdp.vram[cover_tilemap_addr..cover_tilemap_addr+cover_tilemap_data.len], cover_tilemap_data);
+    const bird_tilemap_addr = bird_tile_bitmap_data.len;
 
     // set up a text buffer using a sprite for the top and bottom half of each character
     vdp.sprite_table.sprite[0].sprite_addr = .{
@@ -195,10 +133,15 @@ export fn kmain() noreturn {
     console.print("Clint time: {}, next tick: {}\r\n", .{initial_time, next_tick}) catch {};
     console.flush() catch {};
 
+    const text_mode_top = 0;
+    const text_mode_bot = 2048;
+
     const State = struct {
+        const State = @This();
+
         playing: bool = false,
 
-        fn fn1(self: *@This(), ctx: *anim.Ctx) void {
+        fn fn1(self: *State, ctx: *anim.Ctx) void {
             _ = ctx; // unused
 
             self.playing = true;
@@ -212,9 +155,8 @@ export fn kmain() noreturn {
             }
         }
 
-        fn fn2(self: *@This(), ctx: *anim.Ctx) void {
-            _ = ctx; // unused
-            _ = self; // unused
+        fn fn2(self: *State, ctx: *anim.Ctx) void {
+            _ = self; _ = ctx;
 
             const text = "Hello, Welcome,        ";
             for (text, 0..) |c, i| {
@@ -225,9 +167,8 @@ export fn kmain() noreturn {
             }
         }
 
-        fn fn3(self: *@This(), ctx: *anim.Ctx) void {
-            _ = ctx; // unused
-            _ = self; // unused
+        fn fn3(self: *State, ctx: *anim.Ctx) void {
+            _ = self; _ = ctx;
 
             const text = "Hello, Welcome, Welcome";
             for (text, 0..) |c, i| {
@@ -238,13 +179,55 @@ export fn kmain() noreturn {
             }
         }
 
-        fn fn4(self: *@This(), ctx: *anim.Ctx) void {
-            _ = ctx; // unused
-            _ = self; // unused
+        fn fn4(self: *State, ctx: *anim.Ctx) void {
+            _ = self; _ = ctx;
+
+            const cover_palette_data_u32 = std.mem.bytesAsSlice(u32, cover_palette_data);
+            for (0..496) |i| {
+                vdp.palette[i] = cover_palette_data_u32[i];
+            }
+
+            @memcpy(vdp.vram[0..cover_tile_bitmap_data.len], cover_tile_bitmap_data);
+            @memcpy(vdp.vram[cover_tilemap_addr..cover_tilemap_addr+cover_tilemap_data.len], cover_tilemap_data);
 
             // cover art is 48x36 tiles
             const cover_y = (720 >> 1) - (((36 << 4) + 16 + 8) >> 1);
             const text_y = cover_y + 36*16 + 8;
+
+            // turn the sprites off
+            for (3..512) |i| {
+                vdp.sprite_table.sprite[i].sprite_y_height.height = 0;
+            }
+
+            // set up a text buffer using a sprite for the top and bottom half of each character
+            vdp.sprite_table.sprite[0].sprite_addr = .{
+                .tile_bitmap_addr = font_tile_bitmap_addr >> 10,
+                .tilemap_addr = text_buffer_top >> 9,
+            };
+            vdp.sprite_table.sprite[0].sprite_x_width = .{
+                .screen_x = .{ .fp = .{.i = @as(i12, 384), .f = 0} },
+                .tilemap_x = 0,
+                .width = 32,
+            };
+            vdp.sprite_table.sprite[0].sprite_y_height = .{
+                .screen_y = .{ .fp = .{.i = @as(i12, 352), .f = 0} },
+                .tilemap_y = 0,
+                .height = 1,
+            };
+            vdp.sprite_table.sprite[1].sprite_addr = .{
+                .tile_bitmap_addr = font_tile_bitmap_addr >> 10,
+                .tilemap_addr = text_buffer_bot >> 9,
+            };
+            vdp.sprite_table.sprite[1].sprite_x_width = .{
+                .screen_x = .{ .fp = .{.i = @as(i12, 384), .f = 0} },
+                .tilemap_x = 0,
+                .width = 32,
+            };
+            vdp.sprite_table.sprite[1].sprite_y_height = .{
+                .screen_y = .{ .fp = .{.i = @as(i12, 352+16), .f = 0} },
+                .tilemap_y = 0,
+                .height = 1,
+            };
 
             vdp.sprite_table.sprite[0].sprite_y_height.screen_y.fp.i = text_y;
             vdp.sprite_table.sprite[1].sprite_y_height.screen_y.fp.i = text_y+16;
@@ -280,6 +263,500 @@ export fn kmain() noreturn {
                 vdp.vram_u16[text_buffer_bot+i+((32 - text.len) >> 1)] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
             }
         }
+
+
+        fn fn5(self: *State, ctx: *anim.Ctx) void {
+            _ = self; _ = ctx;
+
+            const text = "Used with permission. Thank you!";
+            for (text, 0..) |c, i| {
+                const char_code = @as(u8, c);
+
+                vdp.vram_u16[text_buffer_top+i+((32 - text.len) >> 1)] = @as(u16, char_code) | (31 << 10); // palette 31
+                vdp.vram_u16[text_buffer_bot+i+((32 - text.len) >> 1)] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
+            }
+        }
+
+        fn fn6(self: *State, ctx: *anim.Ctx) void {
+            _ = self; _ = ctx;
+
+            vdp.sprite_table.sprite[2].sprite_y_height.height = 0; // hide the cover art sprite
+
+            vdp.sprite_table.sprite[0].sprite_y_height.screen_y.fp.i = 352;
+            vdp.sprite_table.sprite[1].sprite_y_height.screen_y.fp.i = 352+16;
+
+            const text = "You're listening to 2x AY-3-8910";
+            for (text, 0..) |c, i| {
+                const char_code = @as(u8, c);
+
+                vdp.vram_u16[text_buffer_top+i+((32 - text.len) >> 1)] = @as(u16, char_code) | (31 << 10); // palette 31
+                vdp.vram_u16[text_buffer_bot+i+((32 - text.len) >> 1)] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
+            }
+        }
+
+        fn fn7(self: *State, ctx: *anim.Ctx) void {
+            _ = self; _ = ctx;
+
+            const text = "  (There's still bugs: WIP!!!)  ";
+            for (text, 0..) |c, i| {
+                const char_code = @as(u8, c);
+
+                vdp.vram_u16[text_buffer_top+i+((32 - text.len) >> 1)] = @as(u16, char_code) | (31 << 10); // palette 31
+                vdp.vram_u16[text_buffer_bot+i+((32 - text.len) >> 1)] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
+            }
+        }
+
+        fn fn8(self: *State, ctx: *anim.Ctx) void {
+            _ = self; _ = ctx;
+
+            const text = "  32 palettes of 16 colors  ";
+            for (text, 0..) |c, i| {
+                const char_code = @as(u8, c);
+
+                vdp.vram_u16[text_buffer_top+i+((32 - text.len) >> 1)] = @as(u16, char_code) | (31 << 10); // palette 31
+                vdp.vram_u16[text_buffer_bot+i+((32 - text.len) >> 1)] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
+            }
+        }
+
+        fn fn9(self: *State, ctx: *anim.Ctx) void {
+            _ = self; _ = ctx;
+
+            const text = "  512 arbitrary sized sprites  ";
+            for (text, 0..) |c, i| {
+                const char_code = @as(u8, c);
+
+                vdp.vram_u16[text_buffer_top+i+((32 - text.len) >> 1)] = @as(u16, char_code) | (31 << 10); // palette 31
+                vdp.vram_u16[text_buffer_bot+i+((32 - text.len) >> 1)] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
+            }
+        }
+
+        fn fn10(self: *State, ctx: *anim.Ctx) void {
+            _ = self; _ = ctx;
+
+            @memcpy(vdp.vram[0..bird_tile_bitmap_data.len], bird_tile_bitmap_data);
+            @memcpy(vdp.vram[bird_tilemap_addr..bird_tilemap_addr+bird_tilemap_data.len], bird_tilemap_data);
+
+            const sprite_high = vdp.SpriteHigh{
+                .tilemap_size_b = 0,
+                .tilemap_size_a = 0,
+                .x_flip = false,
+                .y_flip = false,
+                .unused1 = 0,
+                .unused2 = 0,
+                .unused3 = 0,
+                .unused4 = 0,
+            };
+
+            for (0..512) |i| {
+                const i_mod_32: u11 = @truncate(i % 32);
+                const i_div_32: u11 = @truncate(i / 32);
+
+                vdp.sprite_table.sprite[i].sprite_velocity = .{
+                    .x_velocity = .{
+                        .value = 0,
+                    },
+                    .y_velocity = .{
+                        .value = 0,
+                    },
+                };
+
+                vdp.sprite_table.sprite[i].sprite_addr = .{
+                    .tile_bitmap_addr = 0,
+                    .tilemap_addr = bird_tilemap_addr >> 10,
+                };
+
+                vdp.sprite_table.sprite[i].sprite_x_width = .{
+                    .screen_x = .{ .fp = .{.i = @as(i12, (i_mod_32*17)+384), .f = 0} },
+                    .tilemap_x = @truncate(i_mod_32),
+                    .width = 1,
+                };
+
+                vdp.sprite_table.sprite[i].sprite_y_height = .{
+                    .screen_y = .{ .fp = .{.i = @as(i12, (i_div_32 * 33)+104), .f = 0} },
+                    .tilemap_y = @truncate(i_div_32*2),
+                    .height = 2,
+                };
+
+                vdp.sprite_table.sprite_extra[i] = sprite_high;
+            }
+
+            const bird_palette_data_u32 = std.mem.bytesAsSlice(u32, bird_palette_data);
+            for (0..512) |i| {
+                vdp.palette[i] = bird_palette_data_u32[i];
+            }
+        }
+
+        fn fn11(self: *State, ctx: *anim.Ctx) void {
+            _ = self; _ = ctx;
+            for (0..512) |i| {
+                // my lame attempt at pseudo-randomness (doesn't work, but the pattern is pretty)
+                const i_32: u32 = @truncate(i);
+                const x_vel_32: u32 = (((((i_32 + ((i_32 / 32)*13) +% 0x811c9dc5) & 0xffffffff) *% 0x01000193) & 0xffffffff) % 32);
+                const x_vel_u16: u15 = @truncate(x_vel_32);
+                const x_vel_i16: i16 = @as(i16, x_vel_u16) - 16;
+
+                const y_vel_32: u32 = (((((i_32 + ((i_32 / 32)*13) + 512 +% 0x811c9dc5) & 0xffffffff) *% 0x01000193) & 0xffffffff) % 32);
+                const y_vel_u16: u15 = @truncate(y_vel_32);
+                const y_vel_i16: i16 = @as(i16, y_vel_u16) - 16;
+
+                vdp.sprite_table.sprite[i].sprite_velocity = .{
+                    .x_velocity = .{
+                        .value = x_vel_i16,
+                    },
+                    .y_velocity = .{
+                        .value = y_vel_i16,
+                    },
+                };
+            }
+        }
+
+        fn fn12(self: *State, ctx: *anim.Ctx) void {
+            _ = self; _ = ctx;
+            for (0..512) |i| {
+                // my lame attempt at pseudo-randomness (doesn't work, but the pattern is pretty)
+                const i_32: u32 = @truncate(i);
+                const x_vel_32: u32 = (((((i_32 + ((i_32 / 32)*13) +% 0x811c9dc5) & 0xffffffff) *% 0x01000193) & 0xffffffff) % 32);
+                const x_vel_u16: u15 = @truncate(x_vel_32);
+                const x_vel_i16: i16 = @as(i16, x_vel_u16) - 16;
+
+                const y_vel_32: u32 = (((((i_32 + ((i_32 / 32)*13) + 512 +% 0x811c9dc5) & 0xffffffff) *% 0x01000193) & 0xffffffff) % 32);
+                const y_vel_u16: u15 = @truncate(y_vel_32);
+                const y_vel_i16: i16 = @as(i16, y_vel_u16) - 16;
+
+                vdp.sprite_table.sprite[i].sprite_velocity = .{
+                    .x_velocity = .{
+                        .value = -x_vel_i16,
+                    },
+                    .y_velocity = .{
+                        .value = -y_vel_i16,
+                    },
+                };
+            }
+        }
+
+        fn fn13(self: *State, ctx: *anim.Ctx) void {
+            _ = self; _ = ctx;
+
+            for (0..512) |i| {
+                const i_mod_32: u11 = @truncate(i % 32);
+                const i_div_32: u11 = @truncate(i / 32);
+
+                vdp.sprite_table.sprite[i].sprite_velocity = .{
+                    .x_velocity = .{
+                        .value = 0,
+                    },
+                    .y_velocity = .{
+                        .value = 0,
+                    },
+                };
+
+                vdp.sprite_table.sprite[i].sprite_addr = .{
+                    .tile_bitmap_addr = 0,
+                    .tilemap_addr = bird_tilemap_addr >> 10,
+                };
+
+                vdp.sprite_table.sprite[i].sprite_x_width = .{
+                    .screen_x = .{ .fp = .{.i = @as(i12, (i_mod_32*17)+384), .f = 0} },
+                    .tilemap_x = @truncate(i_mod_32),
+                    .width = 1,
+                };
+
+                vdp.sprite_table.sprite[i].sprite_y_height = .{
+                    .screen_y = .{ .fp = .{.i = @as(i12, (i_div_32 * 33)+104), .f = 0} },
+                    .tilemap_y = @truncate(i_div_32*2),
+                    .height = 2,
+                };
+
+                vdp.sprite_table.sprite[i].sprite_velocity = .{};
+            }
+        }
+
+        fn fn14(self: *State, ctx: *anim.Ctx) void {
+            _ = self; _ = ctx;
+
+            // turn the sprites off
+            for (0..512) |i| {
+                vdp.sprite_table.sprite[i].sprite_y_height.height = 0;
+            }
+
+            // reset the text palette
+            vdp.palette[496] = 0x00000000;
+            var p: u32 = 0;
+            for (496..512) |i| {
+                vdp.palette[i] = p;
+                p += 0x00121212;
+            }
+            vdp.palette[511] = 0x00FFFFFF;
+
+            const sprite_high = vdp.SpriteHigh{
+                .tilemap_size_b = 0,
+                .tilemap_size_a = 2,
+                .x_flip = false,
+                .y_flip = false,
+                .unused1 = 0,
+                .unused2 = 0,
+                .unused3 = 0,
+                .unused4 = 0,
+            };
+
+            for (0..22) |i| {
+                const i_12: i12 = @bitCast(@as(u12, @truncate(i)));
+                vdp.sprite_table.sprite[(i<<1)+0].sprite_addr = .{
+                    .tile_bitmap_addr = font_tile_bitmap_addr >> 10,
+                    .tilemap_addr = text_mode_top >> 9,
+                };
+                vdp.sprite_table.sprite[(i<<1)+0].sprite_x_width = .{
+                    .screen_x = .{ .fp = .{.i = 0, .f = 0} },
+                    .tilemap_x = 0,
+                    .width = 80,
+                };
+                vdp.sprite_table.sprite[(i<<1)+0].sprite_y_height = .{
+                    .screen_y = .{ .fp = .{.i = (i_12<<5)+0+8 - 720, .f = 0} },
+                    .tilemap_y = @truncate(i),
+                    .height = 1,
+                };
+                vdp.sprite_table.sprite[(i<<1)+0].sprite_velocity = .{
+                    .y_velocity = .{ .fp = .{ .i = 12, .f = 0 }},
+                };
+                vdp.sprite_table.sprite_extra[(i<<1)+0] = sprite_high;
+                vdp.sprite_table.sprite[(i<<1)+1].sprite_addr = .{
+                    .tile_bitmap_addr = font_tile_bitmap_addr >> 10,
+                    .tilemap_addr = text_mode_bot >> 9,
+                };
+                vdp.sprite_table.sprite[(i<<1)+1].sprite_x_width = .{
+                    .screen_x = .{ .fp = .{.i = 0, .f = 0} },
+                    .tilemap_x = 0,
+                    .width = 80,
+                };
+                vdp.sprite_table.sprite[(i<<1)+1].sprite_y_height = .{
+                    .screen_y = .{ .fp = .{.i = (i_12<<5)+16+8 - 720, .f = 0} },
+                    .tilemap_y = @truncate(i),
+                    .height = 1,
+                };
+                vdp.sprite_table.sprite[(i<<1)+1].sprite_velocity = .{
+                    .y_velocity = .{ .fp = .{ .i = 12, .f = 0 }},
+                };
+                vdp.sprite_table.sprite_extra[(i<<1)+1] = sprite_high;
+            }
+
+            @memset(vdp.vram_u16[text_mode_top..text_mode_top+(80*22)], 0);
+            @memset(vdp.vram_u16[text_mode_bot..text_mode_bot+(80*22)], 128);
+
+            const templ =
+                \\+------------------------------------------------------------------------------+
+                \\|                                                ^                             |
+                \\|                                                |                             |
+                \\| <------------------------------------ 80 ------+---------------------------> |
+                \\|                                                |                             |
+                \\|                                                |                             |
+                \\|                                                |                             |
+                \\|                                                |                             |
+                \\|                                                |                             |
+                \\|                                                                              |
+                \\|              80x22 Text Mode                   2                             |
+                \\|                   with                         2                             |
+                \\|                16x8 Font                                                     |
+                \\|                                                |                             |
+                \\|             Made using sprites                 |                             |
+                \\|      with sprite tilemap as text buffer        |                             |
+                \\|                                                |                             |
+                \\|                                                |                             |
+                \\|                                                |                             |
+                \\|                                                |                             |
+                \\|                                                v                             |
+                \\+------------------------------------------------------------------------------+
+            ;
+
+            var screen: [80*22]u8 = undefined;
+            _ = std.mem.replace(u8, templ, "\n", "", screen[0..]);
+
+            for (screen, 0..) |c, i| {
+                const char_code = @as(u8, c);
+
+                vdp.vram_u16[text_mode_top+i] = @as(u16, char_code) | (31 << 10); // palette 31
+                vdp.vram_u16[text_mode_bot+i] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
+            }
+        }
+
+        fn fn15(self: *State, ctx: *anim.Ctx) void {
+            _ = self; _ = ctx;
+
+            for (0..22) |i| {
+                const i_12: i12 = @bitCast(@as(u12, @truncate(i)));
+                vdp.sprite_table.sprite[(i<<1)+0].sprite_y_height = .{
+                    .screen_y = .{ .fp = .{.i = (i_12<<5)+0+8, .f = 0} },
+                    .tilemap_y = @truncate(i),
+                    .height = 1,
+                };
+                vdp.sprite_table.sprite[(i<<1)+0].sprite_velocity = .{
+                    .y_velocity = .{ .value = 0 },
+                };
+                vdp.sprite_table.sprite[(i<<1)+1].sprite_y_height = .{
+                    .screen_y = .{ .fp = .{.i = (i_12<<5)+16+8, .f = 0} },
+                    .tilemap_y = @truncate(i),
+                    .height = 1,
+                };
+                vdp.sprite_table.sprite[(i<<1)+1].sprite_velocity = .{
+                    .y_velocity = .{ .value = 0 },
+                };
+            }
+        }
+
+        fn fn16(self: *State, ctx: *anim.Ctx) void {
+            _ = self; _ = ctx;
+
+            const templ =
+                \\+------------------------------------------------------------------------------+
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                 I've switched to using a RISC-V processor                    |
+                \\|                                                                              |
+                \\|                             So far: RV32IMA                                  |
+                \\|                 Hoping to add C and a few other extensions                   |
+                \\|                  Maybe PMP memory protection and user mode                   |
+                \\|                                                                              |
+                \\|               Supports Zig, Rust, C, Go (via TinyGo), etc, etc.              |
+                \\|                                                                              |
+                \\|         Will use GDB as a debugger (usable from VSCode and other IDEs)       |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|               (The original stack machine CPU is still there,                |
+                \\|          but it will likely be made 32 bits if I don't remove it.)           |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\+------------------------------------------------------------------------------+
+            ;
+
+            var screen: [80*22]u8 = undefined;
+            _ = std.mem.replace(u8, templ, "\n", "", screen[0..]);
+
+            for (screen, 0..) |c, i| {
+                const char_code = @as(u8, c);
+
+                vdp.vram_u16[text_mode_top+i] = @as(u16, char_code) | (31 << 10); // palette 31
+                vdp.vram_u16[text_mode_bot+i] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
+            }
+        }
+
+        fn fn17(self: *State, ctx: *anim.Ctx) void {
+            _ = self; _ = ctx;
+
+            const templ =
+                \\+------------------------------------------------------------------------------+
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\+------------------------------------------------------------------------------+
+            ;
+
+            var screen: [80*22]u8 = undefined;
+            _ = std.mem.replace(u8, templ, "\n", "", screen[0..]);
+
+            for (screen, 0..) |c, i| {
+                const char_code = @as(u8, c);
+
+                vdp.vram_u16[text_mode_top+i] = @as(u16, char_code) | (31 << 10); // palette 31
+                vdp.vram_u16[text_mode_bot+i] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
+            }
+        }
+
+        fn fn18(self: *State, ctx: *anim.Ctx) void {
+            _ = self; _ = ctx;
+
+            const templ =
+                \\+------------------------------------------------------------------------------+
+                \\|                                                                              |
+                \\|                     Thank You to My Wonderful Patrons!                       |
+                \\|                                                                              |
+                \\|                 Danodus                         yerTools                     |
+                \\|                  Martin                      undecided_person                |
+                \\|               Bodkins Odds                       Michael                     |
+                \\|                 J. Meyer                       J. Wycliffe                   |
+                \\|               DeltaThiesen                     C. Lidyard                    |
+                \\|                 Damouze                       Kutup Tilkisi                  |
+                \\|                Nugget :3                       Neal Sanche                   |
+                \\|                                                                              |
+                \\|                  I VERY much appreciate all your support!                    |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|           If you want to support this project and the users of it:           |
+                \\|                                                                              |
+                \\|         ko-fi.com/rj45_creates        www.patreon.com/c/rj45Creates          |
+                \\|                                                                              |
+                \\|                       github.com/sponsors/rj45/                              |
+                \\|                                                                              |
+                \\+------------------------------------------------------------------------------+
+            ;
+
+            var screen: [80*22]u8 = undefined;
+            _ = std.mem.replace(u8, templ, "\n", "", screen[0..]);
+
+            for (screen, 0..) |c, i| {
+                const char_code = @as(u8, c);
+
+                vdp.vram_u16[text_mode_top+i] = @as(u16, char_code) | (31 << 10); // palette 31
+                vdp.vram_u16[text_mode_bot+i] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
+            }
+        }
+
+        fn fn19(self: *State, ctx: *anim.Ctx) void {
+            _ = self; _ = ctx;
+
+            const templ =
+                \\+------------------------------------------------------------------------------+
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                      That's all I have for you today                         |
+                \\|                                                                              |
+                \\|                           Thanks for Watching                                |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                I don't want to deprive you of hearing the rest               |
+                \\|                   of this awesome tune, so uh.... maybe                      |
+                \\|                      more birdsplosions and stuff?                           |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\|                                                                              |
+                \\+------------------------------------------------------------------------------+
+            ;
+
+            var screen: [80*22]u8 = undefined;
+            _ = std.mem.replace(u8, templ, "\n", "", screen[0..]);
+
+            for (screen, 0..) |c, i| {
+                const char_code = @as(u8, c);
+
+                vdp.vram_u16[text_mode_top+i] = @as(u16, char_code) | (31 << 10); // palette 31
+                vdp.vram_u16[text_mode_bot+i] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
+            }
+        }
     };
 
     var state = State{};
@@ -301,7 +778,119 @@ export fn kmain() noreturn {
             .do = State.fn3,
         },
         .{
+            .delay = 100,
+            .duration = 1,
+            .do = State.fn4,
+        },
+        .{
+            .delay = 250,
+            .duration = 1,
+            .do = State.fn5,
+        },
+        .{
+            .delay = 150,
+            .duration = 1,
+            .do = State.fn6,
+        },
+        .{
+            .delay = 150,
+            .duration = 1,
+            .do = State.fn7,
+        },
+        .{
+            .delay = 250,
+            .duration = 1,
+            .do = State.fn8,
+        },
+        .{
+            .delay = 150,
+            .duration = 1,
+            .do = State.fn9,
+        },
+        .{
+            .delay = 200,
+            .duration = 1,
+            .do = State.fn10,
+        },
+
+        // bird explosion
+        .{
+            .delay = 200,
+            .duration = 1,
+            .do = State.fn11,
+        },
+
+        .{
+            .delay = 500,
+            .duration = 1,
+            .do = State.fn12,
+        },
+        .{
+            .delay = 500,
+            .duration = 1,
+            .do = State.fn13,
+        },
+        .{
+            .delay = 25,
+            .duration = 1,
+            .do = State.fn14,
+        },
+        .{
             .delay = 50,
+            .duration = 1,
+            .do = State.fn15,
+        },
+
+        .{
+            .delay = 475,
+            .duration = 1,
+            .do = State.fn16,
+        },
+        .{
+            .delay = 1000,
+            .duration = 1,
+            .do = State.fn17,
+        },
+        .{
+            .delay = 500,
+            .duration = 1,
+            .do = State.fn18,
+        },
+        .{
+            .delay = 800,
+            .duration = 1,
+            .do = State.fn19,
+        },
+
+
+
+
+
+        .{
+            .delay = 500,
+            .duration = 1,
+            .do = State.fn10,
+        },
+
+        // bird explosion
+        .{
+            .delay = 250,
+            .duration = 1,
+            .do = State.fn11,
+        },
+
+        .{
+            .delay = 450,
+            .duration = 1,
+            .do = State.fn12,
+        },
+        .{
+            .delay = 450,
+            .duration = 1,
+            .do = State.fn13,
+        },
+        .{
+            .delay = 150,
             .duration = 1,
             .do = State.fn4,
         },

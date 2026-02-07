@@ -29,6 +29,8 @@ pub fn build(b: *std.Build) void {
         .optimize = fast_debug_build,
     });
 
+    const stack_check = if ((optimize == .Debug or optimize == .ReleaseSafe) and target.result.os.tag != .macos) true else false;
+
     const exe = b.addExecutable(.{
         .name = "starjay",
         .use_llvm = true, // Prevent using zig's built-in codegen, since the code it produces is too slow
@@ -36,8 +38,8 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
-            .stack_check = if (optimize == .Debug or optimize == .ReleaseSafe) true else false,
-            .stack_protector = if (optimize == .Debug or optimize == .ReleaseSafe) true else false,
+            .stack_check = stack_check,
+            .stack_protector = stack_check,
             .imports = &.{
                 .{ .name = "dvui", .module = if (sdl3) dvui_dep.module("dvui_sdl3") else dvui_dep.module("dvui_sdl2") },
                 .{ .name = "backend", .module = if (sdl3) dvui_dep.module("sdl3") else dvui_dep.module("sdl2") },
