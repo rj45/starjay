@@ -24,14 +24,15 @@ This design is heavily inspired by the Neo Geo's VDP, with some ideas taken from
     - Note: This feature may be removed, but is currently implemented and working.
 - Tilemaps can be from 32 up to 256 tiles in width.
     - The formula for tilemap width is (1 << (a+4))+(1 << (b+4)) where a and b can be 0-3.
-    - This allows several useful widths including 80 and 160 for textmodes.
-- Tilemap height is arbitrary up to 512 tiles.
+    - This allows several useful widths including 80 for textmodes.
+- Tilemap height is arbitrary up to 512 tiles (max sprite height + max sprite tilemap Y)
 - Designed to work well with SDRAM and its RAS/CAS latencies.
     - Tile sets are stored row-major such that one row of all tiles in the set is a single SDRAM "page" or "row"
-    - This allows a SDRAM row to be activated and random access limited to that row, and the row for the tilemap for that sprite.
+    - This allows an SDRAM row to be activated and random access limited to that row, and the row for the tilemap for that sprite.
     - Unfortunately this limits a tile set to be 256 tiles (could be revisited in the future).
     - The design is pipelined to allow multiple requests to SDRAM to be in flight at once.
 - Each sprite can configure its own tilemap and tile set pointers in main memory.
+    - They are limited to 1kB granularity, but can overlap
 - Each tile can use up to 16 colors from up to 32 palettes, yielding 512 colors.
     - The palette is double buffered and the buffers may be swapped to give more colors.
 - Utilizes a line buffer, rather than a frame buffer, to draw up to 512 sprites per line.

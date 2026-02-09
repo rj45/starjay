@@ -17,6 +17,8 @@ const c = SDLBackend.c;
 const vsync = true;
 const content_width = 1280;
 const content_height = 720;
+const window_width = content_width;
+const window_height = content_height;
 const frame_time_ns: u64 = 16_627_502; // ~60 FPS
 
 var window: *c.SDL_Window = undefined;
@@ -393,10 +395,11 @@ pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
     const aspect_ratio: f32 = @as(f32, content_width) / @as(f32, content_height);
 
     if (SDLBackend.sdl3) {
-        window = c.SDL_CreateWindow("StarJay Fantasy Console", @as(c_int, @intCast(content_width)), @as(c_int, @intCast(content_height)), c.SDL_WINDOW_HIGH_PIXEL_DENSITY | c.SDL_WINDOW_RESIZABLE | hidden_flag) orelse {
+        window = c.SDL_CreateWindow("StarJay Fantasy Console", @as(c_int, @intCast(window_width)), @as(c_int, @intCast(window_height)), c.SDL_WINDOW_HIGH_PIXEL_DENSITY | c.SDL_WINDOW_RESIZABLE | hidden_flag) orelse {
             std.debug.print("Failed to open window: {s}\n", .{c.SDL_GetError()});
             return error.BackendError;
         };
+        // _ = c.SDL_SetWindowPosition(window, 0, 1440 - window_height);
         // Lock aspect ratio during resize
         _ = c.SDL_SetWindowAspectRatio(window, aspect_ratio, aspect_ratio);
         window_surface = c.SDL_GetWindowSurface(window);
@@ -422,7 +425,7 @@ pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
             break :blk null;
         };
     } else {
-        window = c.SDL_CreateWindow("StarJay Fantasy Console", c.SDL_WINDOWPOS_UNDEFINED, c.SDL_WINDOWPOS_UNDEFINED, @as(c_int, @intCast(content_width)), @as(c_int, @intCast(content_height)), c.SDL_WINDOW_ALLOW_HIGHDPI | c.SDL_WINDOW_RESIZABLE | hidden_flag) orelse {
+        window = c.SDL_CreateWindow("StarJay Fantasy Console", c.SDL_WINDOWPOS_UNDEFINED, c.SDL_WINDOWPOS_UNDEFINED, @as(c_int, @intCast(window_width)), @as(c_int, @intCast(window_height)), c.SDL_WINDOW_ALLOW_HIGHDPI | c.SDL_WINDOW_RESIZABLE | hidden_flag) orelse {
             std.debug.print("Failed to open window: {s}\n", .{c.SDL_GetError()});
             return error.BackendError;
         };

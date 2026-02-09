@@ -255,6 +255,14 @@ export fn kmain() noreturn {
             vdp.sprite_table.sprite_extra[2].tilemap_size_b = 0;
             vdp.sprite_table.sprite_extra[2].tilemap_size_a = 1; // 48 tiles wide
 
+            vdp.palette[496] = 0x00000000; // transparent color for text
+            var pal: u32 = 0;
+            for (496..512) |i| {
+                vdp.palette[i] = pal;
+                pal += 0x00121212;
+            }
+            vdp.palette[511] = 0x00FFFFFF;
+
             const text = "Music: Plastic Cake by KUVO";
             for (text, 0..) |c, i| {
                 const char_code = @as(u8, c);
@@ -555,7 +563,7 @@ export fn kmain() noreturn {
                 \\|                                                                              |
                 \\|              80x22 Text Mode                   2                             |
                 \\|                   with                         2                             |
-                \\|                16x8 Font                                                     |
+                \\|                8x16 Font                                                     |
                 \\|                                                |                             |
                 \\|             Made using sprites                 |                             |
                 \\|      with sprite tilemap as text buffer        |                             |
@@ -653,12 +661,12 @@ export fn kmain() noreturn {
                 \\|                                                                              |
                 \\|                                                                              |
                 \\|                                                                              |
+                \\|                            The emulator is:                                  |
                 \\|                                                                              |
-                \\|                                                                              |
-                \\|                                                                              |
-                \\|                                                                              |
-                \\|                                                                              |
-                \\|                                                                              |
+                \\|                 * four threads: CPU, VDP, Audio, UI                          |
+                \\|                 * lock free distributed IO bus simulation                    |
+                \\|                 * fast / low CPU usage / low battery usage                   |
+                \\|                 * cycle accurate (or will be soon)                           |
                 \\|                                                                              |
                 \\|                                                                              |
                 \\|                                                                              |
@@ -763,7 +771,7 @@ export fn kmain() noreturn {
 
     const keyframes: [] const anim.Keyframe(State) = &.{
         .{
-            .delay = 1,
+            .delay = 100,
             .duration = 1,
             .do = State.fn1,
         },
