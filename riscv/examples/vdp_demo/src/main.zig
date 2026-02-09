@@ -7,6 +7,7 @@ const ay3 = @import("ay38910.zig").ay38910;
 const pt3 = @import("pt3.zig").pt3;
 const vdp = @import("vdp.zig").vdp;
 const anim = @import("anim.zig").anim;
+const keyboard = @import("keyboard.zig").keyboard;
 
 const song_data = @embedFile("assets/KUVO-plasticcake.pt3");
 
@@ -132,6 +133,8 @@ export fn kmain() noreturn {
 
     console.print("Clint time: {}, next tick: {}\r\n", .{initial_time, next_tick}) catch {};
     console.flush() catch {};
+
+    var prev_keys: keyboard.Report = keyboard.device.*;
 
     const text_mode_top = 0;
     const text_mode_bot = 2048;
@@ -910,6 +913,19 @@ export fn kmain() noreturn {
 
     while (true) {
         const current_time = readClintMtime();
+
+        if (prev_keys != keyboard.device.*) {
+            console.print("Keys: ", .{}) catch {};
+            var keys = keyboard.device.pressedKeys();
+            while (keys.next()) |key| {
+                if (key.toAscii(keyboard.device.modifiers)) |c| {
+                    console.print("{c}", .{c}) catch {};
+                }
+            }
+            console.print("\r\n", .{}) catch {};
+            console.flush() catch {};
+            prev_keys = keyboard.device.*;
+        }
 
         // console.print("Clint time: {}, next tick: {}\r\n", .{current_time, next_tick}) catch {};
         // console.flush() catch {};

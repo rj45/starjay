@@ -4,6 +4,7 @@ pub const Device = @import("Device.zig");
 pub const Uart = @import("Uart.zig");
 pub const Clint = @import("Clint.zig");
 pub const Sram = @import("Sram.zig");
+pub const Hid = @import("Hid.zig");
 
 test {
     // Run all tests in submodules

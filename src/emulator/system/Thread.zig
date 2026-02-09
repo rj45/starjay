@@ -101,6 +101,9 @@ fn threadMain(self: *Thread) void {
     while (self.command_channel.receive()) |cmd| {
         switch (cmd) {
             .full_frame, .fast_frame => {
+                // handle input events
+                self.system.hid.process_queue();
+
                 const adjusted_cycles = BUS_CYCLES_PER_FRAME / @as(u64, self.system.cpu.cycle_divisor);
                 const cycle_goal = self.system.cpu.cycles +% adjusted_cycles;
 

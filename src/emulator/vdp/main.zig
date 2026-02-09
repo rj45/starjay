@@ -83,6 +83,8 @@ pub fn main(allocator: std.mem.Allocator, rom_path: ?[]const u8) !void {
 }
 
 pub fn process_events(backend: ?*SDLBackend, dvwin: ?*dvui.Window) !bool {
+    var hid_queue = &system.hid.queue;
+
     var event: c.SDL_Event = undefined;
     while (c.SDL_PollEvent(&event) == if (SDLBackend.sdl3) true else 1) {
         const event_window = if (SDLBackend.sdl3) c.SDL_GetWindowFromEvent(&event) else getWindowFromEvent(&event);
@@ -92,13 +94,18 @@ pub fn process_events(backend: ?*SDLBackend, dvwin: ?*dvui.Window) !bool {
                 // some global quitting shortcuts
                 switch (event.type) {
                     if (SDLBackend.sdl3) c.SDL_EVENT_KEY_DOWN else c.SDL_KEYDOWN => {
-                        const key = if (SDLBackend.sdl3) event.key.key else event.key.keysym.sym;
-                        const mod = if (SDLBackend.sdl3) event.key.mod else event.key.keysym.mod;
-                        const key_q = if (SDLBackend.sdl3) c.SDLK_Q else c.SDLK_q;
-                        const kmod_ctrl = if (SDLBackend.sdl3) c.SDL_KMOD_CTRL else c.KMOD_CTRL;
-                        if (((mod & kmod_ctrl) > 0) and key == key_q) {
-                            return false;
-                        }
+                        const scancode: u8 = @truncate(if (SDLBackend.sdl3) event.key.scancode else event.key.keysym.scancode);
+                        _ = hid_queue.tryPush(.{.key = .{
+                            .scancode = scancode,
+                            .pressed = true,
+                        }});
+                    },
+                    if (SDLBackend.sdl3) c.SDL_EVENT_KEY_UP else c.SDL_KEYUP => {
+                        const scancode: u8 = @truncate(if (SDLBackend.sdl3) event.key.scancode else event.key.keysym.scancode);
+                        _ = hid_queue.tryPush(.{.key = .{
+                            .scancode = scancode,
+                            .pressed = false,
+                        }});
                     },
                     if (SDLBackend.sdl3) c.SDL_EVENT_QUIT else c.SDL_QUIT => {
                         return false;

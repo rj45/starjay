@@ -32,17 +32,19 @@ pub inline fn containsAddress(self: *const Device, address: Addr) bool {
 
 pub inline fn access(self: *Device, transaction: Transaction) Transaction {
     std.debug.assert(self.containsAddress(transaction.address));
+    std.debug.assert(transaction.bytes == 0b1111 or transaction.bytes == 0b0011 or transaction.bytes == 0b0001);
 
     var t = transaction;
+
+    const original_address = t.address;
 
     // Adjust address to be relative to device
     t.address -= self.start_address;
 
     var result = self.v_access(self.impl, t);
 
-    // Adjust address back to system address space
-    result.address += self.start_address;
-
+    // Restore original address
+    result.address = original_address;
     return result;
 }
 
