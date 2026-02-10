@@ -133,14 +133,39 @@ pub fn emulate_line(self: *State, skip: bool) void {
                     const tile_address = (@as(usize, bitmap_addr.tile_bitmap_addr) << 9) +
                         (@as(usize, tilemap_entry.tile_index) << 1);
 
-                    for (0..2) |j| {
-                        const tile_pixels = vram_u16[tile_address+j];
-                        const combined_pixels = splitPixelsCombinePalette(tilemap_entry.palette_index, tile_pixels);
+                    if (tilemap_entry.transparent) {
+                        for (0..2) |j| {
+                            const tile_pixels = vram_u16[tile_address+j];
 
-                        inline for (0..8) |k| {
-                            linebuffer_u16[(lb_x+k) & 2047] = combined_pixels[k];
+                            const palette_splat: @Vector(8, u16) = @splat(tilemap_entry.palette_index);
+                            const palette_shifted = palette_splat << @splat(4);
+
+
+                            const pixelSplat: @Vector(8, u16) = @splat(tile_pixels);
+                            const shifts = @Vector(8, u4){ 0, 0, 4, 4, 8, 8, 12, 12 };
+                            const mask: @Vector(8, u16) = @splat(0x000F);
+                            const pixel_masked = (pixelSplat >> shifts) & mask;
+                            const is_transparent = pixel_masked == @as(@Vector(8, u16), @splat(0));
+
+                            const combined_pixels = palette_shifted | pixel_masked;
+
+                            inline for (0..8) |k| {
+                                if (!is_transparent[k]) {
+                                    linebuffer_u16[(lb_x+k) & 2047] = combined_pixels[k];
+                                }
+                            }
+                            lb_x += 8;
                         }
-                        lb_x += 8;
+                    } else {
+                        for (0..2) |j| {
+                            const tile_pixels = vram_u16[tile_address+j];
+                            const combined_pixels = splitPixelsCombinePalette(tilemap_entry.palette_index, tile_pixels);
+
+                            inline for (0..8) |k| {
+                                linebuffer_u16[(lb_x+k) & 2047] = combined_pixels[k];
+                            }
+                            lb_x += 8;
+                        }
                     }
                 }
             }
@@ -199,15 +224,15 @@ pub fn emulate_frame(self: *State, skip: bool) void {
 /// Splits a 16 bit tile bitmap data (4 pixels of 4bits each) into 8 u16 pixels,
 /// combining each with the given 5-bit palette index shifted left by 4 bits.
 inline fn splitPixelsCombinePalette(palette: u5, pixels: u16) @Vector(8, u16) {
-    const paletteSplat: @Vector(8, u16) = @splat(palette);
-    const paletteShifted = paletteSplat << @splat(4);
+    const palette_splat: @Vector(8, u16) = @splat(palette);
+    const palette_shifted = palette_splat << @splat(4);
 
     const pixelSplat: @Vector(8, u16) = @splat(pixels);
     const shifts = @Vector(8, u4){ 0, 0, 4, 4, 8, 8, 12, 12 };
     const mask: @Vector(8, u16) = @splat(0x000F);
-    const pixelMasked = (pixelSplat >> shifts) & mask;
+    const pixel_masked = (pixelSplat >> shifts) & mask;
 
-    return paletteShifted | pixelMasked;
+    return palette_shifted | pixel_masked;
 }
 
 test "zero inputs produce zero output" {

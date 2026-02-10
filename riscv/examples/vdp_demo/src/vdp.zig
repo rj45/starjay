@@ -13,7 +13,8 @@ pub const vram_u16: * volatile [0x4000]u16 = @ptrFromInt(VRAM_BASE);
 
 pub const TilemapEntry = packed struct(u16) {
     tile_index: u8,
-    unused: u2,
+    unused: u1,
+    transparent: bool,
     palette_index: u5,
     x_flip: bool,
 };

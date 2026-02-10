@@ -6,7 +6,8 @@ const std = @import("std");
 
 pub const TilemapEntry = packed struct(u16) {
     tile_index: u8,
-    unused: u2,
+    unused: u1,
+    transparent: bool,
     palette_index: u5,
     x_flip: bool,
 };
