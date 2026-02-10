@@ -72,7 +72,11 @@ pub fn init() State {
     };
 }
 
-pub fn emulate_line(self: *State, skip: bool) void {
+pub fn start_frame(self: *State) void {
+    self.sy = 0;
+}
+
+pub inline fn emulate_line(self: *State, skip: bool) bool {
     if (self.sy < self.frame_buffer.height and !skip) {
         // The following 3 phases occur simultaneously in hardware per scanline.
         // Since we are emulating on a sequential machine, we do them sequentially here.
@@ -206,19 +210,8 @@ pub fn emulate_line(self: *State, skip: bool) void {
 
     self.sy += 1;
     self.cycle += CYCLES_PER_SCANLINE;
-}
 
-pub fn emulate_frame(self: *State, skip: bool) void {
-    var timer = std.time.Timer.start() catch @panic("no timer");
-    self.sy = 0;
-    for (0..SCANLINES_PER_SCREEN) |_| {
-        self.emulate_line(skip);
-    }
-    const elapsed = timer.read();
-    if (!skip) {
-        //std.debug.print("Frame time: {d} us\r\n", .{elapsed / 1_000});
-        _ = elapsed;
-    }
+    return self.sy < SCANLINES_PER_SCREEN;
 }
 
 /// Splits a 16 bit tile bitmap data (4 pixels of 4bits each) into 8 u16 pixels,

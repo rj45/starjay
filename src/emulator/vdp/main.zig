@@ -49,6 +49,7 @@ var cpu_pending: u32 = 0;
 var vdp_pending: u32 = 0;
 var audio_pending: u32 = 0;
 var last_blit_time: u64 = 0;
+var initial_cpu_frame_done: bool = false;
 
 pub fn main(allocator: std.mem.Allocator, rom_path: ?[]const u8) !void {
     if (@import("builtin").os.tag == .windows) { // optional
@@ -181,6 +182,26 @@ pub fn runFrame() !bool {
     const current_time = run_time.read();
     const expected_frames = @max(1, current_time / frame_time_ns);
     var frames_to_do = @min(5, expected_frames - (frame_count + @min(cpu_pending, vdp_pending)));
+
+    if (!initial_cpu_frame_done) {
+        initial_cpu_frame_done = true;
+        // Run the CPU one frame ahead of the VDP/PSG so the IO it does is known in advance
+        try system_thread.submitCommand(.full_frame);
+        if (channel.receive()) |msg| {
+            switch (msg) {
+                .cpu_halt => |halt| {
+                    std.debug.print("error_level: {}\r\n", .{halt.error_level});
+
+                    return false; // Stop main loop
+                },
+                .cpu_frame => |_| {},
+                else => unreachable, // can't happen
+            }
+        } else {
+            std.debug.print("UI channel prematurely closed: exiting\r\n", .{});
+            return false;
+        }
+    }
 
     // While we are behind, try to catch up by skipping frames and running the CPU as fast as possible
     while (frames_to_do > 1) {

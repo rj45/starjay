@@ -98,9 +98,6 @@ pub fn submitRenderCommand(self: *Thread, request: RenderCommand) !void {
 
 fn threadMain(self: *Thread) void {
     while (self.command_chan.receive()) |req| {
-        // Always drain shadow queue (memory writes from CPU)
-        self.drainShadowQueue();
-
         // Set up frame buffer from request
         self.device.vdp.frame_buffer = State.FrameBuffer{
             .width = req.width,
@@ -111,7 +108,14 @@ fn threadMain(self: *Thread) void {
 
         // Render the frame
         const start_time = self.timer.read();
-        self.device.vdp.emulate_frame(req.skip);
+        const vdp = &self.device.vdp;
+        vdp.start_frame();
+        while (true) {
+            self.drainShadowQueue(vdp.cycle);
+            if (!vdp.emulate_line(req.skip)) {
+                break;
+            }
+        }
         const elapsed_ns = self.timer.read() - start_time;
 
         if ((self.frame_count % (60*30)) == 0) {
@@ -128,9 +132,12 @@ fn threadMain(self: *Thread) void {
     }
 }
 
-fn drainShadowQueue(self: *Thread) void {
+fn drainShadowQueue(self: *Thread, cycle: Bus.Cycle) void {
     // Drain all pending transactions and apply them to the VDP device
     while (self.shadow_queue.front()) |transaction| {
+        if (transaction.start_cycle() > cycle) {
+            break; // Not there yet
+        }
         _ = self.device.access(transaction.*);
         self.shadow_queue.pop();
     }
