@@ -6,7 +6,6 @@
     .paths = .{
         "build.zig",
         "build.zig.zon",
-        "ObjCopyExternal.zig",
         "src",
     },
     .dependencies = .{

@@ -1,5 +1,4 @@
 const std = @import("std");
-const ObjCopyExternal = @import("ObjCopyExternal.zig").ObjCopyExternal;
 
 const Target = @import("std").Target;
 const Feature = @import("std").Target.Cpu.Feature;
@@ -44,16 +43,4 @@ pub fn build(b: *std.Build) void {
     exe.setLinkerScript(b.path("src/linker.ld"));
 
     b.installArtifact(exe);
-
-    // Use external objcopy due to bug in zig's 0.15.x objcopy
-    const bin = ObjCopyExternal.create(b, exe.getEmittedBin(), .{
-        .format = .bin,
-    });
-    // const bin = b.addObjCopy(exe.getEmittedBin(), .{
-    //     .format = .bin,
-    // });
-    bin.step.dependOn(&exe.step);
-
-    const copy_bin = b.addInstallBinFile(bin.getOutput(), "vdp_demo.bin");
-    b.default_step.dependOn(&copy_bin.step);
 }
