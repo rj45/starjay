@@ -1,7 +1,7 @@
 # StarJeet VDP Manual
 
 **Caution!**
-This manual is at a very rough draft stage and is very incomplete. Many stats and figures are wrong, and many statements are factually incorrect. Bear this in mind as you read through this document.
+The VDP is not yet complete, and so some of the following may be subject to change.
 **Caution!**
 
 ## 1.1. Introduction
@@ -48,61 +48,118 @@ This design is heavily inspired by the Neo Geo's VDP, with some ideas taken from
         
 ## 2.1. Tilemaps
 
-- Tilemap cells are 16 bits wide, with the following format:
-    - `[7:0]`: Tile Index (0-255)
-    - `[12:8]`: Palette Index (0-31)
-    - `[13:14]`: Unused (potentially a tile permutation value)
-    - `[15]`: Horizontal (X) Flip
-- The width of a tilemap is given by `(1 << (a+4)) + (1 << (b+4))` where `a` and `b` can be `0`-`3`.
-- The height can be arbitrary from 1 to 512 tiles.
-- Tilemaps can be stored anywhere in main memory, but the start address has a granularity of 1024 bytes.
-    - These pointers may overlap if desired.
-- Each sprite can specify its own tilemap start address.
-  
+### 2.1.1. Tilemap Entry Format
+
+```
+    +---------------------------------+
+    | 1 1 1 1 1 1                     |
+    | 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 |
+    +---------------------------------+
+    | x p p p p p t r i i i i i i i i |
+    +---------------------------------+
+    
+    x - X-Flip
+    p - Palette Index (0-31)
+    t - Transparent bit (0 = color 0 is opaque, 1 = color 0 is transparent)
+    r - Reserved bit (not used)
+    i - Tile Index (0-255)
+```
+
 ## 3.1. Tile Sets
 
 - Each tile is 8x8 pixels, with each pixel represented by 4 bits (16 colors).
-- Tile pixel data is stored in main memory starting at a specified address, with each tile occupying 32 bytes (8 rows x 4 bytes per row).
-- Tiles are stored in row-major format:
-    - 8 rows of 256 tiles of 8 pixels of 4 bits per pixel
-    - This limits random access of memory to a single 1 KB block, which is a typical row size for SDRAM
 - Tile set sets may be stored anywhere in main memory, with an alignment/granularity of 1 KB.
     - These pointers can overlap if desired, allowing tilesets to share rows.
 - Each sprite has its own independent tile set pointer.
 
+### 3.1.1 Tile Set Layout
+
+```
+    | tile 0, row 0 | tile 1, row 0 | tile 2, row 0 | ... | tile 255, row 0 |
+    | tile 0, row 1 | tile 1, row 1 | tile 2, row 1 | ... | tile 255, row 1 |
+    .
+    .
+    .
+    | tile 0, row 7 | tile 1, row 7 | tile 2, row 7 | ... | tile 255, row 7 |
+```
+
+Tiles are stored in row-major format, with each row containing the same row of all tiles in the set. This arrangement ensures that all pixels for a row of a tileset fit within a single open SDRAM row. This is also why tilesets can only be 256 tiles. This ensures that an SDRAM row only needs to be opened once per sprite drawn.
+
 ## 4.1. Sprite Attributes
 
-Each sprite is defined by a set of attributes stored in a specific address range in VRAM, which is mapped into the IO space of main memory. There are 512 entries. 
+Each sprite is defined by a set of attributes stored in a specific address range in VRAM, which is mapped into the IO space of main memory. There are 512 entries split into two blocks.
 
-Each entry is 9 words (18 bytes) long, with the following format:
+Note that screen X/Y positions are in screen pixels at the 1280x720 resolution. Each pixel of the sprite is drawn twice, and each line of the sprite is also drawn twice. 
 
-- Tilemap Y and height:
-    - `[7:0]` - Sprite tilemap Y position
-    - `[15:8]` - Sprite height in tiles
-- Screen Y position in 12.4 fixed point format:
-    - `[3:0]` - Fraction part (ignored when drawing)
-    - `[15:4]` - Signed sprite Y position @ 720 lines per screen.
-- Tilemap X and width:
-    - `[7:0]` - Sprite width
-    - `[15:8]` - Sprite tilemap X position
-- Screen X position in 12.4 fixed point format:
-    - `[3:0]` - Fraction part (ignored when drawing)
-    - `[15:4]` - Signed sprite X position @ 1280 positions per line.
-- Bits `[25:10]` of the tilemap address
-- Bits `[25:10]` of the tile set address
-- Screen Y velocity in 12.4 fixed point (added to screen Y once per frame)
-- Screen X velocity in 12.4 fixed point (added to screen X once per frame)
-- Misc extra bits:
-    - `[15:14]` - `a` value of tilemap width
-    - `[13:12]` - `b` value of tilemap width (see tilemap section for formula)
-    - `[11:10]` - Unused
-    - `[9]` - Draw flipped in Y direction
-    - `[8]` - Draw flipped in X direction
-    - `[7:6]` - Upper 2 bits(`[27:26]`) of tilemap address
-    - `[5:4]` - Upper 2 bits(`[27:26]`) of tile set address
-    - `[3:0]` - Unused
+The first block contains 4 32-bit words, one for each of the 512 sprites, as follows:
 
-Sprites are drawn in order from lowest to highest index, so higher index sprites will be drawn over top of lower index sprites in the line buffer.
+```
+    +---+---------------------------------+
+    |   | 1 1 1 1 1 1                     |
+    |   | 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 |
+    +---+---------------------------------+
+    | 0 | y y y y y y y y y y y y f f f f | Sprite Y
+    | 1 | t t t t t t t t h h h h h h h h | Tilemap Y / Height
+    +---+---------------------------------+
+    
+    y - 12 bit signed screen Y coordinate (in screen pixels)
+    f - 4 bit Fixed point Y coord fraction
+    t - 8 bit Tilemap Y coordinate (in tiles)
+    h - 8 bit Sprite Height (in tiles)
+    
+    Note: To disable the sprite, set the height to 0.
+    
+    +---+---------------------------------+
+    |   | 1 1 1 1 1 1                     |
+    |   | 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 |
+    +---+---------------------------------+
+    | 0 | x x x x x x x x x x x x g g g g | Sprite X
+    | 1 | s s s s s s s s w w w w w w w w | Tilemap X / Width
+    +---+---------------------------------+
+    
+    x - 12 bit signed screen X coordinate (in screen pixels)
+    g - 4 bit Fixed point X coord fraction
+    s - 8 bit Tilemap X coordinate (in tiles)
+    w - 8 bit Sprite Width (in tiles)
+    
+    +---+---------------------------------+
+    |   | 1 1 1 1 1 1                     |
+    |   | 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 |
+    +---+---------------------------------+
+    | 0 | s s s s s s s s s s s s s s s s | Tile Set Address
+    | 1 | m m m m m m m m m m m m m m m m | Tilemap Address
+    +---+---------------------------------+
+    
+    s - 16 bit Tile Set address (in 1 kB increments)
+    m - 16 bit Tilemap address (in 1 kB increments)
+    
+    +---+---------------------------------+
+    |   | 1 1 1 1 1 1                     |
+    |   | 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 |
+    +---+---------------------------------+
+    | 0 | y y y y y y y y y y y y f f f f | Y Velocity
+    | 1 | x x x x x x x x x x x x g g g g | X Velocity
+    +---+---------------------------------+
+
+    y.f - 12.4 bit fixed point Y velocity (added to Y each frame)
+    x.g - 12.4 bit fixed point X velocity (added to X each frame)
+```
+
+The second block is 512 words long, one for each sprite, and contains these bits:
+
+```
+    +---+---------------------------------+
+    |   | 1 1 1 1 1 1                     |
+    |   | 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 |
+    +---+---------------------------------+
+    | 0 | . . . . . . . . . . x y a a b b | Tilemap Size, X/Y Flip
+    | 1 | . . . . . . . . . . . . . . . . | Unused
+    +---+---------------------------------+
+
+    a, b - Tilemap Width / Stride in formula `(1 << (a+4)) + (1 << (b+4))`
+    x - Sprite X flip / mirror (not yet implemented)
+    y - Sprite Y flip / mirror (not yet implemented)
+```
 
 ## 5.1. Theory of Operation
 
