@@ -1,13 +1,14 @@
 const std = @import("std");
+const starjay = @import("starjay");
 
 // I am not really sure why using the root namespace here doesn't work. The workaround
 // was to export a variable assigned to @This(), and that worked. Maybe a Zig bug?
-const term = @import("term.zig").term;
-const ay3 = @import("ay38910.zig").ay38910;
-const pt3 = @import("pt3.zig").pt3;
-const vdp = @import("vdp.zig").vdp;
+const term = starjay.term;
+const ay3 = starjay.ay38910;
+const pt3 = starjay.pt3;
+const vdp = starjay.vdp;
 const anim = @import("anim.zig").anim;
-const keyboard = @import("keyboard.zig").keyboard;
+const keyboard = starjay.keyboard;
 
 const song_data = @embedFile("assets/KUVO-plasticcake.pt3");
 

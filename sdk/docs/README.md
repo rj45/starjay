@@ -10,7 +10,7 @@ This is the documentation for the StarJay Fantasy Console SDK. This documentatio
 
 ## Contributing
 
-If you would like to contribute to the documentation, please feel free to submit a pull request. We welcome contributions of all kinds, including:
+If you would like to contribute to the documentation, please feel free to submit a pull request. I welcome contributions of all kinds, including:
 
 - Fixing typos, grammatical errors and inconsistencies
 - Fixing factual errors, inaccuracies, outdated information or omissions
@@ -25,4 +25,4 @@ Please do not use AI to generate content for the documentation. You may use AI t
 
 **All contributions that seem AI generated will be rejected.**
 
-We may be wrong and mistake your human written content for AI generated content, and if so, we appologize in advance. If you believe your contribution was wrongly rejected, please reach out to us and we will review it again.
+I may be wrong and mistake your human written content for AI generated content, and if so, I appologize in advance. If you believe your contribution was wrongly rejected, please reach out to me and I will review it again.

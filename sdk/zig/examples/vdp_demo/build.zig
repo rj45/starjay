@@ -26,21 +26,29 @@ pub fn build(b: *std.Build) void {
         .cpu_features_add = enabled_features
     });
 
+    const starjay_dep = b.dependency("starjay", .{
+        .target = target,
+        .optimize = .ReleaseSmall,
+    });
+
     const exe = b.addExecutable(.{
         .name = "vdp_demo",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = .ReleaseSmall,
+            .imports = &.{
+                .{ .name = "starjay", .module = starjay_dep.module("starjay") },
+            },
         }),
     });
 
 
     exe.entry = .{ .symbol_name = "_start" };
 
-    exe.addAssemblyFile(b.path("src/start.s"));
+    exe.addAssemblyFile(b.path("../../../common/start.s"));
 
-    exe.setLinkerScript(b.path("src/linker.ld"));
+    exe.setLinkerScript(b.path("../../../common/linker.ld"));
 
     b.installArtifact(exe);
 }

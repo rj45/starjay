@@ -1,0 +1,12 @@
+.zig-cache
+zig-out
+.vscode
+.DS_Store
+*.log
+LinuxImage
+
+# ignore AI related stuff
+.claude
+.ignore
+AGENTS.md
+CLAUDE.md

@@ -1,4 +1,29 @@
 /**
+ * Copyright (c) 2026 Ryan "rj45" Sanche, MIT License
+ *
+ * Do this:
+ *     #define SDK_IMPL_KEYBOARD
+ * before you include this file in *one* C or C++ file to create the implementation.
+ *
+ * To implement all libs in this folder:
+ *     #define SDK_IMPL_ALL
+ */
+
+#ifndef SDK_KEYBOARD_H
+#define SDK_KEYBOARD_H
+
+#include <stdint.h>
+
+/** Currently pressed keyboard modifiers, see KEY_MOD_* */
+extern volatile uint8_t* keyboard_modifiers;
+
+/**
+ * Up to 6 currently pressed keys. 0 means not pressed, 1 means rollover error.
+ * Will always be packed such that all 0s are at the end of the array.
+ */
+extern volatile uint8_t* keyboard_keys;
+
+/**
  * USB HID Keyboard scan codes as per USB spec 1.11
  * plus some additional codes
  *
@@ -9,9 +34,6 @@
  * https://source.android.com/devices/input/keyboard-devices.html
  */
 
-#ifndef USB_HID_KEYS
-#define USB_HID_KEYS
-
 /**
  * Modifier masks - used for the first byte in the HID report.
  * NOTE: The second byte in the report is reserved, 0x00
@@ -19,11 +41,15 @@
 #define KEY_MOD_LCTRL  0x01
 #define KEY_MOD_LSHIFT 0x02
 #define KEY_MOD_LALT   0x04
-#define KEY_MOD_LMETA  0x08
+#define KEY_MOD_LGUI   0x08
 #define KEY_MOD_RCTRL  0x10
 #define KEY_MOD_RSHIFT 0x20
 #define KEY_MOD_RALT   0x40
-#define KEY_MOD_RMETA  0x80
+#define KEY_MOD_RGUI   0x80
+#define KEY_MOD_CTRL   (KEY_MOD_LCTRL | KEY_MOD_RCTRL)
+#define KEY_MOD_SHIFT  (KEY_MOD_LSHIFT | KEY_MOD_RSHIFT)
+#define KEY_MOD_ALT    (KEY_MOD_LALT | KEY_MOD_RALT)
+#define KEY_MOD_GUI    (KEY_MOD_LGUI | KEY_MOD_RGUI)
 
 /**
  * Scan codes - last N slots in the HID report (usually 6).
@@ -284,4 +310,17 @@
 #define KEY_MEDIA_REFRESH 0xfa
 #define KEY_MEDIA_CALC 0xfb
 
-#endif // USB_HID_KEYS
+
+#ifdef SDK_IMPL_ALL
+#define SDK_IMPL_KEYBOARD
+#endif
+
+#ifdef SDK_IMPL_KEYBOARD
+#define KEYBOARD_REG_ADDR (0x10000100)
+
+volatile uint8_t* keyboard_modifiers = (uint8_t*)KEYBOARD_REG_ADDR;
+volatile uint8_t* keyboard_keys = (uint8_t*)(KEYBOARD_REG_ADDR+2);
+
+#endif
+
+#endif
