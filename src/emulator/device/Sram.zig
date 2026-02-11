@@ -143,6 +143,12 @@ pub fn loadElf(self: *Sram, rom_file: []const u8, base_addr: u32) !u32 {
     var phdr_iter = header.iterateProgramHeaders(&reader);
     while (try phdr_iter.next()) |phdr| {
         if (phdr.p_type != std.elf.PT_LOAD) continue;
+        if (phdr.p_memsz == 0 and phdr.p_filesz == 0) continue;
+
+        if (phdr.p_vaddr < base_addr) {
+            std.debug.print("Linker script has ELF segment in wrong location: 0x{x} should be >= 0x{x}\r\n", .{phdr.p_vaddr, base_addr});
+            return error.SegmentBelowBase;
+        }
 
         const mem_offset = phdr.p_vaddr - base_addr;
         if (mem_offset + phdr.p_memsz > self.mem.len) return error.SegmentOutOfBounds;

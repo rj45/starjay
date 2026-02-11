@@ -92,8 +92,13 @@ pub fn init(rom_file: ?[]const u8, quiet: bool, vdp_queue: ?*Bus.Queue, psg1_que
     var entrypoint = RAM_IMAGE_OFFSET;
     if (rom_file) |path| {
         entrypoint = self.sram.loadElf(path, RAM_IMAGE_OFFSET) catch |err| blk: {
-            std.debug.print("Not an elf, trying a rom load: {}\r\n", .{err});
-            try self.sram.loadRom(path);
+            if (err == error.InvalidElfMagic) {
+                std.debug.print("Not an elf, trying a rom load: {}\r\n", .{err});
+                try self.sram.loadRom(path);
+            } else {
+                std.debug.print("Error loading ELF file: {}\r\n", .{err});
+                return err;
+            }
             break :blk RAM_IMAGE_OFFSET;
         };
     } else {
