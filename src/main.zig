@@ -40,7 +40,7 @@ pub fn main() !void {
         \\-h, --help             Display this help and exit.
         \\-d, --debugger         Show debugger GUI window.
         \\-v, --vdp              Show VDP window.
-        \\-r, --rom <str>        Load ROM file.
+        \\-r, --rom <str>        Load ELF binary or ROM file.
         \\-l, --llemu            Use low-level emulator (default is high-level).
         \\-5, --riscv            Use RISC-V CPU core.
         \\-q, --quiet            Suppress non-error output.

@@ -126,3 +126,42 @@ pub fn loadRom(self: *Sram, rom_file: []const u8) !void {
     std.debug.print("Load {} bytes as rom\r\n", .{file_size});
     _ = try file.readAll(@ptrCast(self.mem));
 }
+
+/// Load an ELF executable into SRAM, returning the entry point address.
+pub fn loadElf(self: *Sram, rom_file: []const u8, base_addr: u32) !u32 {
+    var file = try std.fs.cwd().openFile(rom_file, .{});
+    defer file.close();
+
+    var buffer: [4096]u8 = undefined;
+    var reader = file.reader(buffer[0..]);
+
+    var header = try std.elf.Header.read(&reader.interface);
+
+    if (header.machine != .RISCV) return error.NotRiscV;
+    if (header.type != .EXEC and header.type != .DYN) return error.NotExecutable;
+
+    var phdr_iter = header.iterateProgramHeaders(&reader);
+    while (try phdr_iter.next()) |phdr| {
+        if (phdr.p_type != std.elf.PT_LOAD) continue;
+
+        const mem_offset = phdr.p_vaddr - base_addr;
+        if (mem_offset + phdr.p_memsz > self.mem.len) return error.SegmentOutOfBounds;
+
+        try file.seekTo(phdr.p_offset);
+        const dest = self.mem[mem_offset..][0..@intCast(phdr.p_filesz)];
+        const bytes_read = try file.readAll(dest);
+        if (bytes_read != phdr.p_filesz) return error.UnexpectedEof;
+
+        if (phdr.p_memsz > phdr.p_filesz) {
+            const bss_start = mem_offset + phdr.p_filesz;
+            const bss_len = phdr.p_memsz - phdr.p_filesz;
+            @memset(self.mem[bss_start..][0..@intCast(bss_len)], 0);
+        }
+
+        std.debug.print("Loaded ELF segment: vaddr=0x{x} filesz={} memsz={}\r\n", .{
+            phdr.p_vaddr, phdr.p_filesz, phdr.p_memsz,
+        });
+    }
+
+    return @intCast(header.entry);
+}

@@ -89,8 +89,13 @@ pub fn init(rom_file: ?[]const u8, quiet: bool, vdp_queue: ?*Bus.Queue, psg1_que
     try self.bus.attach(Device.init(&self.psg2, PSG2_BASE, PSG2_BASE + PSG_SIZE));
 
     self.sram = Sram.init(self.memory.data);
+    var entrypoint = RAM_IMAGE_OFFSET;
     if (rom_file) |path| {
-        try self.sram.loadRom(path);
+        entrypoint = self.sram.loadElf(path, RAM_IMAGE_OFFSET) catch |err| blk: {
+            std.debug.print("Not an elf, trying a rom load: {}\r\n", .{err});
+            try self.sram.loadRom(path);
+            break :blk RAM_IMAGE_OFFSET;
+        };
     } else {
         // TODO: some sort of default WFI loop?
     }
@@ -114,7 +119,7 @@ pub fn init(rom_file: ?[]const u8, quiet: bool, vdp_queue: ?*Bus.Queue, psg1_que
         dtb[0x13c / 4] = (validram >> 24) | (((validram >> 16) & 0xff) << 8) | (((validram >> 8) & 0xff) << 16) | ((validram & 0xff) << 24);
     }
 
-    self.cpu.reg.pc = RAM_IMAGE_OFFSET;
+    self.cpu.reg.pc = entrypoint;
     self.cpu.reg.regs[10] = 0x00; // hart ID
     self.cpu.reg.regs[11] = dtb_off + RAM_IMAGE_OFFSET;
     self.cpu.reg.extraflags |= 3; // Machine-mode.
