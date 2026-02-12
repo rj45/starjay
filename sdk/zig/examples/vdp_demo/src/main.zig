@@ -3,33 +3,10 @@ const starjay = @import("starjay");
 
 // I am not really sure why using the root namespace here doesn't work. The workaround
 // was to export a variable assigned to @This(), and that worked. Maybe a Zig bug?
-const term = starjay.term;
-const ay3 = starjay.ay38910;
-const pt3 = starjay.pt3;
-const vdp = starjay.vdp;
 const anim = @import("anim.zig").anim;
-const keyboard = starjay.keyboard;
 
 const song_data = @embedFile("assets/KUVO-plasticcake.pt3");
 
-const UART_BUF_REG_ADDR:usize = 0x10000000;
-const CLINT_BASE: u32 = 0x1100_0000;
-const SYSCON_REG_ADDR:usize = 0x11100000;
-
-pub const PSG1_BASE: u32 = 0x1300_0000;
-pub const PSG1_SIZE: u32 = 0x0000_0010;
-pub const PSG2_BASE: u32 = PSG1_BASE + PSG1_SIZE;
-pub const PSG2_SIZE: u32 = PSG1_SIZE;
-
-// NOTE: volatile here is important as MMIO devices can have side-effects and the compiler
-// needs to know this in order not to optimize them away.
-const uart_buf_reg: * volatile u32 = @ptrFromInt(UART_BUF_REG_ADDR);
-const clint_mtime_lo: * volatile u32 = @ptrFromInt(CLINT_BASE+0xBFF8);
-const clint_mtime_hi: * volatile u32 = @ptrFromInt(CLINT_BASE+0xBFFC);
-const syscon: * volatile u32 = @ptrFromInt(SYSCON_REG_ADDR);
-
-const psg1: * volatile [4]u32 = @ptrFromInt(PSG1_BASE);
-const psg2: * volatile [4]u32 = @ptrFromInt(PSG2_BASE);
 
 // volatile spin counter to prevent optimization out of spin wait loops
 var spin_counter: u32 = 0;
@@ -45,73 +22,63 @@ const cover_tile_bitmap_data = @embedFile("assets/plasticcake-tiles.bin");
 
 const font_tile_bitmap_data = @embedFile("assets/font8x16x4bpp.bin");
 
-var player: pt3.Pt3Player = undefined;
+var player: starjay.pt3.Pt3Player = undefined;
 
-fn readClintMtime() u64 {
-    // Read the 64-bit mtime value atomically
-    while (true) {
-        const hi1 = clint_mtime_hi.*;
-        const lo = clint_mtime_lo.*;
-        const hi2 = clint_mtime_hi.*;
-        if (hi1 == hi2) {
-            return (@as(u64, hi1) << 32) | @as(u64, lo);
-        }
-    }
-}
+
 
 export fn kmain() noreturn {
-    const console = term.getWriter();
+    const console = starjay.term.getWriter();
     // const tile_bitmap_addr = if ((bird_tilemap_data.len & 0x1ff) == 0) bird_tilemap_data.len >> 9 else (bird_tilemap_data.len >> 9) + 1;
 
-    vdp.palette[496] = 0x00000000; // transparent color for text
+    starjay.vdp.palette[496] = 0x00000000; // transparent color for text
     var value: u32 = 0;
     for (496..512) |i| {
-        vdp.palette[i] = value;
+        starjay.vdp.palette[i] = value;
         value += 0x00121212;
     }
-    vdp.palette[511] = 0x00FFFFFF;
+    starjay.vdp.palette[511] = 0x00FFFFFF;
 
-    const font_tile_bitmap_addr = vdp.vram.len - font_tile_bitmap_data.len;
+    const font_tile_bitmap_addr = starjay.vdp.vram.len - font_tile_bitmap_data.len;
     const text_buffer_top = (font_tile_bitmap_addr - 2048) >> 1;
     const text_buffer_bot = (font_tile_bitmap_addr - 1024) >> 1;
-    @memcpy(vdp.vram[font_tile_bitmap_addr..font_tile_bitmap_addr+font_tile_bitmap_data.len], font_tile_bitmap_data);
+    @memcpy(starjay.vdp.vram[font_tile_bitmap_addr..font_tile_bitmap_addr+font_tile_bitmap_data.len], font_tile_bitmap_data);
 
     const cover_tilemap_addr = cover_tile_bitmap_data.len;
     const bird_tilemap_addr = bird_tile_bitmap_data.len;
 
     // set up a text buffer using a sprite for the top and bottom half of each character
-    vdp.sprite_table.sprite[0].sprite_addr = .{
+    starjay.vdp.sprite_table.sprite[0].sprite_addr = .{
         .tile_bitmap_addr = font_tile_bitmap_addr >> 10,
         .tilemap_addr = text_buffer_top >> 9,
     };
-    vdp.sprite_table.sprite[0].sprite_x_width = .{
+    starjay.vdp.sprite_table.sprite[0].sprite_x_width = .{
         .screen_x = .{ .fp = .{.i = @as(i12, 384), .f = 0} },
         .tilemap_x = 0,
         .width = 32,
     };
-    vdp.sprite_table.sprite[0].sprite_y_height = .{
+    starjay.vdp.sprite_table.sprite[0].sprite_y_height = .{
         .screen_y = .{ .fp = .{.i = @as(i12, 352), .f = 0} },
         .tilemap_y = 0,
         .height = 1,
     };
-    vdp.sprite_table.sprite[1].sprite_addr = .{
+    starjay.vdp.sprite_table.sprite[1].sprite_addr = .{
         .tile_bitmap_addr = font_tile_bitmap_addr >> 10,
         .tilemap_addr = text_buffer_bot >> 9,
     };
-    vdp.sprite_table.sprite[1].sprite_x_width = .{
+    starjay.vdp.sprite_table.sprite[1].sprite_x_width = .{
         .screen_x = .{ .fp = .{.i = @as(i12, 384), .f = 0} },
         .tilemap_x = 0,
         .width = 32,
     };
-    vdp.sprite_table.sprite[1].sprite_y_height = .{
+    starjay.vdp.sprite_table.sprite[1].sprite_y_height = .{
         .screen_y = .{ .fp = .{.i = @as(i12, 352+16), .f = 0} },
         .tilemap_y = 0,
         .height = 1,
     };
 
     for (0..32) |i| {
-        vdp.vram_u16[text_buffer_top+i] = @as(u16, ' ') | (31 << 10);
-        vdp.vram_u16[text_buffer_bot+i] = @as(u16, ' '+128) | (31 << 10);
+        starjay.vdp.vram_u16[text_buffer_top+i] = @as(u16, ' ') | (31 << 10);
+        starjay.vdp.vram_u16[text_buffer_bot+i] = @as(u16, ' '+128) | (31 << 10);
     }
 
     player.init(song_data) catch |err| {
@@ -125,17 +92,16 @@ export fn kmain() noreturn {
     console.print("  Dual AY3 (TurboSound)? {}\r\n", .{player.is_turbosound}) catch {};
     console.flush() catch {};
 
-    const initial_time = readClintMtime();
-    // const tick_duration = 2500; // 64 MHz clock is divided by 512 for the clint, so 50 Hz is (64M/512) / 50 = 2500
-    const tick_duration = ((64_000_000 / 512)*1000) / 48_828; // 48.828 Hz for KUVO's settings
-    var next_tick = initial_time + tick_duration;
+    const initial_time = starjay.clint.mtime();
+    const psg_frame_duration = (starjay.clint.TICKS_PER_SECOND*1000) / 48_828; // 48.828 Hz for KUVO's settings
+    var next_frame = initial_time + psg_frame_duration;
 
     // var initial_delay: i32 = 14*50+25; // 14.5 sec, when the intro beat drop happens
 
-    console.print("Clint time: {}, next tick: {}\r\n", .{initial_time, next_tick}) catch {};
+    console.print("Clint time: {}, next tick: {}\r\n", .{initial_time, next_frame}) catch {};
     console.flush() catch {};
 
-    var prev_keys: keyboard.Report = keyboard.device.*;
+    var prev_keys: starjay.keyboard.Report = starjay.keyboard.device.*;
 
     const text_mode_top = 0;
     const text_mode_bot = 2048;
@@ -154,8 +120,8 @@ export fn kmain() noreturn {
             for (text, 0..) |c, i| {
                 const char_code = @as(u8, c);
 
-                vdp.vram_u16[text_buffer_top+i+((32 - text.len) >> 1)] = @as(u16, char_code) | (31 << 10); // palette 31
-                vdp.vram_u16[text_buffer_bot+i+((32 - text.len) >> 1)] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
+                starjay.vdp.vram_u16[text_buffer_top+i+((32 - text.len) >> 1)] = @as(u16, char_code) | (31 << 10); // palette 31
+                starjay.vdp.vram_u16[text_buffer_bot+i+((32 - text.len) >> 1)] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
             }
         }
 
@@ -166,8 +132,8 @@ export fn kmain() noreturn {
             for (text, 0..) |c, i| {
                 const char_code = @as(u8, c);
 
-                vdp.vram_u16[text_buffer_top+i+((32 - text.len) >> 1)] = @as(u16, char_code) | (31 << 10); // palette 31
-                vdp.vram_u16[text_buffer_bot+i+((32 - text.len) >> 1)] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
+                starjay.vdp.vram_u16[text_buffer_top+i+((32 - text.len) >> 1)] = @as(u16, char_code) | (31 << 10); // palette 31
+                starjay.vdp.vram_u16[text_buffer_bot+i+((32 - text.len) >> 1)] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
             }
         }
 
@@ -178,8 +144,8 @@ export fn kmain() noreturn {
             for (text, 0..) |c, i| {
                 const char_code = @as(u8, c);
 
-                vdp.vram_u16[text_buffer_top+i+((32 - text.len) >> 1)] = @as(u16, char_code) | (31 << 10); // palette 31
-                vdp.vram_u16[text_buffer_bot+i+((32 - text.len) >> 1)] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
+                starjay.vdp.vram_u16[text_buffer_top+i+((32 - text.len) >> 1)] = @as(u16, char_code) | (31 << 10); // palette 31
+                starjay.vdp.vram_u16[text_buffer_bot+i+((32 - text.len) >> 1)] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
             }
         }
 
@@ -188,11 +154,11 @@ export fn kmain() noreturn {
 
             const cover_palette_data_u32 = std.mem.bytesAsSlice(u32, cover_palette_data);
             for (0..496) |i| {
-                vdp.palette[i] = cover_palette_data_u32[i];
+                starjay.vdp.palette[i] = cover_palette_data_u32[i];
             }
 
-            @memcpy(vdp.vram[0..cover_tile_bitmap_data.len], cover_tile_bitmap_data);
-            @memcpy(vdp.vram[cover_tilemap_addr..cover_tilemap_addr+cover_tilemap_data.len], cover_tilemap_data);
+            @memcpy(starjay.vdp.vram[0..cover_tile_bitmap_data.len], cover_tile_bitmap_data);
+            @memcpy(starjay.vdp.vram[cover_tilemap_addr..cover_tilemap_addr+cover_tilemap_data.len], cover_tilemap_data);
 
             // cover art is 48x36 tiles
             const cover_y = (720 >> 1) - (((36 << 4) + 16 + 8) >> 1);
@@ -200,43 +166,43 @@ export fn kmain() noreturn {
 
             // turn the sprites off
             for (3..512) |i| {
-                vdp.sprite_table.sprite[i].sprite_y_height.height = 0;
+                starjay.vdp.sprite_table.sprite[i].sprite_y_height.height = 0;
             }
 
             // set up a text buffer using a sprite for the top and bottom half of each character
-            vdp.sprite_table.sprite[0].sprite_addr = .{
+            starjay.vdp.sprite_table.sprite[0].sprite_addr = .{
                 .tile_bitmap_addr = font_tile_bitmap_addr >> 10,
                 .tilemap_addr = text_buffer_top >> 9,
             };
-            vdp.sprite_table.sprite[0].sprite_x_width = .{
+            starjay.vdp.sprite_table.sprite[0].sprite_x_width = .{
                 .screen_x = .{ .fp = .{.i = @as(i12, 384), .f = 0} },
                 .tilemap_x = 0,
                 .width = 32,
             };
-            vdp.sprite_table.sprite[0].sprite_y_height = .{
+            starjay.vdp.sprite_table.sprite[0].sprite_y_height = .{
                 .screen_y = .{ .fp = .{.i = @as(i12, 352), .f = 0} },
                 .tilemap_y = 0,
                 .height = 1,
             };
-            vdp.sprite_table.sprite[1].sprite_addr = .{
+            starjay.vdp.sprite_table.sprite[1].sprite_addr = .{
                 .tile_bitmap_addr = font_tile_bitmap_addr >> 10,
                 .tilemap_addr = text_buffer_bot >> 9,
             };
-            vdp.sprite_table.sprite[1].sprite_x_width = .{
+            starjay.vdp.sprite_table.sprite[1].sprite_x_width = .{
                 .screen_x = .{ .fp = .{.i = @as(i12, 384), .f = 0} },
                 .tilemap_x = 0,
                 .width = 32,
             };
-            vdp.sprite_table.sprite[1].sprite_y_height = .{
+            starjay.vdp.sprite_table.sprite[1].sprite_y_height = .{
                 .screen_y = .{ .fp = .{.i = @as(i12, 352+16), .f = 0} },
                 .tilemap_y = 0,
                 .height = 1,
             };
 
-            vdp.sprite_table.sprite[0].sprite_y_height.screen_y.fp.i = text_y;
-            vdp.sprite_table.sprite[1].sprite_y_height.screen_y.fp.i = text_y+16;
+            starjay.vdp.sprite_table.sprite[0].sprite_y_height.screen_y.fp.i = text_y;
+            starjay.vdp.sprite_table.sprite[1].sprite_y_height.screen_y.fp.i = text_y+16;
 
-            vdp.sprite_table.sprite[2] = .{
+            starjay.vdp.sprite_table.sprite[2] = .{
                 .sprite_addr = .{
                     .tile_bitmap_addr = 0,
                     .tilemap_addr = cover_tilemap_addr >> 10,
@@ -256,23 +222,23 @@ export fn kmain() noreturn {
                     .y_velocity = .{ .fp = .{.i = 0, .f = 0} },
                 },
             };
-            vdp.sprite_table.sprite_extra[2].tilemap_size_b = 0;
-            vdp.sprite_table.sprite_extra[2].tilemap_size_a = 1; // 48 tiles wide
+            starjay.vdp.sprite_table.sprite_extra[2].tilemap_size_b = 0;
+            starjay.vdp.sprite_table.sprite_extra[2].tilemap_size_a = 1; // 48 tiles wide
 
-            vdp.palette[496] = 0x00000000; // transparent color for text
+            starjay.vdp.palette[496] = 0x00000000; // transparent color for text
             var pal: u32 = 0;
             for (496..512) |i| {
-                vdp.palette[i] = pal;
+                starjay.vdp.palette[i] = pal;
                 pal += 0x00121212;
             }
-            vdp.palette[511] = 0x00FFFFFF;
+            starjay.vdp.palette[511] = 0x00FFFFFF;
 
             const text = "Music: Plastic Cake by KUVO";
             for (text, 0..) |c, i| {
                 const char_code = @as(u8, c);
 
-                vdp.vram_u16[text_buffer_top+i+((32 - text.len) >> 1)] = @as(u16, char_code) | (31 << 10); // palette 31
-                vdp.vram_u16[text_buffer_bot+i+((32 - text.len) >> 1)] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
+                starjay.vdp.vram_u16[text_buffer_top+i+((32 - text.len) >> 1)] = @as(u16, char_code) | (31 << 10); // palette 31
+                starjay.vdp.vram_u16[text_buffer_bot+i+((32 - text.len) >> 1)] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
             }
         }
 
@@ -284,25 +250,25 @@ export fn kmain() noreturn {
             for (text, 0..) |c, i| {
                 const char_code = @as(u8, c);
 
-                vdp.vram_u16[text_buffer_top+i+((32 - text.len) >> 1)] = @as(u16, char_code) | (31 << 10); // palette 31
-                vdp.vram_u16[text_buffer_bot+i+((32 - text.len) >> 1)] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
+                starjay.vdp.vram_u16[text_buffer_top+i+((32 - text.len) >> 1)] = @as(u16, char_code) | (31 << 10); // palette 31
+                starjay.vdp.vram_u16[text_buffer_bot+i+((32 - text.len) >> 1)] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
             }
         }
 
         fn fn6(self: *State, ctx: *anim.Ctx) void {
             _ = self; _ = ctx;
 
-            vdp.sprite_table.sprite[2].sprite_y_height.height = 0; // hide the cover art sprite
+            starjay.vdp.sprite_table.sprite[2].sprite_y_height.height = 0; // hide the cover art sprite
 
-            vdp.sprite_table.sprite[0].sprite_y_height.screen_y.fp.i = 352;
-            vdp.sprite_table.sprite[1].sprite_y_height.screen_y.fp.i = 352+16;
+            starjay.vdp.sprite_table.sprite[0].sprite_y_height.screen_y.fp.i = 352;
+            starjay.vdp.sprite_table.sprite[1].sprite_y_height.screen_y.fp.i = 352+16;
 
             const text = "You're listening to 2x AY-3-8910";
             for (text, 0..) |c, i| {
                 const char_code = @as(u8, c);
 
-                vdp.vram_u16[text_buffer_top+i+((32 - text.len) >> 1)] = @as(u16, char_code) | (31 << 10); // palette 31
-                vdp.vram_u16[text_buffer_bot+i+((32 - text.len) >> 1)] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
+                starjay.vdp.vram_u16[text_buffer_top+i+((32 - text.len) >> 1)] = @as(u16, char_code) | (31 << 10); // palette 31
+                starjay.vdp.vram_u16[text_buffer_bot+i+((32 - text.len) >> 1)] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
             }
         }
 
@@ -313,8 +279,8 @@ export fn kmain() noreturn {
             for (text, 0..) |c, i| {
                 const char_code = @as(u8, c);
 
-                vdp.vram_u16[text_buffer_top+i+((32 - text.len) >> 1)] = @as(u16, char_code) | (31 << 10); // palette 31
-                vdp.vram_u16[text_buffer_bot+i+((32 - text.len) >> 1)] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
+                starjay.vdp.vram_u16[text_buffer_top+i+((32 - text.len) >> 1)] = @as(u16, char_code) | (31 << 10); // palette 31
+                starjay.vdp.vram_u16[text_buffer_bot+i+((32 - text.len) >> 1)] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
             }
         }
 
@@ -325,8 +291,8 @@ export fn kmain() noreturn {
             for (text, 0..) |c, i| {
                 const char_code = @as(u8, c);
 
-                vdp.vram_u16[text_buffer_top+i+((32 - text.len) >> 1)] = @as(u16, char_code) | (31 << 10); // palette 31
-                vdp.vram_u16[text_buffer_bot+i+((32 - text.len) >> 1)] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
+                starjay.vdp.vram_u16[text_buffer_top+i+((32 - text.len) >> 1)] = @as(u16, char_code) | (31 << 10); // palette 31
+                starjay.vdp.vram_u16[text_buffer_bot+i+((32 - text.len) >> 1)] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
             }
         }
 
@@ -337,18 +303,18 @@ export fn kmain() noreturn {
             for (text, 0..) |c, i| {
                 const char_code = @as(u8, c);
 
-                vdp.vram_u16[text_buffer_top+i+((32 - text.len) >> 1)] = @as(u16, char_code) | (31 << 10); // palette 31
-                vdp.vram_u16[text_buffer_bot+i+((32 - text.len) >> 1)] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
+                starjay.vdp.vram_u16[text_buffer_top+i+((32 - text.len) >> 1)] = @as(u16, char_code) | (31 << 10); // palette 31
+                starjay.vdp.vram_u16[text_buffer_bot+i+((32 - text.len) >> 1)] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
             }
         }
 
         fn fn10(self: *State, ctx: *anim.Ctx) void {
             _ = self; _ = ctx;
 
-            @memcpy(vdp.vram[0..bird_tile_bitmap_data.len], bird_tile_bitmap_data);
-            @memcpy(vdp.vram[bird_tilemap_addr..bird_tilemap_addr+bird_tilemap_data.len], bird_tilemap_data);
+            @memcpy(starjay.vdp.vram[0..bird_tile_bitmap_data.len], bird_tile_bitmap_data);
+            @memcpy(starjay.vdp.vram[bird_tilemap_addr..bird_tilemap_addr+bird_tilemap_data.len], bird_tilemap_data);
 
-            const sprite_high = vdp.SpriteHigh{
+            const sprite_high = starjay.vdp.SpriteHigh{
                 .tilemap_size_b = 0,
                 .tilemap_size_a = 0,
                 .x_flip = false,
@@ -363,7 +329,7 @@ export fn kmain() noreturn {
                 const i_mod_32: u11 = @truncate(i % 32);
                 const i_div_32: u11 = @truncate(i / 32);
 
-                vdp.sprite_table.sprite[i].sprite_velocity = .{
+                starjay.vdp.sprite_table.sprite[i].sprite_velocity = .{
                     .x_velocity = .{
                         .value = 0,
                     },
@@ -372,29 +338,29 @@ export fn kmain() noreturn {
                     },
                 };
 
-                vdp.sprite_table.sprite[i].sprite_addr = .{
+                starjay.vdp.sprite_table.sprite[i].sprite_addr = .{
                     .tile_bitmap_addr = 0,
                     .tilemap_addr = bird_tilemap_addr >> 10,
                 };
 
-                vdp.sprite_table.sprite[i].sprite_x_width = .{
+                starjay.vdp.sprite_table.sprite[i].sprite_x_width = .{
                     .screen_x = .{ .fp = .{.i = @as(i12, (i_mod_32*17)+384), .f = 0} },
                     .tilemap_x = @truncate(i_mod_32),
                     .width = 1,
                 };
 
-                vdp.sprite_table.sprite[i].sprite_y_height = .{
+                starjay.vdp.sprite_table.sprite[i].sprite_y_height = .{
                     .screen_y = .{ .fp = .{.i = @as(i12, (i_div_32 * 33)+104), .f = 0} },
                     .tilemap_y = @truncate(i_div_32*2),
                     .height = 2,
                 };
 
-                vdp.sprite_table.sprite_extra[i] = sprite_high;
+                starjay.vdp.sprite_table.sprite_extra[i] = sprite_high;
             }
 
             const bird_palette_data_u32 = std.mem.bytesAsSlice(u32, bird_palette_data);
             for (0..512) |i| {
-                vdp.palette[i] = bird_palette_data_u32[i];
+                starjay.vdp.palette[i] = bird_palette_data_u32[i];
             }
         }
 
@@ -411,7 +377,7 @@ export fn kmain() noreturn {
                 const y_vel_u16: u15 = @truncate(y_vel_32);
                 const y_vel_i16: i16 = @as(i16, y_vel_u16) - 16;
 
-                vdp.sprite_table.sprite[i].sprite_velocity = .{
+                starjay.vdp.sprite_table.sprite[i].sprite_velocity = .{
                     .x_velocity = .{
                         .value = x_vel_i16,
                     },
@@ -435,7 +401,7 @@ export fn kmain() noreturn {
                 const y_vel_u16: u15 = @truncate(y_vel_32);
                 const y_vel_i16: i16 = @as(i16, y_vel_u16) - 16;
 
-                vdp.sprite_table.sprite[i].sprite_velocity = .{
+                starjay.vdp.sprite_table.sprite[i].sprite_velocity = .{
                     .x_velocity = .{
                         .value = -x_vel_i16,
                     },
@@ -453,7 +419,7 @@ export fn kmain() noreturn {
                 const i_mod_32: u11 = @truncate(i % 32);
                 const i_div_32: u11 = @truncate(i / 32);
 
-                vdp.sprite_table.sprite[i].sprite_velocity = .{
+                starjay.vdp.sprite_table.sprite[i].sprite_velocity = .{
                     .x_velocity = .{
                         .value = 0,
                     },
@@ -462,24 +428,24 @@ export fn kmain() noreturn {
                     },
                 };
 
-                vdp.sprite_table.sprite[i].sprite_addr = .{
+                starjay.vdp.sprite_table.sprite[i].sprite_addr = .{
                     .tile_bitmap_addr = 0,
                     .tilemap_addr = bird_tilemap_addr >> 10,
                 };
 
-                vdp.sprite_table.sprite[i].sprite_x_width = .{
+                starjay.vdp.sprite_table.sprite[i].sprite_x_width = .{
                     .screen_x = .{ .fp = .{.i = @as(i12, (i_mod_32*17)+384), .f = 0} },
                     .tilemap_x = @truncate(i_mod_32),
                     .width = 1,
                 };
 
-                vdp.sprite_table.sprite[i].sprite_y_height = .{
+                starjay.vdp.sprite_table.sprite[i].sprite_y_height = .{
                     .screen_y = .{ .fp = .{.i = @as(i12, (i_div_32 * 33)+104), .f = 0} },
                     .tilemap_y = @truncate(i_div_32*2),
                     .height = 2,
                 };
 
-                vdp.sprite_table.sprite[i].sprite_velocity = .{};
+                starjay.vdp.sprite_table.sprite[i].sprite_velocity = .{};
             }
         }
 
@@ -488,19 +454,19 @@ export fn kmain() noreturn {
 
             // turn the sprites off
             for (0..512) |i| {
-                vdp.sprite_table.sprite[i].sprite_y_height.height = 0;
+                starjay.vdp.sprite_table.sprite[i].sprite_y_height.height = 0;
             }
 
             // reset the text palette
-            vdp.palette[496] = 0x00000000;
+            starjay.vdp.palette[496] = 0x00000000;
             var p: u32 = 0;
             for (496..512) |i| {
-                vdp.palette[i] = p;
+                starjay.vdp.palette[i] = p;
                 p += 0x00121212;
             }
-            vdp.palette[511] = 0x00FFFFFF;
+            starjay.vdp.palette[511] = 0x00FFFFFF;
 
-            const sprite_high = vdp.SpriteHigh{
+            const sprite_high = starjay.vdp.SpriteHigh{
                 .tilemap_size_b = 0,
                 .tilemap_size_a = 2,
                 .x_flip = false,
@@ -513,46 +479,46 @@ export fn kmain() noreturn {
 
             for (0..22) |i| {
                 const i_12: i12 = @bitCast(@as(u12, @truncate(i)));
-                vdp.sprite_table.sprite[(i<<1)+0].sprite_addr = .{
+                starjay.vdp.sprite_table.sprite[(i<<1)+0].sprite_addr = .{
                     .tile_bitmap_addr = font_tile_bitmap_addr >> 10,
                     .tilemap_addr = text_mode_top >> 9,
                 };
-                vdp.sprite_table.sprite[(i<<1)+0].sprite_x_width = .{
+                starjay.vdp.sprite_table.sprite[(i<<1)+0].sprite_x_width = .{
                     .screen_x = .{ .fp = .{.i = 0, .f = 0} },
                     .tilemap_x = 0,
                     .width = 80,
                 };
-                vdp.sprite_table.sprite[(i<<1)+0].sprite_y_height = .{
+                starjay.vdp.sprite_table.sprite[(i<<1)+0].sprite_y_height = .{
                     .screen_y = .{ .fp = .{.i = (i_12<<5)+0+8 - 720, .f = 0} },
                     .tilemap_y = @truncate(i),
                     .height = 1,
                 };
-                vdp.sprite_table.sprite[(i<<1)+0].sprite_velocity = .{
+                starjay.vdp.sprite_table.sprite[(i<<1)+0].sprite_velocity = .{
                     .y_velocity = .{ .fp = .{ .i = 12, .f = 0 }},
                 };
-                vdp.sprite_table.sprite_extra[(i<<1)+0] = sprite_high;
-                vdp.sprite_table.sprite[(i<<1)+1].sprite_addr = .{
+                starjay.vdp.sprite_table.sprite_extra[(i<<1)+0] = sprite_high;
+                starjay.vdp.sprite_table.sprite[(i<<1)+1].sprite_addr = .{
                     .tile_bitmap_addr = font_tile_bitmap_addr >> 10,
                     .tilemap_addr = text_mode_bot >> 9,
                 };
-                vdp.sprite_table.sprite[(i<<1)+1].sprite_x_width = .{
+                starjay.vdp.sprite_table.sprite[(i<<1)+1].sprite_x_width = .{
                     .screen_x = .{ .fp = .{.i = 0, .f = 0} },
                     .tilemap_x = 0,
                     .width = 80,
                 };
-                vdp.sprite_table.sprite[(i<<1)+1].sprite_y_height = .{
+                starjay.vdp.sprite_table.sprite[(i<<1)+1].sprite_y_height = .{
                     .screen_y = .{ .fp = .{.i = (i_12<<5)+16+8 - 720, .f = 0} },
                     .tilemap_y = @truncate(i),
                     .height = 1,
                 };
-                vdp.sprite_table.sprite[(i<<1)+1].sprite_velocity = .{
+                starjay.vdp.sprite_table.sprite[(i<<1)+1].sprite_velocity = .{
                     .y_velocity = .{ .fp = .{ .i = 12, .f = 0 }},
                 };
-                vdp.sprite_table.sprite_extra[(i<<1)+1] = sprite_high;
+                starjay.vdp.sprite_table.sprite_extra[(i<<1)+1] = sprite_high;
             }
 
-            @memset(vdp.vram_u16[text_mode_top..text_mode_top+(80*22)], 0);
-            @memset(vdp.vram_u16[text_mode_bot..text_mode_bot+(80*22)], 128);
+            @memset(starjay.vdp.vram_u16[text_mode_top..text_mode_top+(80*22)], 0);
+            @memset(starjay.vdp.vram_u16[text_mode_bot..text_mode_bot+(80*22)], 128);
 
             const templ =
                 \\+------------------------------------------------------------------------------+
@@ -585,8 +551,8 @@ export fn kmain() noreturn {
             for (screen, 0..) |c, i| {
                 const char_code = @as(u8, c);
 
-                vdp.vram_u16[text_mode_top+i] = @as(u16, char_code) | (31 << 10); // palette 31
-                vdp.vram_u16[text_mode_bot+i] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
+                starjay.vdp.vram_u16[text_mode_top+i] = @as(u16, char_code) | (31 << 10); // palette 31
+                starjay.vdp.vram_u16[text_mode_bot+i] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
             }
         }
 
@@ -595,20 +561,20 @@ export fn kmain() noreturn {
 
             for (0..22) |i| {
                 const i_12: i12 = @bitCast(@as(u12, @truncate(i)));
-                vdp.sprite_table.sprite[(i<<1)+0].sprite_y_height = .{
+                starjay.vdp.sprite_table.sprite[(i<<1)+0].sprite_y_height = .{
                     .screen_y = .{ .fp = .{.i = (i_12<<5)+0+8, .f = 0} },
                     .tilemap_y = @truncate(i),
                     .height = 1,
                 };
-                vdp.sprite_table.sprite[(i<<1)+0].sprite_velocity = .{
+                starjay.vdp.sprite_table.sprite[(i<<1)+0].sprite_velocity = .{
                     .y_velocity = .{ .value = 0 },
                 };
-                vdp.sprite_table.sprite[(i<<1)+1].sprite_y_height = .{
+                starjay.vdp.sprite_table.sprite[(i<<1)+1].sprite_y_height = .{
                     .screen_y = .{ .fp = .{.i = (i_12<<5)+16+8, .f = 0} },
                     .tilemap_y = @truncate(i),
                     .height = 1,
                 };
-                vdp.sprite_table.sprite[(i<<1)+1].sprite_velocity = .{
+                starjay.vdp.sprite_table.sprite[(i<<1)+1].sprite_velocity = .{
                     .y_velocity = .{ .value = 0 },
                 };
             }
@@ -648,8 +614,8 @@ export fn kmain() noreturn {
             for (screen, 0..) |c, i| {
                 const char_code = @as(u8, c);
 
-                vdp.vram_u16[text_mode_top+i] = @as(u16, char_code) | (31 << 10); // palette 31
-                vdp.vram_u16[text_mode_bot+i] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
+                starjay.vdp.vram_u16[text_mode_top+i] = @as(u16, char_code) | (31 << 10); // palette 31
+                starjay.vdp.vram_u16[text_mode_bot+i] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
             }
         }
 
@@ -687,8 +653,8 @@ export fn kmain() noreturn {
             for (screen, 0..) |c, i| {
                 const char_code = @as(u8, c);
 
-                vdp.vram_u16[text_mode_top+i] = @as(u16, char_code) | (31 << 10); // palette 31
-                vdp.vram_u16[text_mode_bot+i] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
+                starjay.vdp.vram_u16[text_mode_top+i] = @as(u16, char_code) | (31 << 10); // palette 31
+                starjay.vdp.vram_u16[text_mode_bot+i] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
             }
         }
 
@@ -726,8 +692,8 @@ export fn kmain() noreturn {
             for (screen, 0..) |c, i| {
                 const char_code = @as(u8, c);
 
-                vdp.vram_u16[text_mode_top+i] = @as(u16, char_code) | (31 << 10); // palette 31
-                vdp.vram_u16[text_mode_bot+i] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
+                starjay.vdp.vram_u16[text_mode_top+i] = @as(u16, char_code) | (31 << 10); // palette 31
+                starjay.vdp.vram_u16[text_mode_bot+i] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
             }
         }
 
@@ -765,8 +731,8 @@ export fn kmain() noreturn {
             for (screen, 0..) |c, i| {
                 const char_code = @as(u8, c);
 
-                vdp.vram_u16[text_mode_top+i] = @as(u16, char_code) | (31 << 10); // palette 31
-                vdp.vram_u16[text_mode_bot+i] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
+                starjay.vdp.vram_u16[text_mode_top+i] = @as(u16, char_code) | (31 << 10); // palette 31
+                starjay.vdp.vram_u16[text_mode_bot+i] = @as(u16, char_code+128) | (31 << 10); // palette 31, bottom half of character
             }
         }
     };
@@ -913,49 +879,46 @@ export fn kmain() noreturn {
     var psgregs = player.playFrame();
 
     while (true) {
-        const current_time = readClintMtime();
+        const current_time = starjay.clint.mtime();
 
-        if (prev_keys != keyboard.device.*) {
+        if (prev_keys != starjay.keyboard.device.*) {
             console.print("Keys: ", .{}) catch {};
-            var keys = keyboard.device.pressedKeys();
+            var keys = starjay.keyboard.device.pressedKeys();
             while (keys.next()) |key| {
-                if (key.toAscii(keyboard.device.modifiers)) |c| {
+                if (key.toAscii(starjay.keyboard.device.modifiers)) |c| {
                     console.print("{c}", .{c}) catch {};
                 }
             }
             console.print("\r\n", .{}) catch {};
             console.flush() catch {};
-            prev_keys = keyboard.device.*;
+            prev_keys = starjay.keyboard.device.*;
         }
 
         // console.print("Clint time: {}, next tick: {}\r\n", .{current_time, next_tick}) catch {};
         // console.flush() catch {};
 
-        if (current_time >= next_tick) {
-            if (current_time > next_tick) {
-                console.print("Warning: PT3 frame was late! current_time: {}, next_tick: {}\r\n", .{current_time, next_tick}) catch {};
+        if (current_time >= next_frame) {
+            if (current_time > next_frame) {
+                console.print("Warning: PT3 frame was late! current_time: {}, next_tick: {}\r\n", .{current_time, next_frame}) catch {};
                 console.flush() catch {};
             }
 
-            next_tick += tick_duration;
-
-            animation.tick(current_time);
+            next_frame += psg_frame_duration;
 
             if (state.playing) {
                 // Update the registers right on the tick (for tighter timing)
-                psgregs.psg1.write(psg1);
-                psgregs.psg2.write(psg2);
+                psgregs.write();
 
                 psgregs = player.playFrame();
                 // console.print("PT3 Frame: Tone A: {}, Tone B: {}, Tone C: {}\r\n", .{regs.psg1.tone_a, regs.psg1.tone_b, regs.psg1.tone_c}) catch {};
                 // console.flush() catch {};
             }
 
+            animation.tick(current_time);
 
-
-            const time_after = readClintMtime();
-            if (time_after > next_tick) {
-                console.print("Warning: PT3 frame took too long! time_after: {}, next_tick: {}\r\n", .{time_after, next_tick}) catch {};
+            const time_after = starjay.clint.mtime();
+            if (time_after > next_frame) {
+                console.print("Warning: PT3 frame took too long! time_after: {}, next_tick: {}\r\n", .{time_after, next_frame}) catch {};
                 console.flush() catch {};
             }
 
@@ -974,7 +937,7 @@ export fn kmain() noreturn {
             //         const y_vel_u16: u15 = @truncate(y_vel_32);
             //         const y_vel_i16: i16 = @as(i16, y_vel_u16) - 16;
 
-            //         vdp.sprite_table.sprite[i].sprite_velocity = SpriteVelocity{
+            //         starjay.vdp.sprite_table.sprite[i].sprite_velocity = SpriteVelocity{
             //             .x_velocity = .{
             //                 .value = x_vel_i16,
             //             },
@@ -989,7 +952,7 @@ export fn kmain() noreturn {
         // spin wait for a bit -- this avoids hitting the clint every cycle
         // MMIO in the emulator is slow and thus utilizes more CPU / power
         // even better would be to use an interrupt and WFI instruction
-        if ((next_tick - current_time) > 250) {
+        if ((next_frame - current_time) > 250) {
             for (0..10000) |i| {
                 vol_spin_counter.* +%= i; // volatile to prevent it from being optimized out
             }
@@ -997,7 +960,7 @@ export fn kmain() noreturn {
     }
 
     // You can send a power down like so if you wish to exit the emulator:
-    // syscon.* = 0x5555;
+    // starjay.syscon.shutdown();
 
     // spin wait forever
     while (true) {}

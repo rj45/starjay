@@ -2,43 +2,38 @@ const std = @import("std");
 
 pub const term = @This();
 
-const SYSCON_REG_ADDR:usize = 0x11100000;
 const UART_BUF_REG_ADDR:usize = 0x10000000;
 const UART_STATE_REG_ADDR:usize = 0x10000005;
 
-// https://github.com/ziglang/zig/issues/21033
-const PeripheralTypeU8 = struct {
-    raw: extern struct {
-        value: u8
-    },
-};
-const PeripheralTypeU32 = struct {
-    raw: extern struct {
-        value: u32
-    },
-};
-
-var uartreg: *volatile PeripheralTypeU8 = @ptrFromInt(UART_BUF_REG_ADDR);
-var uartstatereg: *volatile PeripheralTypeU8 = @ptrFromInt(UART_STATE_REG_ADDR);
-var sysconreg: *volatile PeripheralTypeU32 = @ptrFromInt(SYSCON_REG_ADDR);
+var uart_reg: *volatile u8 = @ptrFromInt(UART_BUF_REG_ADDR);
+var uart_state_reg: *volatile u8 = @ptrFromInt(UART_STATE_REG_ADDR);
 
 var tw = TermWriter{};
 
+/// Get a character from the UART.
 pub fn getch() ?u8 {
-    if (uartstatereg.raw.value & ~@as(u8, 0x60) > 0) {
-        return uartreg.raw.value;
+    if (uart_state_reg.* & ~@as(u8, 0x60) > 0) {
+        return uart_reg.*;
     } else {
         return null;
     }
 }
 
+/// Write a character to the UART.
 pub fn uart_write(buf:[]const u8) !void {
-    for (buf) |c| uartreg.raw.value = c;
+    for (buf) |c| uart_reg.* = c;
 }
 
+/// Print to the UART and flush. Note that this will pull in ~1.5KB of code (this may be less
+/// once the C extensions are implemented.) TODO: fix this comment later
+pub fn print(comptime fmt: []const u8, args: anytype) void {
+    const w = getWriter();
+    w.print(fmt, args) catch {};
+    w.flush() catch {};
+}
 
-var wbuf:[4096]u8 = undefined;
-var cw = TermWriter.init(&wbuf);
+var wbuf: [4096]u8 = undefined;
+var cw = TermWriter.init(wbuf[0..]);
 
 pub const WriteError = error{ Unsupported, NotConnected };
 

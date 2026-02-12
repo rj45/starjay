@@ -5,7 +5,7 @@
 //   Copyright (c) 2026 Ryan "rj45" Sanche, MIT License
 const std = @import("std");
 
-const ay38910 = @import("ay38910.zig").ay38910;
+const psg = @import("psg.zig").psg;
 
 pub const pt3 = @This();
 
@@ -31,7 +31,7 @@ fn findPt3Signature(data: []const u8, start: usize) ?usize {
 pub const Pt3Player = struct {
     state: [2]ChipState,
     is_turbosound: bool,
-    output: ay38910.TurboSoundRegs,
+    output: psg.TurboSoundRegs,
 
     /// Returns the header from the first chip (primary module)
     pub fn header(self: *const Pt3Player) *const Pt3Header {
@@ -39,7 +39,7 @@ pub const Pt3Player = struct {
     }
 
     pub fn init(self: *Pt3Player, file_data: []const u8) !void {
-        self.output = ay38910.TurboSoundRegs.init();
+        self.output = psg.TurboSoundRegs.init();
         self.state = [_]ChipState{.{}} ** 2;
         self.is_turbosound = false;
 
@@ -58,7 +58,7 @@ pub const Pt3Player = struct {
         }
     }
 
-    pub fn playFrame(self: *Pt3Player) *const ay38910.TurboSoundRegs {
+    pub fn playFrame(self: *Pt3Player) *const psg.TurboSoundRegs {
         self.state[0].playFrame();
         if (self.is_turbosound) {
             self.state[1].playFrame();
@@ -82,7 +82,7 @@ pub const ChipState = struct {
     envelope_shape_set: bool = false,
 
     // Output - pointer to the Regs struct for this chip
-    regs: *ay38910.Regs = undefined,
+    regs: *psg.Regs = undefined,
 
     pub const CommonState = struct {
         env_base: u16 = 0,
@@ -131,7 +131,7 @@ pub const ChipState = struct {
         ton_delta: i16 = 0, // For portamento
     };
 
-    pub fn init(self: *ChipState, module_data: []const u8, output_regs: *ay38910.Regs) !void {
+    pub fn init(self: *ChipState, module_data: []const u8, output_regs: *psg.Regs) !void {
         self.data = module_data;
         self.regs = output_regs;
         self.header = std.mem.zeroes(Pt3Header);

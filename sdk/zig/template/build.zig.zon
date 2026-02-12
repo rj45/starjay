@@ -1,0 +1,18 @@
+.{
+    // TODO: change this, and then get zig to tell you the new fingerprint
+    .name = .starjay_template,
+    .version = "0.0.0",
+    .fingerprint = 0x5b85796f8a7cc3c7,
+    .minimum_zig_version = "0.15.1",
+    .dependencies = .{
+        .starjay = .{
+            // git clone git@github.com:rj45/starjay-dev.git ../starjay
+            .path = "../starjay",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

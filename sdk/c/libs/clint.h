@@ -40,9 +40,9 @@ extern volatile uint32_t* clint_mtime_hi;
 extern volatile uint32_t* clint_mtime_lo;
 
 /**
- * CLINT mtimecmp register. When mtime >= clint_mtimecmp, the interrupt is triggered once.
- * It's expected that this will be updated with the next time the interrupt should occur,
- * it does not auto-increment.
+ * CLINT mtimecmp register. When mtime >= clint_mtimecmp and msip == 1, the interrupt
+ * is triggered. It's expected that this will be updated with the next time the
+ * interrupt should occur. To prevent further interrupts, set msip to 0.
  */
 extern volatile uint64_t* clint_mtimecmp;
 

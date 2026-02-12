@@ -1,0 +1,32 @@
+# https://taskfile.dev
+
+version: '3'
+
+vars:
+    STARJAY: "../starjay/zig-out/bin/starjay"
+    # TODO: change this
+    BIN_NAME: "starjay_template"
+
+tasks:
+    default:
+         deps: [run]
+
+    build:
+        cmds:
+            - zig build
+        aliases: [b]
+
+    run:
+        deps: [build]
+        cmds:
+            - "{{ .STARJAY }} --riscv --vdp --rom zig-out/bin/{{ .BIN_NAME }}"
+        aliases: [r]
+
+    clean:
+        cmds:
+            - "rm -rf zig-out"
+
+    distclean:
+        deps: [clean]
+        cmds:
+            - "rm -rf .zig-cache"

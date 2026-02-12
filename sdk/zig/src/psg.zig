@@ -1,11 +1,23 @@
 // AY-3-8910 Programmable Sound Generator (PSG) registers and utilities
 // Warning: Mostly AI generated code ahead - review carefully!
 
-pub const ay38910 = @This();
+pub const psg = @This();
 
 // pub const CHIP_FREQ = 1773500; // Hz -- PAL ZXSpectrum
 pub const CHIP_FREQ = 1750000; // Hz -- Pentagon ZXSpectrum clone
 
+pub const PSG1_BASE: u32 = 0x1300_0000;
+pub const PSG1_SIZE: u32 = 0x0000_0010;
+pub const PSG2_BASE: u32 = PSG1_BASE + PSG1_SIZE;
+pub const PSG2_SIZE: u32 = PSG1_SIZE;
+
+const psg1: * volatile [4]u32 = @ptrFromInt(PSG1_BASE);
+const psg2: * volatile [4]u32 = @ptrFromInt(PSG2_BASE);
+
+pub const Chip = enum {
+    psg1,
+    psg2,
+};
 
 // compiler bug: nested packed structs cause a hang in symantic analysis
 pub const Regs = struct {
@@ -52,8 +64,13 @@ pub const Regs = struct {
         };
     }
 
-    pub fn write(self: *const Regs, base_addr: *volatile [4]u32) void {
+    pub fn write(self: *const Regs, chip: Chip) void {
         // work around the compiler bug with nested packed structs by manually packing the data
+
+        const base_addr: *volatile [4]u32 = switch (chip) {
+          .psg1 => psg1,
+          .psg2 => psg2,
+        };
 
         // word[0]:
         // tone_a: u12 = 0,
@@ -90,10 +107,7 @@ pub const Regs = struct {
     }
 };
 
-// ============================================================================
-// TurboSound (Dual AY) Registers
-// ============================================================================
-
+/// TurboSound (Dual AY3) registers
 pub const TurboSoundRegs = struct {
     psg1: Regs,
     psg2: Regs,
@@ -111,5 +125,10 @@ pub const TurboSoundRegs = struct {
             1 => &self.psg2,
             else => @panic("Invalid PSG index"),
         };
+    }
+
+    pub fn write(self: *const TurboSoundRegs) void {
+        self.psg1.write(.psg1);
+        self.psg2.write(.psg2);
     }
 };

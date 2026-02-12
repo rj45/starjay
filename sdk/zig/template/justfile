@@ -1,0 +1,21 @@
+#!/usr/bin/env just --justfile
+
+STARJAY := "../starjay/zig-out/bin/starjay"
+# TODO: change this
+BIN_NAME := "starjay_template"
+
+build:
+    zig build
+
+run:
+    zig build
+    {{STARJAY}} --riscv --vdp --rom zig-out/bin/{{BIN_NAME}}
+
+clean:
+    rm -rf zig-out
+
+distclean:
+    rm -rf zig-out .zig-cache
+
+alias b := build
+alias r := run
