@@ -1,7 +1,7 @@
 .{
-    .name = .starj_console,
+    .name = .starjay,
     .version = "0.0.1",
-    .fingerprint = 0xa2c40a86857ec2a4,
+    .fingerprint = 0xa544b17df2dca22c,
     .minimum_zig_version = "0.15.1",
     .dependencies = .{
         .clap = .{

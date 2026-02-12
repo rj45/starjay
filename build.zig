@@ -6,6 +6,13 @@ pub fn build(b: *std.Build) void {
     const sdl2 = b.option(bool, "sdl2", "Build for SDL2 instead of SDL3") orelse false;
     const sdl3 = !sdl2;
 
+    // For the SDK
+    _ = b.addModule("starjay", .{
+        .root_source_file = b.path("sdk/zig/src/starjay.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     // For dvui and SDL, never use Debug mode; use ReleaseSafe instead.
     const fast_debug_build: @TypeOf(optimize) = if (optimize == .Debug) .ReleaseSafe else optimize;
 
