@@ -1,0 +1,8 @@
+.zig-cache
+.cache
+zig-out
+.vscode
+.DS_Store
+
+# probably don't want to check this in as it has absolute paths in it
+compile_commands.json

@@ -13,6 +13,7 @@
 #define SDK_KEYBOARD_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 /** Currently pressed keyboard modifiers, see KEY_MOD_* */
 extern volatile uint8_t* keyboard_modifiers;
@@ -311,6 +312,24 @@ extern volatile uint8_t* keyboard_keys;
 #define KEY_MEDIA_CALC 0xfb
 
 
+/** Returns true if the given scancode is currently pressed in the 6-key array. */
+bool keyboard_is_pressed(uint8_t scancode);
+
+/** Returns true if the keyboard report indicates rollover error. */
+bool keyboard_is_rollover_error(void);
+
+/**
+ * Convert a scancode to ASCII given the current modifiers.
+ * Returns the ASCII character, or -1 if the scancode has no ASCII representation.
+ */
+int keyboard_scancode_to_ascii(uint8_t scancode, uint8_t modifiers);
+
+/**
+ * Returns true if the scancode corresponds to a printable ASCII character
+ * (>= 0x20 and < 0x7f).
+ */
+bool keyboard_scancode_is_printable(uint8_t scancode, uint8_t modifiers);
+
 #ifdef SDK_IMPL_ALL
 #define SDK_IMPL_KEYBOARD
 #endif
@@ -320,6 +339,86 @@ extern volatile uint8_t* keyboard_keys;
 
 volatile uint8_t* keyboard_modifiers = (uint8_t*)KEYBOARD_REG_ADDR;
 volatile uint8_t* keyboard_keys = (uint8_t*)(KEYBOARD_REG_ADDR+2);
+
+/* Unshifted ASCII for scan codes 0x04..0x38 (53 entries) */
+static const uint8_t keyboard_ascii_unshifted[53] = {
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h',  /* 0x04-0x0b */
+    'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p',  /* 0x0c-0x13 */
+    'q', 'r', 's', 't', 'u', 'v', 'w', 'x',  /* 0x14-0x1b */
+    'y', 'z',                                   /* 0x1c-0x1d */
+    '1', '2', '3', '4', '5', '6', '7', '8', '9', '0',  /* 0x1e-0x27 */
+    '\r', 0x1b, 0x08, '\t', ' ',               /* enter, esc, bs, tab, space */
+    '-', '=', '[', ']', '\\',                   /* 0x2d-0x31 */
+    '#',                                        /* 0x32 hash_tilde (non-US) */
+    ';', '\'', '`', ',', '.', '/',              /* 0x33-0x38 */
+};
+
+/* Shifted ASCII for scan codes 0x04..0x38 (53 entries) */
+static const uint8_t keyboard_ascii_shifted[53] = {
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',  /* 0x04-0x0b */
+    'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',  /* 0x0c-0x13 */
+    'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',  /* 0x14-0x1b */
+    'Y', 'Z',                                   /* 0x1c-0x1d */
+    '!', '@', '#', '$', '%', '^', '&', '*', '(', ')',  /* 0x1e-0x27 */
+    '\r', 0x1b, 0x08, '\t', ' ',               /* enter, esc, bs, tab, space */
+    '_', '+', '{', '}', '|',                    /* 0x2d-0x31 */
+    '~',                                        /* 0x32 hash_tilde shifted */
+    ':', '"', '~', '<', '>', '?',               /* 0x33-0x38 */
+};
+
+/* Keypad ASCII for scan codes 0x54..0x63 (16 entries) */
+static const uint8_t keyboard_kp_ascii[16] = {
+    '/', '*', '-', '+', '\r',                   /* slash, asterisk, minus, plus, enter */
+    '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '.',  /* kp_1..kp_dot */
+};
+
+_Static_assert(sizeof(keyboard_ascii_unshifted) == 53, "unshifted table size");
+_Static_assert(sizeof(keyboard_ascii_shifted) == 53, "shifted table size");
+_Static_assert(sizeof(keyboard_kp_ascii) == 16, "keypad table size");
+
+bool keyboard_is_pressed(uint8_t scancode) {
+    for (int i = 0; i < 6; i++) {
+        if (keyboard_keys[i] == scancode) return true;
+    }
+    return false;
+}
+
+bool keyboard_is_rollover_error(void) {
+    return keyboard_keys[0] == KEY_ERR_OVF;
+}
+
+int keyboard_scancode_to_ascii(uint8_t scancode, uint8_t modifiers) {
+    /* Main printable range: 0x04 (a) .. 0x38 (slash) */
+    if (scancode >= 0x04 && scancode <= 0x38) {
+        uint8_t idx = scancode - 0x04;
+        uint8_t ch = (modifiers & KEY_MOD_SHIFT)
+            ? keyboard_ascii_shifted[idx]
+            : keyboard_ascii_unshifted[idx];
+
+        /* Ctrl+letter produces control codes 0x01..0x1a */
+        if ((modifiers & KEY_MOD_CTRL) && ch >= 'a' && ch <= 'z')
+            return ch - 'a' + 1;
+        if ((modifiers & KEY_MOD_CTRL) && ch >= 'A' && ch <= 'Z')
+            return ch - 'A' + 1;
+
+        return ch;
+    }
+
+    /* Delete key */
+    if (scancode == 0x4c) return 0x7f;
+
+    /* Keypad range: 0x54 (kp_slash) .. 0x63 (kp_dot) */
+    if (scancode >= 0x54 && scancode <= 0x63) {
+        return keyboard_kp_ascii[scancode - 0x54];
+    }
+
+    return -1;
+}
+
+bool keyboard_scancode_is_printable(uint8_t scancode, uint8_t modifiers) {
+    int ch = keyboard_scancode_to_ascii(scancode, modifiers);
+    return ch >= 0x20 && ch < 0x7f;
+}
 
 #endif
 

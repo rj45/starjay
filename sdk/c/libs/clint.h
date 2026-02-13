@@ -13,7 +13,7 @@
 #ifndef SDK_CLINT_H
 #define SDK_CLINT_H
 
-#include "stdint.h"
+#include <stdint.h>
 
 /** The speed that the system bus runs at (64 MHz). */
 #define CLINT_BUS_CYCLES_PER_SECOND (64000000)
@@ -74,7 +74,7 @@ uint64_t clint_read_mtime() {
         uint32_t lo = *clint_mtime_lo;
         uint32_t hi2 = *clint_mtime_hi;
         if (hi1 == hi2) {
-            return ((uint64_t)hi) << 32 | ((uint64_t)lo);
+            return ((uint64_t)hi1) << 32 | ((uint64_t)lo);
         }
     }
 }

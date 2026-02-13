@@ -1,0 +1,17 @@
+.{  // delete this file if you delete the build.zig
+    .name = .starjay_template, // TODO: change this
+    .version = "0.0.0",
+    .fingerprint = 0x5b85796f3357b2d4,
+    .minimum_zig_version = "0.15.1",
+    .dependencies = .{
+        .compile_commands = .{
+            .url = "https://github.com/the-argus/zig-compile-commands/archive/70fb439897e12cae896c071717d7c9c382918689.tar.gz",
+            .hash = "zig_compile_commands-0.0.1-OZg5-ULBAABTh3NXO3WXoSUX1474ez0EouuoT2yDANhz",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
