@@ -1,6 +1,9 @@
 //! This build.zig file is *optional*. It just makes cross-compilation simpler if
 //! you are comfortable installing Zig. If you are not, no problem, delete this file.
 //!
+//! It also generates the `compile_commands.json` file for `clangd` LSP support,
+//! which is a nice little bonus. You can do that with the `make` version using `bear`.
+//!
 //! There are comments below where you'd want to change things, otherwise you don't
 //! really need to know Zig in order to use this file to build your C code.
 //!

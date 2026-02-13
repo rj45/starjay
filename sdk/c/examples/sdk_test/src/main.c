@@ -3,6 +3,13 @@
 
 // This will trigger the implementation C code to be put in this file
 #define SDK_IMPL_ALL
+
+// Ask for printf -- this will pull in quite a bit of code
+#define SDK_TERM_PRINTF
+
+// Reduce the amount of code pulled in for printf by roughly 15 KB
+#define STB_SPRINTF_NOFLOAT
+
 #include "clint.h"
 #include "syscon.h"
 #include "term.h"
@@ -16,10 +23,17 @@ void kmain(void) {
     (void)t;
 
     /* Test term: write and read */
-    term_puts("SDK Test\r\n");
+    term_puts("Hello World!\r\n");
     term_putc('!');
+    term_putc('\r');
+    term_putc('\n');
     int ch = term_getch();
     (void)ch;
+
+
+    long long value = 412357816;
+
+    printf("Testing printf of %lld works!\r\n", value);
 
     /* Test keyboard */
     volatile bool pressed = keyboard_is_pressed(KEY_A);
@@ -40,9 +54,9 @@ void kmain(void) {
     psg.envelope_shape = 0xf;
     psg_regs_write(&psg, PSG_CHIP_PSG1);
 
-    // psg_turbosound_regs_t ts;
-    // psg_turbosound_init(&ts);
-    // psg_turbosound_write(&ts);
+    psg_turbosound_regs_t ts;
+    psg_turbosound_init(&ts);
+    psg_turbosound_write(&ts);
 
     /* Test VDP: set palette, sprite, VRAM */
     vdp_palette[0] = 0xFF000000;
@@ -52,6 +66,6 @@ void kmain(void) {
     vdp_vram_u16[0] = 0xBBCC;
 
     /* Test syscon: shutdown */
-    //syscon_shutdown();
+    syscon_shutdown();
     while (true) {}
 }
