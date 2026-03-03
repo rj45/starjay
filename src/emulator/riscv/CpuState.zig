@@ -23,7 +23,7 @@ pub const CpuState = @This();
 
 reg: Regs = .{},
 bus: *Bus,
-cycles: usize = 0,
+cycles: Bus.Cycle = 0,
 halted: bool = false,
 log_enabled: bool = true,
 cycle_divisor: u32 = 2,
@@ -56,7 +56,7 @@ pub fn run(self: *CpuState, clint: *Clint, mem: Memory, max_cycles: usize, fail_
     const start = try std.time.Instant.now();
     const initial_cycles = self.cycles;
 
-    var num_cycles: usize = 0;
+    var num_cycles: Bus.Cycle = 0;
     var errval: Word = 0;
     while (num_cycles < max_cycles) : (num_cycles +%= 1000) {
         errval = self.runForCycles(clint, mem, 1000, fail_on_all_faults);
@@ -97,7 +97,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, mem: Memory, cycles: u64, fa
 
     if ((self.reg.extraflags & @as(Word, 4)) != 0) {
         if (clint.mtimecmp > clint.mtime) {
-            const delta = @as(usize, clint.mtimecmp - clint.mtime);
+            const delta = @as(u64, clint.mtimecmp - clint.mtime);
             if (delta < cycles) {
                 self.cycles +%= delta;
                 return 1;
@@ -112,7 +112,7 @@ pub fn runForCycles(self: *CpuState, clint: *Clint, mem: Memory, cycles: u64, fa
 
     var pc: Word = self.reg.pc;
 
-    const goal_cycles = self.cycles +% @as(usize, cycles);
+    const goal_cycles = self.cycles +% @as(Bus.Cycle, cycles);
     while (self.cycles < goal_cycles) {
         var ir: Word = 0;
         var trap: Word = 0; // If positive, is a trap or interrupt.  If negative, is fatal error.

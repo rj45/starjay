@@ -150,7 +150,7 @@ pub fn loadElf(self: *Sram, rom_file: []const u8, base_addr: u32) !u32 {
             return error.SegmentBelowBase;
         }
 
-        const mem_offset = phdr.p_vaddr - base_addr;
+        const mem_offset: usize = @intCast(phdr.p_vaddr - base_addr);
         if (mem_offset + phdr.p_memsz > self.mem.len) return error.SegmentOutOfBounds;
 
         try file.seekTo(phdr.p_offset);
@@ -159,7 +159,7 @@ pub fn loadElf(self: *Sram, rom_file: []const u8, base_addr: u32) !u32 {
         if (bytes_read != phdr.p_filesz) return error.UnexpectedEof;
 
         if (phdr.p_memsz > phdr.p_filesz) {
-            const bss_start = mem_offset + phdr.p_filesz;
+            const bss_start: usize = @intCast(mem_offset + phdr.p_filesz);
             const bss_len = phdr.p_memsz - phdr.p_filesz;
             @memset(self.mem[bss_start..][0..@intCast(bss_len)], 0);
         }

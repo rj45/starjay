@@ -1,4 +1,4 @@
-.PHONY: all clean bootstrap tests public
+.PHONY: all clean bootstrap tests public web
 
 all: bootstrap tests examples
 
@@ -13,6 +13,9 @@ examples:
 
 clean:
 	make -C starjette clean
+
+web:
+	zig build run -Dtarget=wasm32-emscripten --release=small --sysroot ${EMSDK}/upstream/emscripten/cache/sysroot
 
 dlimage:
 	wget https://github.com/cnlohr/mini-rv32ima-images/raw/master/images/linux-6.1.14-rv32nommu-cnl-1.zip -O linux-6.1.14-rv32nommu-cnl-1.zip

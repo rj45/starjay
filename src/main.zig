@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const clap = @import("clap");
 
@@ -9,9 +10,6 @@ const System = @import("emulator/System.zig");
 const debugger = @import("debugger/root.zig");
 const vdp = @import("emulator/vdp/main.zig");
 const chan = @import("lib/chan.zig"); // for the tests
-
-var gpa_instance = std.heap.GeneralPurposeAllocator(.{}){};
-const gpa = gpa_instance.allocator();
 
 pub export const cpu: *emulator.CpuState = &@import("debugger/debugger.zig").cpu;
 
@@ -33,7 +31,24 @@ fn logFn(
     }
 }
 
+fn mainWithoutEnv(c_argc: c_int, c_argv: [*][*:0]c_char) callconv(.c) c_int {
+    _ = @as([*][*:0]u8, @ptrCast(c_argv))[0..@as(usize, @intCast(c_argc))];
+    const gpa = std.heap.c_allocator;
+    vdp.main(gpa, "sdk/zig/examples/vdp_demo/zig-out/bin/vdp_demo") catch unreachable;
+    return 0;
+}
+
+comptime {
+    if (builtin.target.os.tag == .emscripten) {
+        @export(&mainWithoutEnv, .{ .name = "__main_argc_argv" });
+    }
+}
+
 pub fn main() !void {
+    if (builtin.target.os.tag == .emscripten) return;
+
+    var gpa_instance = std.heap.GeneralPurposeAllocator(.{}){};
+    const gpa = gpa_instance.allocator();
     defer if (gpa_instance.deinit() != .ok) @panic("Memory leak on exit!");
 
     const params = comptime clap.parseParamsComptime(
