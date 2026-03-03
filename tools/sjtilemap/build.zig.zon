@@ -1,0 +1,21 @@
+.{
+    .name = .sjtilemap,
+    .version = "0.0.1",
+    .dependencies = .{
+        .zigimg = .{
+            .url = "git+https://github.com/zigimg/zigimg.git#7b98e82621fe302a9edc147df1191f4d1b7ff7a5",
+            .hash = "zigimg-0.1.0-8_eo2qWHFwA-S24SH7x7NplPii0EbIQiUfDrimgA6rzN",
+        },
+        .clap = .{
+            .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.11.0.tar.gz",
+            .hash = "clap-0.11.0-oBajB-HnAQDPCKYzwF7rO3qDFwRcD39Q0DALlTSz5H7e",
+        },
+    },
+    .minimum_zig_version = "0.15.1",
+    .paths = .{
+        "src",
+        "build.zig",
+        "build.zig.zon",
+    },
+    .fingerprint = 0x650613b3bffb253a,
+}
