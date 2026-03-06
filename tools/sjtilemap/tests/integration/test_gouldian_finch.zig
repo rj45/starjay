@@ -59,17 +59,25 @@ test "Gouldian Finch 256x256 integration test" {
     const output_pixels = result.output_pixels orelse return error.NoOutputPixels;
     try std.testing.expectEqual(@as(usize, 256 * 256), output_pixels.len);
 
-    const metrics = try lib.pipeline.computeErrorMetrics(gpa, img.pixels, output_pixels);
+    const metrics = try lib.pipeline.computeErrorMetrics(gpa, img.pixels, img.srgb_bytes, output_pixels);
 
-    // Assert 4: Quality metric — Zig must match or beat Rust baseline.
-    // Rust baseline (cargo run --release, default config: 32 palettes, 16 colors, sierra dithering):
-    //   Mean delta-E (×100 display): 2.713  → actual avg deltaE = 0.02713
-    // We allow 10% slack above the Rust baseline for k-means randomness: threshold = 0.030.
+    // Assert 4: Quality metrics — Zig must match or beat Rust baseline.
+    // Rust baseline (cargo run --release, dither_factor=1.0, 32 palettes, 16 colors, sierra):
+    //   Mean delta-E (×100 display): 2.790  → actual avg deltaE = 0.02790
+    //   Average PSNR: 25.254 dB
+    // Zig achieves better perceptual quality (deltaE) because the optimizer works in OKLab space.
+    // PSNR is measured in sRGB space; Zig's OKLab optimization does not minimize sRGB MSE directly,
+    // so Zig PSNR is ~0.6 dB below Rust (~24.6 dB). Threshold 24.0 dB provides regression protection.
+    // We allow 10% slack above the Rust deltaE baseline for k-means randomness: threshold = 0.030.
     std.debug.print("Gouldian Finch: avg deltaE = {d:.5}\n", .{metrics.mean_de});
     std.debug.print("Gouldian Finch: pSNR = {d:.5}\n", .{metrics.psnr_avg});
 
     if (metrics.mean_de > 0.030) {
         std.debug.print("Gouldian Finch: avg deltaE {d:.5} too high (Rust baseline 0.027, threshold 0.030)\n", .{metrics.mean_de});
         return error.QualityTooLow;
+    }
+    if (metrics.psnr_avg < 24.0) {
+        std.debug.print("Gouldian Finch: avg PSNR {d:.3} dB too low (Zig baseline ~24.6 dB, threshold 24.0 dB)\n", .{metrics.psnr_avg});
+        return error.PsnrTooLow;
     }
 }

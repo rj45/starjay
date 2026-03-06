@@ -380,6 +380,146 @@ test "Phase 6: 4 identical tile shapes, 4 different color sets -> 4 palettes, 1 
     }
 }
 
+test "Palette reduce_colors: frequency-weighted centroids for skewed distributions" {
+    // Tests that when there are more unique colors than colors_per_palette,
+    // the reduction produces palette entries that faithfully represent the
+    // dominant color (the one appearing in most pixels).
+    //
+    // Scenario: 64 pixels — 60 pixels use a dominant color A (L=0.50, a=0.0, b=0.0),
+    // and 4 pixels use rare colors B/C/D/E that are far from A in OKLab.
+    // With colors_per_palette=4, there are 5 unique colors → reduction needed.
+    //
+    // K-means on 5 equal-weight colors with k=4: A and B (the two closest colors,
+    // since B=0.55 is closest to A=0.50) get grouped together. Their unweighted
+    // centroid is 0.525 — noticeably far from A.
+    //
+    // With frequency-weighted centroids: (60*0.50 + 1*0.55)/61 = 0.5008 — very
+    // close to A. Any pixel of color A reconstructed via the palette should have
+    // deltaE < 0.005 (instead of ~0.025 without frequency weighting).
+    const tile_mod = lib.tile;
+    const palette_gen_mod = lib.palette;
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    // Color A: dominant (60 pixels), L=0.50, neutral (a=b=0)
+    // Color B: rare (1 pixel), L=0.55, very close to A → will cluster with A in k-means
+    // Colors C,D,E: rare (1 pixel each), L=0.10, 0.20, 0.30 → far from A
+    const color_a = OklabAlpha{ .l = 0.50, .a = 0.0, .b = 0.0, .alpha = 1.0 };
+    const color_b = OklabAlpha{ .l = 0.55, .a = 0.0, .b = 0.0, .alpha = 1.0 };
+    const color_c = OklabAlpha{ .l = 0.10, .a = 0.0, .b = 0.0, .alpha = 1.0 };
+    const color_d = OklabAlpha{ .l = 0.20, .a = 0.0, .b = 0.0, .alpha = 1.0 };
+    const color_e = OklabAlpha{ .l = 0.30, .a = 0.0, .b = 0.0, .alpha = 1.0 };
+
+    // Build one tile: 60 pixels of A, then 1 each of B, C, D, E (total 64)
+    const tile_pixels = try alloc.alloc(OklabAlpha, 64);
+    @memset(tile_pixels, color_a);
+    tile_pixels[60] = color_b;
+    tile_pixels[61] = color_c;
+    tile_pixels[62] = color_d;
+    tile_pixels[63] = color_e;
+
+    const tiles = [_]tile_mod.Tile{.{
+        .pixels = tile_pixels,
+        .width = 8,
+        .height = 8,
+        .has_transparent = false,
+    }};
+
+    const cfg = Config{
+        .tile_width = 8,
+        .tile_height = 8,
+        .colors_per_palette = 4,     // Only 4 slots → 5 unique colors triggers reduction
+        .color_similarity_threshold = 0.001, // Tight: no color merging
+        .palette_0_color_0_is_black = false,
+        .palette_kmeans_max_iter = 10_000,
+    };
+
+    const palette = try palette_gen_mod.generatePaletteFromTiles(alloc, &tiles, cfg);
+
+    // The palette must have a representative close to color_a.
+    // With frequency-weighted centroids, the representative for A's cluster
+    // should be within deltaE < 0.005 of A (actual ≈ 0.0008).
+    // Without frequency weighting, the representative would be the midpoint
+    // of {A, B} = L=0.525, giving deltaE(A, 0.525) ≈ 0.025 — failing this check.
+    var min_de_from_a: f32 = std.math.floatMax(f32);
+    for (palette.colors[0..palette.count]) |c| {
+        const de = color_mod.deltaE(color_a, c);
+        if (de < min_de_from_a) min_de_from_a = de;
+    }
+
+    if (min_de_from_a > 0.005) {
+        std.debug.print(
+            "reduce_colors: nearest palette entry to dominant color A has deltaE={d:.4} > 0.005\n" ++
+                "(without frequency weighting, k-means center of {{A,B}} ≈ 0.525, deltaE ≈ 0.025)\n",
+            .{min_de_from_a},
+        );
+        return error.DominantColorNotWellRepresented;
+    }
+}
+
+test "Phase 6 extended: palettes are sorted by average luminance (ascending)" {
+    // Verifies that after palette generation, palettes are ordered by their average
+    // OKLab luminance (palette[0] is darkest, palette[n-1] is brightest).
+    // The Phase 6 image has reds, greens, blues, yellows — yellows are much brighter
+    // in OKLab (L≈0.88-0.97) than reds/blues (L≈0.28-0.63), so yellows must be last.
+    // Without luminance sorting, palette order depends on random k-means initialization.
+    var gpa_instance = std.heap.GeneralPurposeAllocator(.{}){};
+    const gpa = gpa_instance.allocator();
+    defer _ = gpa_instance.deinit();
+
+    var img = try buildTestImage16x16MultiPalette(gpa);
+    defer img.deinit();
+
+    const cfg = Config{
+        .tile_width = 8,
+        .tile_height = 8,
+        .tilemap_width = 2,
+        .tilemap_height = 2,
+        .num_palettes = 4,
+        .colors_per_palette = 16,
+        .dither_algorithm = .none,
+        .transparency_mode = .none,
+        .palette_0_color_0_is_black = false,
+        .color_similarity_threshold = 0.001,
+    };
+
+    var result = try pipeline.run(gpa, cfg, img);
+    defer result.deinit();
+
+    try std.testing.expectEqual(@as(usize, 4), result.palettes.len);
+
+    // Compute average luminance of each palette (over valid colors only)
+    var avg_l: [4]f32 = undefined;
+    for (result.palettes, 0..) |pal, pi| {
+        var sum_l: f32 = 0;
+        const valid_count: u32 = @min(pal.count, @as(u32, @intCast(pal.colors.len)));
+        for (pal.colors[0..valid_count]) |c| sum_l += c.l;
+        avg_l[pi] = if (valid_count > 0) sum_l / @as(f32, @floatFromInt(valid_count)) else 0;
+    }
+
+    // Assert ascending sort: palette[i].avg_L <= palette[i+1].avg_L
+    for (0..3) |i| {
+        if (avg_l[i] > avg_l[i + 1] + 1e-4) {
+            std.debug.print(
+                "Palette luminance sort violated: avg_L[{}]={d:.4} > avg_L[{}]={d:.4}\n",
+                .{ i, avg_l[i], i + 1, avg_l[i + 1] },
+            );
+            return error.PalettesNotSortedByLuminance;
+        }
+    }
+
+    // The brightest palette (yellows, L≈0.9) must be palette[3] and much brighter than palette[0]
+    if (avg_l[3] - avg_l[0] < 0.2) {
+        std.debug.print(
+            "Expected large luminance spread between palette[0]={d:.4} and palette[3]={d:.4}\n",
+            .{ avg_l[0], avg_l[3] },
+        );
+        return error.PaletteLuminanceRangeTooSmall;
+    }
+}
+
 test "Phase 2: 8x8 single tile, 16 exact colors, pixel-perfect reconstruction" {
     var gpa_instance = std.heap.GeneralPurposeAllocator(.{}){};
     const gpa = gpa_instance.allocator();
@@ -1011,6 +1151,8 @@ test "Phase 11: Config generateDefault produces parseable ZON" {
     const source = try std.testing.allocator.dupeZ(u8, buf.items);
     defer std.testing.allocator.free(source);
 
+    // Config has many enum fields; increase comptime branch quota for ZON parsing.
+    @setEvalBranchQuota(10000);
     const parsed = try std.zon.parse.fromSlice(Config, std.testing.allocator, source, null, .{});
     defer std.zon.parse.free(std.testing.allocator, parsed);
 
@@ -1425,6 +1567,8 @@ test "Phase 11: ZON round-trip includes palette_strategy and tileset_strategy" {
     const source = try std.testing.allocator.dupeZ(u8, buf.items);
     defer std.testing.allocator.free(source);
 
+    // Config has many enum fields; increase comptime branch quota for ZON parsing.
+    @setEvalBranchQuota(10000);
     const parsed = try std.zon.parse.fromSlice(Config, std.testing.allocator, source, null, .{});
     defer std.zon.parse.free(std.testing.allocator, parsed);
 
@@ -1491,7 +1635,7 @@ test "Phase 10: palette hex output - known palette" {
     try image.convert(alloc, .float32);
     const oklab = try zigimg.color.sRGB.sliceToOklabAlphaCopy(alloc, image.pixels.float32);
 
-    const palette = Palette{ .colors = oklab };
+    const palette = Palette{ .colors = oklab, .count = @intCast(oklab.len) };
     const palettes = [_]Palette{palette};
 
     var buf: std.ArrayList(u8) = .empty;
@@ -1708,7 +1852,7 @@ test "Phase 10: palette binary output - known black and white palette" {
     try image.convert(alloc, .float32);
     const oklab = try zigimg.color.sRGB.sliceToOklabAlphaCopy(alloc, image.pixels.float32);
 
-    const palette = Palette{ .colors = oklab };
+    const palette = Palette{ .colors = oklab, .count = @intCast(oklab.len) };
     const palettes = [_]Palette{palette};
 
     var buf: std.ArrayList(u8) = .empty;
@@ -1740,7 +1884,7 @@ test "Phase 10: palette C-array output - include guard and RGB entries" {
     try image.convert(alloc, .float32);
     const oklab = try zigimg.color.sRGB.sliceToOklabAlphaCopy(alloc, image.pixels.float32);
 
-    const palette = Palette{ .colors = oklab };
+    const palette = Palette{ .colors = oklab, .count = @intCast(oklab.len) };
     const palettes = [_]Palette{palette};
 
     const c_cfg = c_array_out.CArrayConfig{
@@ -1912,7 +2056,7 @@ test "Tileset k-means: correctly handles > 256 unique tiles without capping" {
         };
     }
     const palettes = try alloc.alloc(Palette, 1);
-    palettes[0] = Palette{ .colors = palette_colors };
+    palettes[0] = Palette{ .colors = palette_colors, .count = @intCast(palette_colors.len) };
 
     // All tiles assigned to palette 0
     const palette_assignments = try alloc.alloc(u8, n_tiles);
@@ -1920,7 +2064,7 @@ test "Tileset k-means: correctly handles > 256 unique tiles without capping" {
 
     const max_unique: u32 = 64;
     const result = try tileset_mod.deduplicateExact(
-        alloc, tiles, palette_assignments, palettes, max_unique, 1000,
+        alloc, tiles, palette_assignments, palettes, max_unique, 1000, .auto,
     );
 
     // All tile_indices must be valid
@@ -2075,7 +2219,7 @@ test "JSON dump: tilemap, palette, and tileset data are correctly serialized" {
     // Write JSON dump to a buffer
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(gpa);
-    try lib.output.json.writeJsonDump(buf.writer(gpa).any(), &result, cfg);
+    try lib.output.json.writeJsonDump(buf.writer(gpa).any(), &result);
 
     // Parse back to verify structure
     const JsonTop = struct {
@@ -2098,4 +2242,257 @@ test "JSON dump: tilemap, palette, and tileset data are correctly serialized" {
     try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"tileset\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"tile_index\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"palette_index\"") != null);
+}
+
+// =============================================================================
+// Phase 12: preloaded palette / tileset strategies + Sierra multi-file
+// =============================================================================
+
+test "Phase 12: preloaded palette strategy uses loaded palettes without regenerating" {
+    // Tests that palette_strategy=.preloaded loads palettes from a hex file and
+    // uses them as-is, rather than generating new palettes from the image.
+    var gpa_instance = std.heap.GeneralPurposeAllocator(.{}){};
+    const gpa = gpa_instance.allocator();
+    defer _ = gpa_instance.deinit();
+
+    // Step 1: generate a reference palette from a known 8x8 image (16 distinct colors).
+    var img_ref = try buildTestImage(gpa);
+    defer img_ref.deinit();
+
+    const base_cfg = Config{
+        .tile_width = 8,
+        .tile_height = 8,
+        .tilemap_width = 1,
+        .tilemap_height = 1,
+        .num_palettes = 1,
+        .colors_per_palette = 16,
+        .dither_algorithm = .none,
+        .transparency_mode = .none,
+        .palette_0_color_0_is_black = false,
+        .color_similarity_threshold = 0.001,
+    };
+
+    var ref_result = try pipeline.run(gpa, base_cfg, img_ref);
+    defer ref_result.deinit();
+
+    // Step 2: write the reference palette to a temp file.
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    {
+        var pal_buf: std.ArrayList(u8) = .empty;
+        defer pal_buf.deinit(gpa);
+        try hex_out.writePaletteHex(pal_buf.writer(gpa).any(), ref_result.palettes, 16);
+        try tmp_dir.dir.writeFile(.{ .sub_path = "palette.hex", .data = pal_buf.items });
+    }
+
+    // Get real path for the pipeline to load.
+    var pal_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const pal_path = try tmp_dir.dir.realpath("palette.hex", &pal_path_buf);
+
+    // Step 3: run a second image with the preloaded palette — same 16 colors.
+    var img_b = try buildTestImage(gpa);
+    defer img_b.deinit();
+
+    var preloaded_cfg = base_cfg;
+    preloaded_cfg.palette_strategy = .preloaded;
+    preloaded_cfg.preloaded_palette = pal_path;
+
+    const images = [_]LoadedImage{img_b};
+    var mresult = try pipeline.runMulti(gpa, preloaded_cfg, &images);
+    defer mresult.deinit();
+
+    // Assert 1: exactly 1 palette was loaded (from the file).
+    try std.testing.expectEqual(@as(usize, 1), mresult.results[0].palettes.len);
+
+    // Assert 2: every tilemap entry uses a valid palette index.
+    for (mresult.results[0].tilemap) |entry| {
+        try std.testing.expect(entry.palette_index < mresult.results[0].palettes.len);
+    }
+
+    // Assert 3: reconstruction quality — same 16 colors → pixel-perfect match.
+    for (img_b.pixels, mresult.results[0].output_pixels, 0..) |in_px, out_px, i| {
+        const err = color_mod.deltaE(in_px, out_px);
+        if (err > 1e-3) {
+            std.debug.print("Preloaded palette: pixel {} deltaE={d:.6}\n", .{ i, err });
+            return error.PixelMismatch;
+        }
+    }
+}
+
+test "Phase 12: preloaded tileset strategy uses loaded tiles without regenerating" {
+    // Tests that tileset_strategy=.preloaded loads tiles from a hex file and maps
+    // each input tile to the closest loaded tile (no new tile generation).
+    var gpa_instance = std.heap.GeneralPurposeAllocator(.{}){};
+    const gpa = gpa_instance.allocator();
+    defer _ = gpa_instance.deinit();
+
+    // Step 1: generate a reference tileset from a 16x16 image with 2 unique tiles.
+    var img_ref = try buildTestImage16x16(gpa);
+    defer img_ref.deinit();
+
+    const base_cfg = Config{
+        .tile_width = 8,
+        .tile_height = 8,
+        .tilemap_width = 2,
+        .tilemap_height = 2,
+        .num_palettes = 1,
+        .colors_per_palette = 16,
+        .max_unique_tiles = 256,
+        .dither_algorithm = .none,
+        .transparency_mode = .none,
+        .palette_0_color_0_is_black = false,
+        .color_similarity_threshold = 0.001,
+    };
+
+    var ref_result = try pipeline.run(gpa, base_cfg, img_ref);
+    defer ref_result.deinit();
+
+    const n_tiles = ref_result.unique_tiles.len;
+    std.debug.print("Preloaded tileset: reference has {} unique tile(s)\n", .{n_tiles});
+
+    // Step 2: write the reference tileset to a temp file (row-major).
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    {
+        var ts_buf: std.ArrayList(u8) = .empty;
+        defer ts_buf.deinit(gpa);
+        try hex_out.writeTilesetHexRowMajor(
+            ts_buf.writer(gpa).any(),
+            ref_result.unique_tiles,
+            8, 8, 256, false,
+        );
+        try tmp_dir.dir.writeFile(.{ .sub_path = "tileset.hex", .data = ts_buf.items });
+    }
+
+    var ts_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const ts_path = try tmp_dir.dir.realpath("tileset.hex", &ts_path_buf);
+
+    // Step 3: run the same image with preloaded tileset.
+    var img_b = try buildTestImage16x16(gpa);
+    defer img_b.deinit();
+
+    var preloaded_cfg = base_cfg;
+    preloaded_cfg.tileset_strategy = .preloaded;
+    preloaded_cfg.preloaded_tileset = ts_path;
+    preloaded_cfg.num_preloaded_tiles = @intCast(n_tiles);
+
+    const images = [_]LoadedImage{img_b};
+    var mresult = try pipeline.runMulti(gpa, preloaded_cfg, &images);
+    defer mresult.deinit();
+
+    // Assert 1: the loaded tileset has exactly n_tiles tiles.
+    try std.testing.expectEqual(n_tiles, mresult.results[0].unique_tiles.len);
+
+    // Assert 2: all tilemap entries reference valid tile indices.
+    for (mresult.results[0].tilemap) |entry| {
+        try std.testing.expect(entry.tile_index < n_tiles);
+    }
+
+    // Assert 3: reconstruction quality — same tile pattern → pixel-perfect.
+    for (img_b.pixels, mresult.results[0].output_pixels, 0..) |in_px, out_px, i| {
+        const err = color_mod.deltaE(in_px, out_px);
+        if (err > 1e-3) {
+            std.debug.print("Preloaded tileset: pixel {} deltaE={d:.6}\n", .{ i, err });
+            return error.PixelMismatch;
+        }
+    }
+}
+
+test "Phase 12: multi-file shared pipeline with Sierra dithering produces acceptable quality" {
+    // Verifies that runMulti works with sierra dithering (not just .none).
+    // Uses two identical images; checks quality metrics rather than pixel-perfect match.
+    var gpa_instance = std.heap.GeneralPurposeAllocator(.{}){};
+    const gpa = gpa_instance.allocator();
+    defer _ = gpa_instance.deinit();
+
+    var img_a = try buildTestImageMultiFile(gpa, 0, 1);
+    defer img_a.deinit();
+    var img_b = try buildTestImageMultiFile(gpa, 0, 2);
+    defer img_b.deinit();
+
+    const cfg = Config{
+        .tile_width = 8,
+        .tile_height = 8,
+        .tilemap_width = 2,
+        .tilemap_height = 1,
+        .num_palettes = 1,
+        .colors_per_palette = 16,
+        .dither_algorithm = .sierra,
+        .dither_factor = 0.75,
+        .transparency_mode = .none,
+        .palette_0_color_0_is_black = false,
+        .color_similarity_threshold = 0.001,
+        .palette_strategy = .shared,
+        .tileset_strategy = .shared,
+    };
+
+    const images = [_]LoadedImage{ img_a, img_b };
+    var mresult = try pipeline.runMulti(gpa, cfg, &images);
+    defer mresult.deinit();
+
+    // Assert 1: tilemap dimensions correct for both images.
+    try std.testing.expectEqual(@as(usize, 2), mresult.results.len);
+    try std.testing.expectEqual(@as(usize, 2), mresult.results[0].tilemap.len);
+    try std.testing.expectEqual(@as(usize, 2), mresult.results[1].tilemap.len);
+
+    // Assert 2: quality — these images have 16 exact colors so even with dithering,
+    // reconstruction should be near-perfect (dithering shouldn't hurt exact-color tiles).
+    for (mresult.results, [_]LoadedImage{ img_a, img_b }, 0..) |res, orig_img, img_idx| {
+        const metrics = try lib.pipeline.computeErrorMetrics(gpa, orig_img.pixels, null, res.output_pixels);
+        std.debug.print("Phase12 Sierra img{}: avg deltaE={d:.5}\n", .{ img_idx, metrics.mean_de });
+        // With exact 16 colors, sierra dithering should keep quality very high.
+        try std.testing.expect(metrics.mean_de < 0.05);
+    }
+}
+
+// =============================================================================
+// Phase 11 extension: tile_reducer config field
+// =============================================================================
+
+test "tile_reducer=exact_hash succeeds when unique tile count is within limit" {
+    const gpa = std.testing.allocator;
+
+    // 4-tile image with 4 distinct patterns, limit = 4 → exact_hash should succeed
+    var img = try buildTestImage16x16FourDistinct(gpa);
+    defer img.deinit();
+
+    const cfg = Config{
+        .tile_width = 8, .tile_height = 8,
+        .tilemap_width = 2, .tilemap_height = 2,
+        .num_palettes = 1,
+        .colors_per_palette = 16,
+        .max_unique_tiles = 4,
+        .dither_algorithm = .none,
+        .palette_0_color_0_is_black = false,
+        .tile_reducer = .exact_hash,
+    };
+
+    var result = try pipeline.run(gpa, cfg, img);
+    defer result.deinit();
+
+    try std.testing.expectEqual(@as(usize, 4), result.unique_tiles.len);
+}
+
+test "tile_reducer=exact_hash fails when unique tile count exceeds limit" {
+    const gpa = std.testing.allocator;
+
+    // 4-tile image with 4 distinct patterns, limit = 2 → exact_hash should fail
+    var img = try buildTestImage16x16FourDistinct(gpa);
+    defer img.deinit();
+
+    const cfg = Config{
+        .tile_width = 8, .tile_height = 8,
+        .tilemap_width = 2, .tilemap_height = 2,
+        .num_palettes = 1,
+        .colors_per_palette = 16,
+        .max_unique_tiles = 2,
+        .dither_algorithm = .none,
+        .palette_0_color_0_is_black = false,
+        .tile_reducer = .exact_hash,
+    };
+
+    const result = pipeline.run(gpa, cfg, img);
+    try std.testing.expectError(error.TooManyUniqueTiles, result);
 }

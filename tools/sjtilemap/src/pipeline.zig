@@ -20,6 +20,7 @@ const TilemapEntry = tilemap_mod.TilemapEntry;
 const input_mod = @import("input.zig");
 const LoadedImage = input_mod.LoadedImage;
 const dither_mod = @import("dither.zig");
+const hex_out = @import("output/hex.zig");
 
 pub const PipelineResult = struct {
     /// Unique quantized tiles
@@ -78,6 +79,10 @@ pub const ErrorMetrics = struct {
 pub fn computeErrorMetrics(
     allocator: std.mem.Allocator,
     orig_pixels: []const OklabAlpha,
+    /// Original sRGB u8 bytes (3 per pixel: R, G, B), captured before OKLab conversion.
+    /// When non-null, used directly for PSNR to avoid the OKLab→sRGB round-trip precision loss.
+    /// When null, falls back to converting orig_pixels back to sRGB (less accurate).
+    orig_srgb_bytes: ?[]const u8,
     out_pixels: []const OklabAlpha,
 ) !ErrorMetrics {
     var metrics: ErrorMetrics = undefined;
@@ -105,25 +110,43 @@ pub fn computeErrorMetrics(
     metrics.p95_de = delta_e_values[@as(usize, @intFromFloat(@as(f32, @floatFromInt(n)) * 0.95))];
     metrics.p99_de = delta_e_values[@as(usize, @intFromFloat(@as(f32, @floatFromInt(n)) * 0.99))];
 
-    // Convert OKLab → sRGB float32 for PSNR (Rust uses u8 sRGB squared error).
-    const orig_srgb = try zigimg.color.sRGB.sliceFromOkLabAlphaCopy(allocator, orig_pixels, .clamp);
-    defer allocator.free(orig_srgb);
+    // PSNR: compare in sRGB u8 space (MAX=255), matching Rust generate_error_metrics().
+    // Use orig_srgb_bytes when available (no round-trip loss).
+    // Fallback: convert OKLab → sRGB float32 (introduces small precision loss).
     const out_srgb = try zigimg.color.sRGB.sliceFromOkLabAlphaCopy(allocator, out_pixels, .clamp);
     defer allocator.free(out_srgb);
 
     var mse_r: f64 = 0;
     var mse_g: f64 = 0;
     var mse_b: f64 = 0;
-    for (orig_srgb, out_srgb) |orig_f, out_f| {
-        const or8: f64 = std.math.clamp(@as(f64, orig_f.r), 0, 1) * 255.0;
-        const og8: f64 = std.math.clamp(@as(f64, orig_f.g), 0, 1) * 255.0;
-        const ob8: f64 = std.math.clamp(@as(f64, orig_f.b), 0, 1) * 255.0;
-        const outr: f64 = std.math.clamp(@as(f64, out_f.r), 0, 1) * 255.0;
-        const outg: f64 = std.math.clamp(@as(f64, out_f.g), 0, 1) * 255.0;
-        const outb: f64 = std.math.clamp(@as(f64, out_f.b), 0, 1) * 255.0;
-        mse_r += (or8 - outr) * (or8 - outr);
-        mse_g += (og8 - outg) * (og8 - outg);
-        mse_b += (ob8 - outb) * (ob8 - outb);
+    if (orig_srgb_bytes) |srgb_bytes| {
+        // Use original u8 sRGB bytes directly — no round-trip loss.
+        for (out_srgb, 0..) |out_f, i| {
+            const or8: f64 = @floatFromInt(srgb_bytes[i * 3]);
+            const og8: f64 = @floatFromInt(srgb_bytes[i * 3 + 1]);
+            const ob8: f64 = @floatFromInt(srgb_bytes[i * 3 + 2]);
+            const outr: f64 = std.math.clamp(@as(f64, out_f.r), 0, 1) * 255.0;
+            const outg: f64 = std.math.clamp(@as(f64, out_f.g), 0, 1) * 255.0;
+            const outb: f64 = std.math.clamp(@as(f64, out_f.b), 0, 1) * 255.0;
+            mse_r += (or8 - outr) * (or8 - outr);
+            mse_g += (og8 - outg) * (og8 - outg);
+            mse_b += (ob8 - outb) * (ob8 - outb);
+        }
+    } else {
+        // Fallback: convert orig OKLab → sRGB float32.
+        const orig_srgb = try zigimg.color.sRGB.sliceFromOkLabAlphaCopy(allocator, orig_pixels, .clamp);
+        defer allocator.free(orig_srgb);
+        for (orig_srgb, out_srgb) |orig_f, out_f| {
+            const or8: f64 = std.math.clamp(@as(f64, orig_f.r), 0, 1) * 255.0;
+            const og8: f64 = std.math.clamp(@as(f64, orig_f.g), 0, 1) * 255.0;
+            const ob8: f64 = std.math.clamp(@as(f64, orig_f.b), 0, 1) * 255.0;
+            const outr: f64 = std.math.clamp(@as(f64, out_f.r), 0, 1) * 255.0;
+            const outg: f64 = std.math.clamp(@as(f64, out_f.g), 0, 1) * 255.0;
+            const outb: f64 = std.math.clamp(@as(f64, out_f.b), 0, 1) * 255.0;
+            mse_r += (or8 - outr) * (or8 - outr);
+            mse_g += (og8 - outg) * (og8 - outg);
+            mse_b += (ob8 - outb) * (ob8 - outb);
+        }
     }
     const nf: f64 = @floatFromInt(n);
     mse_r /= nf;
@@ -142,6 +165,7 @@ pub fn computeErrorMetrics(
 /// Run the full conversion pipeline on a pre-loaded image.
 pub fn run(gpa: std.mem.Allocator, cfg: Config, img: LoadedImage) !PipelineResult {
     var arena = std.heap.ArenaAllocator.init(gpa);
+    errdefer arena.deinit();
     const alloc = arena.allocator();
 
     // Validate image dimensions against config
@@ -205,7 +229,7 @@ pub fn run(gpa: std.mem.Allocator, cfg: Config, img: LoadedImage) !PipelineResul
     };
 
     // Step 5: Deduplicate tiles
-    const tileset = try tileset_mod.deduplicateExact(alloc, quantized_tiles, palette_assignments, palettes, cfg.max_unique_tiles, cfg.tile_kmeans_max_iter);
+    const tileset = try tileset_mod.deduplicateExact(alloc, quantized_tiles, palette_assignments, palettes, cfg.max_unique_tiles, cfg.tile_kmeans_max_iter, cfg.tile_reducer);
 
     // Step 6: Find best (unique_tile, palette, x_flip) for each original tile position.
     // Re-evaluates every combination — equivalent to Rust imgconv.rs:702-740.
@@ -261,10 +285,11 @@ fn assignPalettes(
 
         for (palettes, 0..) |palette, pi| {
             var err: f32 = 0.0;
+            const valid_colors = palette.colors[0..palette.count];
             for (tile.pixels) |px| {
-                // Find min deltaE to any palette color
-                var min_d = color_mod.deltaESquared(px, palette.colors[0]);
-                for (palette.colors[1..]) |c| {
+                // Find min deltaE to any valid palette color
+                var min_d = color_mod.deltaESquared(px, valid_colors[0]);
+                for (valid_colors[1..]) |c| {
                     const d = color_mod.deltaESquared(px, c);
                     if (d < min_d) min_d = d;
                 }
@@ -341,13 +366,7 @@ fn calculateReconstructionError(
         const y: u32 = @intCast(idx / tw);
         const read_x = if (x_flip) (tw - 1 - x) else x;
         const color_idx = quantized.data[y * tw + read_x];
-        if (color_idx < palette.colors.len) {
-            total += color_mod.deltaE(px, palette.colors[color_idx]);
-        } else {
-            // if the palette has fewer than the max colors, then the extra colors could come
-            // from the tile, so error would be zero in that case
-            total += 0.0;
-        }
+        total += color_mod.deltaE(px, palette.colors[color_idx]);
     }
     return total;
 }
@@ -549,7 +568,13 @@ pub fn runMulti(
                 palettes_per_image[i] = try palette_mod.generatePalettes(alloc, tiles, cfg);
             }
         },
-        .preloaded => return error.NotImplemented,
+        .preloaded => {
+            const path = cfg.preloaded_palette orelse return error.NoPreloadedPalettePath;
+            const pal_data = try std.fs.cwd().readFileAlloc(alloc, path, 16 * 1024 * 1024);
+            const loaded_palettes = try hex_out.loadPaletteFromHex(alloc, pal_data, cfg.colors_per_palette);
+            if (loaded_palettes.len == 0) return error.EmptyPreloadedPalette;
+            for (0..n) |i| palettes_per_image[i] = loaded_palettes;
+        },
     }
 
     // Step 3: Assign palettes and quantize per image.
@@ -596,7 +621,7 @@ pub fn runMulti(
                 pal_off += pals.len;
                 tile_off += img_tiles.len;
             }
-            const shared_tileset = try tileset_mod.deduplicateExact(alloc, combined, combined_assignments, combined_palettes, cfg.max_unique_tiles, cfg.tile_kmeans_max_iter);
+            const shared_tileset = try tileset_mod.deduplicateExact(alloc, combined, combined_assignments, combined_palettes, cfg.max_unique_tiles, cfg.tile_kmeans_max_iter, cfg.tile_reducer);
             // Split tile_indices and x_flip_flags back per image; unique_tiles is shared.
             var split_off: usize = 0;
             for (0..n) |i| {
@@ -609,13 +634,46 @@ pub fn runMulti(
         },
         .per_file => {
             for (0..n) |i| {
-                const ts = try tileset_mod.deduplicateExact(alloc, quantized_per_image[i], palette_assignments_per_image[i], palettes_per_image[i], cfg.max_unique_tiles, cfg.tile_kmeans_max_iter);
+                const ts = try tileset_mod.deduplicateExact(alloc, quantized_per_image[i], palette_assignments_per_image[i], palettes_per_image[i], cfg.max_unique_tiles, cfg.tile_kmeans_max_iter, cfg.tile_reducer);
                 unique_tiles_per_image[i] = ts.unique_tiles;
                 tile_indices_per_image[i] = ts.tile_indices;
                 x_flip_flags_per_image[i] = ts.x_flip_flags;
             }
         },
-        .preloaded => return error.NotImplemented,
+        .preloaded => {
+            const path = cfg.preloaded_tileset orelse return error.NoPreloadedTilesetPath;
+            const ts_data = try std.fs.cwd().readFileAlloc(alloc, path, 64 * 1024 * 1024);
+            const num_tiles = if (cfg.num_preloaded_tiles > 0) cfg.num_preloaded_tiles else cfg.max_unique_tiles;
+            const loaded_tiles = try hex_out.loadTilesetFromHex(
+                alloc, ts_data, cfg.tile_height, cfg.tile_width, num_tiles,
+            );
+            if (loaded_tiles.len == 0) return error.EmptyPreloadedTileset;
+            // Build a TilesetResult-compatible structure: map each original tile to the
+            // closest loaded tile using calculateReconstructionError.
+            for (0..n) |i| {
+                unique_tiles_per_image[i] = loaded_tiles;
+                const img_qt = quantized_per_image[i];
+                tile_indices_per_image[i] = try alloc.alloc(u8, img_qt.len);
+                x_flip_flags_per_image[i] = try alloc.alloc(bool, img_qt.len);
+                @memset(x_flip_flags_per_image[i], false);
+                // Assign each original tile to closest loaded tile
+                for (all_tiles[i], 0..) |tile, ti| {
+                    var best_idx: u8 = 0;
+                    var best_err: f32 = std.math.floatMax(f32);
+                    for (loaded_tiles, 0..) |*lt, li| {
+                        const pal = palettes_per_image[i][palette_assignments_per_image[i][ti]];
+                        const err = calculateReconstructionError(
+                            tile.pixels, lt, &pal, false, cfg.tile_width, cfg.transparency_mode,
+                        );
+                        if (err < best_err) {
+                            best_err = err;
+                            best_idx = @intCast(li);
+                        }
+                    }
+                    tile_indices_per_image[i][ti] = best_idx;
+                }
+            }
+        },
     }
 
     // Step 5: For each image, find best (unique_tile, palette, x_flip) assignments and build tilemap.

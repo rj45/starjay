@@ -31,7 +31,11 @@ fn buildTileFeatureVector(arena: std.mem.Allocator, tile: *const Tile) ![]f32 {
 }
 
 pub const Palette = struct {
+    /// Always colors_per_palette entries; unused slots are padded with OKLab black.
     colors: []OklabAlpha,
+    /// Number of valid (non-padding) colors. May be < colors.len when the image
+    /// has fewer unique colors than colors_per_palette.
+    count: u32,
 };
 
 /// Generate a single palette from a set of tiles using k-means color quantization.
@@ -71,9 +75,13 @@ pub fn generatePaletteFromTiles(
     if (unique_colors.items.len <= max_colors) {
         colors = unique_colors.items;
     } else {
-        // Reduce to max_colors via k-means
+        // More unique colors than the palette can hold — reduce via k-means then
+        // compute frequency-weighted centroids (reduce_colors equivalent from Rust
+        // imgconv.rs:525-568). Frequency-weighted centroids pull the representative
+        // toward the dominant color in each cluster, matching the Rust approach.
         const n = unique_colors.items.len;
-        // Build input data: each color is a 3-float feature vector [L, a, b]
+
+        // Build input data: each unique color is a 3-float feature vector [L, a, b]
         const data = try arena.alloc([]f32, n);
         for (0..n) |i| {
             const row = try arena.alloc(f32, 3);
@@ -89,11 +97,65 @@ pub fn generatePaletteFromTiles(
             .max_it = cfg.palette_kmeans_max_iter,
         };
         try km.fit(data);
-        const centers = try km.getCenters();
 
-        colors = try arena.alloc(OklabAlpha, centers.len);
-        for (centers, 0..) |center, i| {
-            colors[i] = .{ .l = center[0], .a = center[1], .b = center[2], .alpha = 1.0 };
+        // Get cluster assignment for each unique color
+        const const_data = try arena.alloc([]const f32, n);
+        for (data, 0..) |row, i| const_data[i] = row;
+        const assignments = try km.predict(const_data);
+
+        // Compute frequency-weighted centroids: each unique color's weight is how many
+        // pixels in the original image matched that unique color (i.e., its frequency).
+        // This is the reduce_colors() algorithm from Rust imgconv.rs:548-565.
+        // We reconstruct frequencies from the pixel data by counting how many pixels
+        // matched each unique color entry.
+        const freq = try arena.alloc(u32, n);
+        @memset(freq, 0);
+        for (tiles) |tile| {
+            for (tile.pixels) |px| {
+                // Find which unique color this pixel matched
+                var best_uc: usize = 0;
+                var best_d = color_mod.deltaESquared(px, unique_colors.items[0]);
+                for (unique_colors.items[1..], 1..) |uc, ui| {
+                    const d = color_mod.deltaESquared(px, uc);
+                    if (d < best_d) { best_d = d; best_uc = ui; }
+                }
+                freq[best_uc] += 1;
+            }
+        }
+
+        // Accumulate frequency-weighted sums per cluster
+        const wsum_l = try arena.alloc(f64, max_colors);
+        const wsum_a = try arena.alloc(f64, max_colors);
+        const wsum_b = try arena.alloc(f64, max_colors);
+        const wcount = try arena.alloc(u64, max_colors);
+        @memset(wsum_l, 0);
+        @memset(wsum_a, 0);
+        @memset(wsum_b, 0);
+        @memset(wcount, 0);
+        for (0..n) |i| {
+            const c = assignments[i];
+            const w: f64 = @floatFromInt(if (freq[i] > 0) freq[i] else 1);
+            wsum_l[c] += w * unique_colors.items[i].l;
+            wsum_a[c] += w * unique_colors.items[i].a;
+            wsum_b[c] += w * unique_colors.items[i].b;
+            wcount[c] += if (freq[i] > 0) freq[i] else 1;
+        }
+
+        colors = try arena.alloc(OklabAlpha, max_colors);
+        for (0..max_colors) |c| {
+            if (wcount[c] > 0) {
+                const inv: f32 = 1.0 / @as(f32, @floatFromInt(wcount[c]));
+                colors[c] = .{
+                    .l = @as(f32, @floatCast(wsum_l[c])) * inv,
+                    .a = @as(f32, @floatCast(wsum_a[c])) * inv,
+                    .b = @as(f32, @floatCast(wsum_b[c])) * inv,
+                    .alpha = 1.0,
+                };
+            } else {
+                // Empty cluster: use k-means center as fallback
+                const center = (try km.getCenters())[c];
+                colors[c] = .{ .l = center[0], .a = center[1], .b = center[2], .alpha = 1.0 };
+            }
         }
     }
 
@@ -105,24 +167,30 @@ pub fn generatePaletteFromTiles(
     }.lessThan);
 
     // Force palette[0] = black if configured
+    const black = OklabAlpha{ .l = 0.0, .a = 0.0, .b = 0.0, .alpha = 1.0 };
     if (cfg.palette_0_color_0_is_black and colors.len > 0) {
         // Shift everything up, insert black at index 0
-        const black = OklabAlpha{ .l = 0.0, .a = 0.0, .b = 0.0, .alpha = 1.0 };
         // Only insert if first color is not already black
         const first = colors[0];
         if (color_mod.deltaESquared(first, black) > 1e-8) {
             // Drop the last color to make room
-            if (colors.len > 0) {
-                var i: usize = colors.len - 1;
-                while (i > 0) : (i -= 1) {
-                    colors[i] = colors[i - 1];
-                }
-                colors[0] = black;
+            var i: usize = colors.len - 1;
+            while (i > 0) : (i -= 1) {
+                colors[i] = colors[i - 1];
             }
+            colors[0] = black;
         }
     }
 
-    return Palette{ .colors = colors };
+    const actual_count: u32 = @intCast(colors.len);
+
+    // Always pad to colors_per_palette so palette.colors.len is always colors_per_palette.
+    // Unused slots are set to black; callers that need to distinguish real vs padding use `count`.
+    const padded = try arena.alloc(OklabAlpha, max_colors);
+    @memcpy(padded[0..colors.len], colors);
+    for (padded[colors.len..]) |*slot| slot.* = black;
+
+    return Palette{ .colors = padded, .count = actual_count };
 }
 
 /// Generate multiple palettes by clustering tiles and generating one palette per cluster.
@@ -182,6 +250,22 @@ pub fn generatePalettes(
             palettes[pi] = try generatePaletteFromTiles(arena, tiles, cfg);
         }
     }
+
+    // Sort palettes by average luminance (ascending) for better visual organization.
+    // Matches Rust imgconv.rs:404-409. This ensures palette[0] is darkest, palette[n-1]
+    // is brightest. Required so that palette index 0 (often reserved for transparency or
+    // color[0]=black) naturally contains the darkest color group.
+    std.sort.block(Palette, palettes, {}, struct {
+        pub fn lessThan(_: void, a: Palette, b: Palette) bool {
+            var sum_a: f32 = 0;
+            var sum_b: f32 = 0;
+            for (a.colors[0..a.count]) |c| sum_a += c.l;
+            for (b.colors[0..b.count]) |c| sum_b += c.l;
+            const avg_a = if (a.count > 0) sum_a / @as(f32, @floatFromInt(a.count)) else 0;
+            const avg_b = if (b.count > 0) sum_b / @as(f32, @floatFromInt(b.count)) else 0;
+            return avg_a < avg_b;
+        }
+    }.lessThan);
 
     return palettes;
 }

@@ -7,7 +7,7 @@ pub fn run(gpa: std.mem.Allocator) !void {
     // Generate 1000 random 3D points (simulating OKLab colors)
     const n_points: usize = 1000;
     const n_clusters: usize = 16;
-    const n_runs: usize = 20;
+    const n_runs: usize = 100;
 
     var prng = std.Random.DefaultPrng.init(12345);
     const rand = prng.random();

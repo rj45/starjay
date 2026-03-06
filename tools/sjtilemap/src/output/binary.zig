@@ -25,7 +25,7 @@ pub fn writePaletteBinary(
             try out.writeByte(b8);
         }
         // Pad to colors_per_palette
-        for (palette.colors.len..colors_per_palette) |_| {
+        for (palette.count..colors_per_palette) |_| {
             try out.writeByte(0);
             try out.writeByte(0);
             try out.writeByte(0);

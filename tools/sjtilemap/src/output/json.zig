@@ -2,8 +2,6 @@ const std = @import("std");
 const zigimg = @import("zigimg");
 const pipeline_mod = @import("../pipeline.zig");
 const PipelineResult = pipeline_mod.PipelineResult;
-const config_mod = @import("../config.zig");
-const Config = config_mod.Config;
 const tilemap_mod = @import("../tilemap.zig");
 
 /// Write a full JSON dump of pipeline results.
@@ -23,7 +21,6 @@ const tilemap_mod = @import("../tilemap.zig");
 pub fn writeJsonDump(
     out: std.io.AnyWriter,
     result: *const PipelineResult,
-    cfg: Config,
 ) !void {
     try out.writeAll("{\n");
 
@@ -50,7 +47,7 @@ pub fn writeJsonDump(
     try out.writeAll("  \"palettes\": [\n");
     for (result.palettes, 0..) |palette, pi| {
         try out.writeAll("    [");
-        const limit = @min(palette.colors.len, cfg.colors_per_palette);
+        const limit = palette.count;
         for (0..limit) |ci| {
             const c = palette.colors[ci];
             try out.print("{{\"l\":{d:.6},\"a\":{d:.6},\"b\":{d:.6}}}", .{ c.l, c.a, c.b });

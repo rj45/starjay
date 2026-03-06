@@ -146,13 +146,21 @@ a globally better (unique_tile, palette) pairing.
   hue-sorted feature vectors (implements the hue-sort step), BUT does **not** generate all
   cyclic rotations (see CRITICAL section). This is a partial implementation.
 - [x] Integration test: Phase 6 test is present and passing (4 palettes / 1 unique tile)
-- [ ] **`reduce_colors()` (Rust `imgconv.rs:525–568`)** — weighted-average color
-  reduction after k-means — is not implemented. The Zig code uses k-means centers
-  directly (`palette.colors[i] = {l: center[0], a: center[1], b: center[2]}`)..
+- [x] **`reduce_colors()` (Rust `imgconv.rs:525–568`)** — frequency-weighted centroid
+  computation after k-means is now implemented in `generatePaletteFromTiles()`. When unique
+  colors exceed `colors_per_palette`, k-means clusters them and the representative for each
+  cluster is computed as a frequency-weighted average (weight = how many image pixels matched
+  that unique color). This matches the Rust `reduce_colors()` algorithm. Test: "Palette
+  reduce_colors: frequency-weighted centroids for skewed distributions" verifies that a dominant
+  color (60/64 pixels) gets a palette representative within deltaE < 0.005 instead of the
+  unweighted midpoint (deltaE ≈ 0.025). Quality improvement: Gouldian Finch avg deltaE
+  improved from ~0.024 → ~0.023 after implementing frequency weighting.
   The Rust computes frequency-weighted averages of colors within each cluster.
-- [ ] **Palette sorted by average luminance** after generation (`imgconv.rs:404–409`).
-  The Zig code sorts colors within a palette by luminance but does NOT sort the palettes
-  themselves by average luminance.
+- [x] **Palette sorted by average luminance** after generation (`imgconv.rs:404–409`).
+  `generatePalettes()` now sorts palettes by average OKLab luminance (ascending) after generating
+  them. Colors within each palette remain sorted by individual luminance. Test "Phase 6 extended:
+  palettes are sorted by average luminance (ascending)" verifies this using the 4-palette image
+  (reds/greens/blues/yellows) where yellows (L≈0.9) must end up at palette[3].
 
 ---
 
@@ -166,10 +174,13 @@ a globally better (unique_tile, palette) pairing.
 - [x] **Sierra implementation moved to `dither.zig`** — `dither.zig` now contains
   `sierra_pattern`, `sierra_error_divisor` (comptime sum), `applySierraDither()`, and
   `quantizeTilesWithSierra()`. `pipeline.zig` calls `dither_mod.quantizeTilesWithSierra()`.
-- [ ] **No PSNR threshold assertion against a Rust-derived baseline in tests.** `main.zig`
-  now prints sRGB PSNR via `printErrorMetrics()` (matching Rust format), but the test suite
-  only asserts deltaE. Accurate PSNR assertions require storing original sRGB u8 bytes in
-  `LoadedImage` to avoid double-conversion loss; deferred.
+- [x] **PSNR threshold assertions added to Phase 13 tests.** `LoadedImage` now stores
+  `srgb_bytes: ?[]u8` (original u8 RGB values captured before OKLab conversion). `computeErrorMetrics()`
+  accepts `orig_srgb_bytes: ?[]const u8` and uses them directly for PSNR to avoid the OKLab→sRGB
+  round-trip precision loss. Both real-image tests now assert `psnr_avg` above a threshold.
+  Rust baselines (dither_factor=1.0): Gouldian Finch 25.254 dB, Kodak 23 27.841 dB.
+  Zig achieves ~24.7 dB / ~27.1 dB — about 0.6 dB below Rust because the optimizer minimizes
+  OKLab deltaE, not sRGB MSE. Thresholds: 24.0 dB (Gouldian Finch), 26.5 dB (Kodak 23).
 
 ---
 
@@ -243,9 +254,18 @@ a globally better (unique_tile, palette) pairing.
   `--c-tileset-row-type`, `--c-entries-per-line`, `--no-c-include-stdint`,
   `--no-c-const`, `--no-c-uppercase-hex`. `CArrayConfig` also gained `tile_row_type`
   and `hex_uppercase` fields.
-- [ ] **CLI flags still missing**: `--preloaded-palette`, `--preloaded-tileset`,
-  `--num-preloaded-palettes`, `--num-preloaded-tiles`, `--palette-generator`,
-  `--tile-reducer`, `--json-dump`
+- [x] **CLI flags added**: `--preloaded-palette`, `--preloaded-tileset`, `--num-preloaded-tiles`,
+  `--json-dump` all wired up. `--palette-strategy preloaded` and `--tileset-strategy preloaded`
+  also added.
+- [x] **CLI flags added**: `--num-preloaded-palettes`, `--palette-generator`, `--tile-reducer`.
+  `Config` gained `num_preloaded_palettes: u32`, `palette_generator: PaletteGeneratorAlgorithm`,
+  and `tile_reducer: TileReducerAlgorithm`. `PaletteGeneratorAlgorithm` (.kmeans) and
+  `TileReducerAlgorithm` (.auto/.exact_hash/.kmeans_color) enums added to `config.zig`.
+  `tile_reducer` is threaded through `pipeline.run()` and `runMulti()` to `deduplicateExact()`.
+  `.exact_hash` returns `error.TooManyUniqueTiles` when unique tile count exceeds `max_unique_tiles`.
+  Tests: "tile_reducer=exact_hash succeeds within limit" and "tile_reducer=exact_hash fails
+  when unique tile count exceeds limit" both pass. `pipeline.run()` now has `errdefer arena.deinit()`
+  to prevent memory leaks on error paths (e.g. TooManyUniqueTiles).
 
 ---
 
@@ -253,15 +273,33 @@ a globally better (unique_tile, palette) pairing.
 
 - [x] `pipeline.zig`: `runMulti()` with `.shared` and `.per_file` for both palette and tileset
 - [x] Integration tests: all four strategy combinations present and passing
-- [ ] **`.preloaded` strategy returns `error.NotImplemented`** for both palette and tileset.
-- [ ] **No integration test for `.preloaded` strategy**.
-- [ ] **Multi-file with Sierra dithering is untested** — the Phase 12 tests all use
-  `dither_algorithm = .none`.
+- [x] **`.preloaded` strategy implemented** for both palette and tileset. `pipeline.zig:runMulti()`
+  reads hex files via `hex_out.loadPaletteFromHex()` / `hex_out.loadTilesetFromHex()` and assigns
+  loaded palettes/tiles to each image. Tile assignment uses `calculateReconstructionError` to map
+  each original tile to its closest loaded tile. Config fields `preloaded_palette`, `preloaded_tileset`,
+  `num_preloaded_tiles` added to `Config`.
+- [x] **Integration tests for `.preloaded` strategy**: Phase 12 preloaded palette and tileset
+  tests present and passing. Verify loaded palettes produce correct reconstruction and loaded
+  tileset tiles are reused with correct indices.
+- [x] **Multi-file with Sierra dithering tested** — `Phase 12: multi-file shared pipeline with
+  Sierra dithering` test added; verifies Sierra dithering over two images with shared palette/tileset.
+- [x] **CLI flags for preloaded strategy added**: `--palette-strategy preloaded`,
+  `--preloaded-palette <path>`, `--tileset-strategy preloaded`, `--preloaded-tileset <path>`,
+  `--num-preloaded-tiles <n>` all wired up in `main.zig`.
 
 ---
 
 ## Phase 13 — Full integration with real images
 
+- [x] **Slow image tests split into separate files** — `test_gouldian_finch.zig` and
+  `test_kodak_23.zig` are compiled and run independently of `test_roundtrip.zig`. Each
+  slow test is built with `fast_optimize` (ReleaseSafe or ReleaseFast) regardless of the
+  main build mode. All three test binaries run in parallel under `zig build test` since
+  they are independent `test_step` dependants.
+- [x] **`computeErrorMetrics()` deduplicated to `pipeline.zig`** — The `ErrorMetrics` struct
+  and `computeErrorMetrics(alloc, orig_pixels, out_pixels)` function now live in
+  `pipeline.zig`, used by both the real-image test files and `main.zig:printErrorMetrics()`.
+  `TODO` comment retained noting this is conceptually a metrics utility, not core pipeline.
 - [x] Integration test: `Phase 13: Gouldian Finch 256x256` present and passing with tight
   threshold. Rust baseline established: `cargo run --release` gives avg deltaE = **0.02713**
   (2.713×100). Zig achieves **0.025**, beating the Rust baseline. Test asserts `< 0.030`
@@ -272,16 +310,12 @@ a globally better (unique_tile, palette) pairing.
   to work around a zigimg `SeekError.Unseekable` bug on certain PNG files (e.g. Kodak 23).
 - [x] **Second test image added**: `Phase 13: Kodak 23 256x256` passes. Rust baseline: avg
   deltaE = **0.02176**. Zig achieves **~0.018**, beating Rust by ~20%. Threshold: `< 0.025`.
-- [ ] **PSNR test assertion** — `main.zig` prints sRGB PSNR per channel (R/G/B/Avg) matching
-  Rust format, but no test assertion exists. Zig's sRGB PSNR is slightly lower due to the
-  OKLab round-trip in loadImage; deferred until `LoadedImage` stores original sRGB u8 bytes.
+- [x] **PSNR test assertions added** — see Phase 7 and Phase 13 entries. `input.zig:loadImage()`
+  now captures original u8 sRGB bytes into `LoadedImage.srgb_bytes` before the OKLab conversion.
+  `computeErrorMetrics()` uses these bytes directly for accurate PSNR (no round-trip loss).
 - [x] **Error metrics printed to stdout** — `main.zig:printErrorMetrics()` prints delta-E
   percentiles (×100 display factor: Min/Mean/Median/p75/p90/p95/p99/Max) and PSNR per channel
   (R, G, B, Average in dB) matching the Rust output format. Called after single-file `run()`.
-  Note: PSNR slightly underestimates vs Rust because original pixels undergo a double OKLab
-  round-trip (sRGB→OKLab→sRGB); Rust compares the original sRGB u8 directly. DeltaE metrics
-  are accurate (no round-trip). PSNR assertion in tests deferred until `LoadedImage` stores
-  original sRGB u8 bytes alongside OKLab pixels.
 - [x] **JSON dump (`--json-dump`)** implemented. `src/output/json.zig:writeJsonDump()` writes
   structured JSON with `tilemap_width`, `tilemap_height`, `palette_count`, `tile_count`,
   `tilemap[]`, `palettes[][]`, `tileset[][]`. CLI flag `--json-dump <path>` wired in `main.zig`.
@@ -296,8 +330,11 @@ a globally better (unique_tile, palette) pairing.
 - [x] `bench_dither.zig`: Sierra pipeline on gradient image
 - [x] `bench_tile_match.zig`: `bestPaletteEntry()` throughput
 - [x] `bench_delta_e.zig`: standalone `deltaE()` microbenchmark (1M ops) **NEW**
-- [ ] **`bench_dither.zig` runs the full pipeline**, not just the dithering kernel.
-- [ ] **`bench_kmeans.zig`** uses fewer runs/iterations than plan specifies.
+- [x] **`bench_dither.zig` benchmarks the dithering kernel directly** — now calls
+  `dither.quantizeTilesWithSierra()` on 1024 pre-built gradient tiles (equivalent to a 256×256
+  image) instead of running the full pipeline. Reports ns/tile and ms/op. (previously ran full
+  pipeline including palette generation, which is not the dithering hot path)
+- [x] **`bench_kmeans.zig`** updated to 100 runs per plan specification (was 20 runs).
 
 ---
 
@@ -337,9 +374,16 @@ a globally better (unique_tile, palette) pairing.
   x_flip (flipping shifts which pixels map to color index 0, which would corrupt transparency).
   Result: Gouldian Finch avg deltaE improved from **0.044 → 0.025**, now **beats Rust baseline
   0.027**. Phase 13 threshold tightened from 0.25 → 0.030.
-- [ ] **`TileReducer` tagged union** (`tileset.zig`) formal tagged-union interface is not
-  implemented (the auto-dispatch design from plan.md). The fallback logic lives inline in
-  `deduplicateExact()`, which is functionally correct but not the clean tagged-union design.
+- [~] **`TileReducer` tagged union** (`tileset.zig`) formal tagged-union interface is not
+  implemented (the auto-dispatch design from plan.md). The `TileReducerAlgorithm` enum is
+  added to config.zig and threaded through to `deduplicateExact()`, which switches on it
+  internally. The `.exact_hash` and `.auto` paths work correctly; `.kmeans_color` currently
+  behaves the same as `.auto` (k-means is always the fallback).
+- [x] **k-means tile reducer uses multiple restarts** — `kmeansReduceTiles()` now runs k-means
+  8 times and picks the result with minimum total inertia. Prevents bad local optima when
+  random initialization splits naturally-grouped colors across different clusters (e.g. reds
+  with blues). Fixes a flaky test failure: "Tileset k-means reducer: max_unique_tiles is
+  respected when exceeded" previously failed ~50% of the time.
 - [ ] **`ColorMapper` interface** (`quantize.zig`) is not present.
 - [x] **`Config.transparent_color: ?[3]u8`** field present in `config.zig` (implemented in Phase 8).
 - [ ] **`num_palettes` type**: plan specifies `PaletteCount` (u7); code uses `u32`.
@@ -349,3 +393,12 @@ a globally better (unique_tile, palette) pairing.
 - [ ] **`tileset_start_offset` type**: plan specifies `TileIndex` (u8); code uses `u32`.
 - [x] **Image dimension validation in `pipeline.run()`**: `cfg.validateImageDimensions()` is
   called at pipeline start (implemented in Phase 11).
+- [x] **PANIC FIXED: Palette always padded to `colors_per_palette` entries** — `Palette` struct
+  now has a `count: u32` field tracking valid colors. `generatePaletteFromTiles()` always
+  allocates exactly `colors_per_palette` slots and pads unused slots with OKLab black. This
+  eliminates the pre-existing panic in `reconstructPixels()` and `kmeansReduceTiles()` that
+  occurred when a tile's quantized index (from palette A) was used to index into a shorter
+  palette (palette B, with fewer unique colors). `bestPaletteEntry` / `bestPaletteEntrySkipFirst`
+  and `assignPalettes` use `palette.colors[0..palette.count]` to search only real colors.
+  Output writers use `palette.count` for the padding loop. Confirmed by Kodak 23 test no
+  longer panicking.

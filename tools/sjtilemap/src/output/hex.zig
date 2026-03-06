@@ -81,11 +81,117 @@ pub fn writePaletteHex(
             try out.print("{x:0>2}{x:0>2}{x:0>2} ", .{ r8, g8, b8 });
         }
         // Pad to colors_per_palette entries
-        for (palette.colors.len..colors_per_palette) |_| {
+        for (palette.count..colors_per_palette) |_| {
             try out.writeAll("000000 ");
         }
         try out.writeByte('\n');
     }
+}
+
+/// Load palettes from a palette hex file.
+/// Format: one palette per line, `RRGGBB ` per color (case-insensitive hex), padded to
+/// colors_per_palette entries with `000000`. Returns []Palette allocated with arena.
+/// The number of palettes loaded equals the number of non-empty lines in `data`.
+pub fn loadPaletteFromHex(
+    arena: std.mem.Allocator,
+    data: []const u8,
+    colors_per_palette: usize,
+) ![]Palette {
+    var palettes = std.ArrayListUnmanaged(Palette){};
+    var lines = std.mem.splitScalar(u8, data, '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (trimmed.len == 0) continue;
+        const colors = try arena.alloc(zigimg.color.OklabAlpha, colors_per_palette);
+        var color_idx: usize = 0;
+        var tokens = std.mem.splitScalar(u8, trimmed, ' ');
+        while (tokens.next()) |tok| {
+            const t = std.mem.trim(u8, tok, " \t");
+            if (t.len == 0) continue;
+            if (color_idx >= colors_per_palette) break;
+            if (t.len < 6) return error.InvalidPaletteHexFormat;
+            const r8 = try std.fmt.parseInt(u8, t[0..2], 16);
+            const g8 = try std.fmt.parseInt(u8, t[2..4], 16);
+            const b8 = try std.fmt.parseInt(u8, t[4..6], 16);
+            const srgb = zigimg.color.Colorf32{
+                .r = @as(f32, @floatFromInt(r8)) / 255.0,
+                .g = @as(f32, @floatFromInt(g8)) / 255.0,
+                .b = @as(f32, @floatFromInt(b8)) / 255.0,
+                .a = 1.0,
+            };
+            colors[color_idx] = zigimg.color.sRGB.toOklabAlpha(srgb);
+            color_idx += 1;
+        }
+        const loaded_count: u32 = @intCast(color_idx);
+        // Pad remaining slots with black
+        while (color_idx < colors_per_palette) : (color_idx += 1) {
+            colors[color_idx] = zigimg.color.OklabAlpha{ .l = 0, .a = 0, .b = 0, .alpha = 1.0 };
+        }
+        try palettes.append(arena, Palette{ .colors = colors, .count = loaded_count });
+    }
+    return palettes.toOwnedSlice(arena);
+}
+
+/// Unpack 2 u16 chunks (row-major 4bpp packing) into 8 pixel indices (0..15).
+/// Inverse of packRow8: chunk0 carries pixels 0..3, chunk1 carries pixels 4..7.
+fn unpackRow8(chunks: [2]u16, out: []u8) void {
+    for (0..4) |i| {
+        out[i]     = @truncate((chunks[0] >> @intCast(i * 4)) & 0xF);
+        out[i + 4] = @truncate((chunks[1] >> @intCast(i * 4)) & 0xF);
+    }
+}
+
+/// Load tileset from a row-major hex file.
+/// Format: tile_height lines; each line contains `num_tiles` pairs of u16 hex chunks.
+/// `num_tiles`: number of tiles to load (leading tiles; remainder is ignored padding).
+/// `tile_width` must match what was used when writing (default 8 → 2 chunks per tile per row).
+/// Tiles are allocated with arena and returned as []QuantizedTile.
+pub fn loadTilesetFromHex(
+    arena: std.mem.Allocator,
+    data: []const u8,
+    tile_height: usize,
+    tile_width: usize,
+    num_tiles: usize,
+) ![]QuantizedTile {
+    // Allocate tile storage: each tile has tile_height * tile_width pixels (u8 each)
+    const tiles = try arena.alloc(QuantizedTile, num_tiles);
+    for (tiles) |*t| {
+        t.data = try arena.alloc(u8, tile_height * tile_width);
+        t.width = @intCast(tile_width);
+        t.height = @intCast(tile_height);
+        @memset(t.data, 0);
+    }
+
+    const chunks_per_tile = tile_width / 4; // 8-wide tiles → 2 chunks per row
+    var row: usize = 0;
+    var lines = std.mem.splitScalar(u8, data, '\n');
+    while (lines.next()) |line| {
+        if (row >= tile_height) break;
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (trimmed.len == 0) continue;
+
+        var tokens = std.mem.splitScalar(u8, trimmed, ' ');
+        for (0..num_tiles) |ti| {
+            var row_pixels: [8]u8 = undefined;
+            var chunks_read: usize = 0;
+            var chunks: [2]u16 = .{ 0, 0 };
+            while (chunks_read < chunks_per_tile) {
+                const tok = tokens.next() orelse break;
+                const t = std.mem.trim(u8, tok, " \t");
+                if (t.len == 0) {
+                    // try again
+                    continue;
+                }
+                chunks[chunks_read] = try std.fmt.parseInt(u16, t, 16);
+                chunks_read += 1;
+            }
+            unpackRow8(chunks, &row_pixels);
+            const row_start = row * tile_width;
+            @memcpy(tiles[ti].data[row_start .. row_start + tile_width], &row_pixels);
+        }
+        row += 1;
+    }
+    return tiles;
 }
 
 /// Write tileset as hex in sequential order (all rows of tile 0, then tile 1, ...).

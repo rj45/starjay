@@ -48,7 +48,7 @@ pub fn writePaletteCArray(
             }
         }
         // Pad to colors_per_palette
-        for (palette.colors.len..colors_per_palette) |_| {
+        for (palette.count..colors_per_palette) |_| {
             if (entry_count % c_cfg.entries_per_line == 0) try out.writeAll("    ");
             try out.writeAll("0x000000");
             entry_count += 1;

@@ -49,13 +49,24 @@ test "Kodak 23 256x256 integration test" {
     //   Mean delta-E (×100 display): 2.176  → actual avg deltaE = 0.02176
     // Threshold = 0.025 (15% above Rust baseline).
     const output_pixels = result.output_pixels orelse return error.NoOutputPixels;
-    const metrics = try lib.pipeline.computeErrorMetrics(gpa, img.pixels, output_pixels);
+    const metrics = try lib.pipeline.computeErrorMetrics(gpa, img.pixels, img.srgb_bytes, output_pixels);
 
     std.debug.print("Kodak 23: avg deltaE = {d:.5}\n", .{metrics.mean_de});
     std.debug.print("Kodak 23: pSNR = {d:.5}\n", .{metrics.psnr_avg});
 
+    // Rust baseline (cargo run --release, dither_factor=1.0, 32 palettes, 16 colors, sierra):
+    //   Mean delta-E (×100 display): 2.218  → actual avg deltaE = 0.02218
+    //   Average PSNR: 27.841 dB
+    // Zig achieves better perceptual quality (deltaE) because the optimizer works in OKLab space.
+    // PSNR is measured in sRGB space; Zig achieves ~27.2 dB (0.6 dB below Rust).
+    // deltaE threshold: 0.025 (15% above Rust baseline).
+    // PSNR threshold: 26.5 dB provides regression protection (Zig achieves ~27.2 dB).
     if (metrics.mean_de > 0.025) {
         std.debug.print("Kodak23: avg deltaE {d:.5} too high (Rust baseline 0.022, threshold 0.025)\n", .{metrics.mean_de});
         return error.QualityTooLow;
+    }
+    if (metrics.psnr_avg < 26.5) {
+        std.debug.print("Kodak 23: avg PSNR {d:.3} dB too low (Zig baseline ~27.2 dB, threshold 26.5 dB)\n", .{metrics.psnr_avg});
+        return error.PsnrTooLow;
     }
 }

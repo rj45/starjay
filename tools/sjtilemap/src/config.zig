@@ -5,6 +5,23 @@ pub const DitherAlgorithm = enum {
     sierra,
 };
 
+/// Selects the algorithm used to generate palette colors from tile pixel sets.
+/// Currently only .kmeans is implemented.
+pub const PaletteGeneratorAlgorithm = enum {
+    /// K-means clustering in OKLab space (current default).
+    kmeans,
+};
+
+/// Selects the tile deduplication/reduction algorithm.
+pub const TileReducerAlgorithm = enum {
+    /// Exact hash dedup first; if unique tile count exceeds max_unique_tiles, falls back to .kmeans_color.
+    auto,
+    /// Exact hash dedup only. If unique tile count exceeds max_unique_tiles, returns an error.
+    exact_hash,
+    /// Always cluster quantized tiles with k-means, regardless of count.
+    kmeans_color,
+};
+
 pub const TransparencyMode = enum {
     none,
     /// Use image alpha channel: pixels with alpha < 0.5 are transparent.
@@ -71,6 +88,34 @@ pub const Config = struct {
     palette_strategy: PaletteStrategy = .shared,
     tileset_strategy: TilesetStrategy = .shared,
 
+    /// Path to a palette hex file to load when palette_strategy = .preloaded.
+    /// The file must be in the format written by writePaletteHex (one palette per line,
+    /// RRGGBB entries separated by spaces). All lines in the file are loaded as palettes.
+    preloaded_palette: ?[]const u8 = null,
+
+    /// Path to a tileset hex file to load when tileset_strategy = .preloaded.
+    /// Must be row-major format (see writeTilesetHexRowMajor). The number of tiles
+    /// to load is determined by num_preloaded_tiles (defaults to max_unique_tiles).
+    preloaded_tileset: ?[]const u8 = null,
+
+    /// How many tiles to load from preloaded_tileset (0 = use max_unique_tiles).
+    /// Since the row-major format pads to max_unique_tiles, this tells the loader
+    /// how many leading tiles were real (not padding).
+    num_preloaded_tiles: u32 = 0,
+
+    /// How many palettes to use from preloaded_palette (0 = load all lines in the file).
+    /// Useful when a palette file contains more entries than are needed for this run.
+    num_preloaded_palettes: u32 = 0,
+
+    /// Palette-generation algorithm. Currently only .kmeans is supported.
+    palette_generator: PaletteGeneratorAlgorithm = .kmeans,
+
+    /// Tile deduplication algorithm.
+    /// .auto: exact hash dedup first, k-means fallback if count exceeds max_unique_tiles.
+    /// .exact_hash: exact only, returns error.TooManyUniqueTiles if count exceeds limit.
+    /// .kmeans_color: always cluster with k-means after initial dedup.
+    tile_reducer: TileReducerAlgorithm = .auto,
+
     /// Validate configuration settings.
     /// Bits required to index into a palette entry: log2(colors_per_palette).
     /// Single query site for all output writers that pack pixels.
@@ -80,13 +125,24 @@ pub const Config = struct {
     }
 
     /// Load a Config from a ZON file. Missing fields use struct defaults.
+    /// String fields (preloaded_palette, preloaded_tileset) are allocated with `alloc`
+    /// and must be freed by the caller. All other fields are value types.
     pub fn load(alloc: std.mem.Allocator, zon_path: []const u8) !Config {
-        const source = try std.fs.cwd().readFileAllocOptions(alloc, zon_path, 1 << 20, null, .@"1", 0);
-        defer alloc.free(source);
-        const parsed = try std.zon.parse.fromSlice(Config, alloc, source, null, .{});
-        defer std.zon.parse.free(alloc, parsed);
-        // Return a copy (fromSlice may return references into the source buffer)
-        return parsed;
+        // Use a parse-only arena so ZON internals don't leak, while we dupe strings
+        // we need to outlive the parse buffer into alloc.
+        var parse_arena = std.heap.ArenaAllocator.init(alloc);
+        defer parse_arena.deinit();
+        const parse_alloc = parse_arena.allocator();
+
+        const source = try std.fs.cwd().readFileAllocOptions(parse_alloc, zon_path, 1 << 20, null, .@"1", 0);
+        // The ZON parser uses inline for loops over struct fields; Config has many enum fields,
+        // so we need a higher comptime branch quota to avoid "exceeded backwards branches" errors.
+        @setEvalBranchQuota(10000);
+        var cfg = try std.zon.parse.fromSlice(Config, parse_alloc, source, null, .{});
+        // Dupe optional string fields into alloc before parse_arena is freed.
+        if (cfg.preloaded_palette) |p| cfg.preloaded_palette = try alloc.dupe(u8, p);
+        if (cfg.preloaded_tileset) |p| cfg.preloaded_tileset = try alloc.dupe(u8, p);
+        return cfg;
     }
 
     pub fn validate(self: Config) !void {
@@ -157,6 +213,12 @@ pub const Config = struct {
             \\    .tileset_storage_order = .{s},
             \\    .palette_strategy = .{s},
             \\    .tileset_strategy = .{s},
+            \\    .preloaded_palette = null,
+            \\    .preloaded_tileset = null,
+            \\    .num_preloaded_tiles = {d},
+            \\    .num_preloaded_palettes = {d},
+            \\    .palette_generator = .{s},
+            \\    .tile_reducer = .{s},
             \\}}
         , .{
             defaults.tile_width,
@@ -178,6 +240,10 @@ pub const Config = struct {
             @tagName(defaults.tileset_storage_order),
             @tagName(defaults.palette_strategy),
             @tagName(defaults.tileset_strategy),
+            defaults.num_preloaded_tiles,
+            defaults.num_preloaded_palettes,
+            @tagName(defaults.palette_generator),
+            @tagName(defaults.tile_reducer),
         });
     }
 };

@@ -4,10 +4,12 @@ const OklabAlpha = color_mod.OklabAlpha;
 const Palette = @import("palette.zig").Palette;
 
 /// Find the index of the nearest palette entry to the given color.
+/// Only searches the first palette.count entries (valid colors; the rest are padding).
 pub fn bestPaletteEntry(px: OklabAlpha, palette: Palette) u8 {
+    const valid = palette.colors[0..palette.count];
     var best_idx: u8 = 0;
-    var best_dist = color_mod.deltaESquared(px, palette.colors[0]);
-    for (palette.colors[1..], 1..) |c, i| {
+    var best_dist = color_mod.deltaESquared(px, valid[0]);
+    for (valid[1..], 1..) |c, i| {
         const d = color_mod.deltaESquared(px, c);
         if (d < best_dist) {
             best_dist = d;
@@ -18,12 +20,13 @@ pub fn bestPaletteEntry(px: OklabAlpha, palette: Palette) u8 {
 }
 
 /// Find the index of the nearest palette entry, searching from index 1 onward.
-/// Index 0 is reserved for transparency.
+/// Index 0 is reserved for transparency. Only searches up to palette.count entries.
 pub fn bestPaletteEntrySkipFirst(px: OklabAlpha, palette: Palette) u8 {
-    if (palette.colors.len <= 1) return 0;
+    if (palette.count <= 1) return 0;
+    const valid = palette.colors[1..palette.count];
     var best_idx: u8 = 1;
-    var best_dist = color_mod.deltaESquared(px, palette.colors[1]);
-    for (palette.colors[2..], 2..) |c, i| {
+    var best_dist = color_mod.deltaESquared(px, valid[0]);
+    for (valid[1..], 2..) |c, i| {
         const d = color_mod.deltaESquared(px, c);
         if (d < best_dist) {
             best_dist = d;

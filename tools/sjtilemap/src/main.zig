@@ -35,8 +35,14 @@ pub fn main() !void {
         \\    --transparent-color <str>      RRGGBB hex color treated as transparent (use with --transparency=color).
         \\    --no-dither                    Disable dithering.
         \\    --dither-factor <f32>          Dither strength 0.0-1.0 (default: 0.75).
-        \\    --palette-strategy <str>       shared|per_file (default: shared).
-        \\    --tileset-strategy <str>       shared|per_file (default: shared).
+        \\    --palette-strategy <str>       shared|per_file|preloaded (default: shared).
+        \\    --preloaded-palette <str>      Path to palette hex file (use with --palette-strategy=preloaded).
+        \\    --tileset-strategy <str>       shared|per_file|preloaded (default: shared).
+        \\    --preloaded-tileset <str>      Path to tileset hex file (use with --tileset-strategy=preloaded).
+        \\    --num-preloaded-tiles <u32>    Number of real tiles in preloaded tileset (0 = use --num-tiles).
+        \\    --num-preloaded-palettes <u32> Number of palettes to use from preloaded palette (0 = load all).
+        \\    --palette-generator <str>      Palette generation algorithm: kmeans (default).
+        \\    --tile-reducer <str>           Tile dedup algorithm: auto|exact_hash|kmeans_color (default: auto).
         \\    --preview-png                  Write preview PNG reconstruction.
         \\    --c-var-prefix <str>           C array variable name prefix (default: "tilemap").
         \\    --c-tilemap-type <str>         C type for tilemap entries (default: "uint16_t").
@@ -155,19 +161,49 @@ pub fn main() !void {
             cfg.palette_strategy = .shared;
         } else if (std.mem.eql(u8, v, "per_file")) {
             cfg.palette_strategy = .per_file;
+        } else if (std.mem.eql(u8, v, "preloaded")) {
+            cfg.palette_strategy = .preloaded;
         } else {
             std.debug.print("Unknown palette-strategy: {s}\n", .{v});
             return error.InvalidArgument;
         }
     }
+    if (res.args.@"preloaded-palette") |v| cfg.preloaded_palette = v;
 
     if (res.args.@"tileset-strategy") |v| {
         if (std.mem.eql(u8, v, "shared")) {
             cfg.tileset_strategy = .shared;
         } else if (std.mem.eql(u8, v, "per_file")) {
             cfg.tileset_strategy = .per_file;
+        } else if (std.mem.eql(u8, v, "preloaded")) {
+            cfg.tileset_strategy = .preloaded;
         } else {
             std.debug.print("Unknown tileset-strategy: {s}\n", .{v});
+            return error.InvalidArgument;
+        }
+    }
+    if (res.args.@"preloaded-tileset") |v| cfg.preloaded_tileset = v;
+    if (res.args.@"num-preloaded-tiles") |v| cfg.num_preloaded_tiles = v;
+    if (res.args.@"num-preloaded-palettes") |v| cfg.num_preloaded_palettes = v;
+
+    if (res.args.@"palette-generator") |v| {
+        if (std.mem.eql(u8, v, "kmeans")) {
+            cfg.palette_generator = .kmeans;
+        } else {
+            std.debug.print("Unknown palette-generator: {s} (only 'kmeans' is supported)\n", .{v});
+            return error.InvalidArgument;
+        }
+    }
+
+    if (res.args.@"tile-reducer") |v| {
+        if (std.mem.eql(u8, v, "auto")) {
+            cfg.tile_reducer = .auto;
+        } else if (std.mem.eql(u8, v, "exact_hash")) {
+            cfg.tile_reducer = .exact_hash;
+        } else if (std.mem.eql(u8, v, "kmeans_color")) {
+            cfg.tile_reducer = .kmeans_color;
+        } else {
+            std.debug.print("Unknown tile-reducer: {s} (use auto, exact_hash, or kmeans_color)\n", .{v});
             return error.InvalidArgument;
         }
     }
@@ -211,7 +247,7 @@ pub fn main() !void {
         std.debug.print("Tilemap:      {}x{}\n", .{ result.tilemap_width, result.tilemap_height });
 
         if (result.output_pixels) |out_px| {
-            try printErrorMetrics(gpa, img.pixels, out_px);
+            try printErrorMetrics(gpa, img.pixels, img.srgb_bytes, out_px);
         }
 
         const stem = std.fs.path.stem(input_path);
@@ -221,7 +257,7 @@ pub fn main() !void {
         if (res.args.@"json-dump") |json_path| {
             var jbuf: std.ArrayList(u8) = .empty;
             defer jbuf.deinit(gpa);
-            try json_out.writeJsonDump(jbuf.writer(gpa).any(), &result, cfg);
+            try json_out.writeJsonDump(jbuf.writer(gpa).any(), &result);
             try writeFile(&jbuf, json_path);
             if (verbose) std.debug.print("Wrote JSON dump: {s}\n", .{json_path});
         }
@@ -288,9 +324,10 @@ pub fn main() !void {
 fn printErrorMetrics(
     allocator: std.mem.Allocator,
     orig_pixels: []const OklabAlpha,
+    orig_srgb_bytes: ?[]const u8,
     out_pixels: []const OklabAlpha,
 ) !void {
-    const metrics = try lib.pipeline.computeErrorMetrics(allocator, orig_pixels, out_pixels);
+    const metrics = try lib.pipeline.computeErrorMetrics(allocator, orig_pixels, orig_srgb_bytes, out_pixels);
 
     std.debug.print("\nImage Quality 100x Delta E Comparison (lower is better):\n", .{});
     std.debug.print("  Min:     {d:.3}\n", .{metrics.min_de * 100.0});

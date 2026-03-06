@@ -19,7 +19,7 @@ pub fn run(gpa: std.mem.Allocator) !void {
             .alpha = 1.0,
         };
     }
-    const palette = lib.palette.Palette{ .colors = palette_colors };
+    const palette = lib.palette.Palette{ .colors = palette_colors, .count = @intCast(palette_colors.len) };
 
     // Build query colors (slightly varied)
     const queries = try gpa.alloc(lib.color.OklabAlpha, n_queries);

@@ -4,6 +4,7 @@ const QuantizedTile = quantize.QuantizedTile;
 const kmeans = @import("kmeans");
 const palette_mod = @import("palette.zig");
 const Palette = palette_mod.Palette;
+const TileReducerAlgorithm = @import("config.zig").TileReducerAlgorithm;
 
 pub const TilesetResult = struct {
     /// The unique (deduplicated) tiles.
@@ -40,6 +41,7 @@ pub fn deduplicateExact(
     palettes: []const Palette,
     max_unique_tiles: u32,
     tile_kmeans_max_iter: u64,
+    tile_reducer: TileReducerAlgorithm,
 ) !TilesetResult {
     // Phase 1: collect all unique tiles via exact hash.
     // Use u32 values in the map so there is no 256-tile cap on unique tile collection.
@@ -89,8 +91,11 @@ pub fn deduplicateExact(
         }
     }
 
-    // Phase 2: if too many unique tiles, reduce via k-means
+    // Phase 2: if too many unique tiles, reduce via k-means (or fail for exact_hash mode)
     if (unique_list.items.len > max_unique_tiles) {
+        if (tile_reducer == .exact_hash) {
+            return error.TooManyUniqueTiles;
+        }
         return kmeansReduceTiles(
             arena,
             unique_list.items,
@@ -145,19 +150,46 @@ fn kmeansReduceTiles(
         feature_vecs[i] = vec;
     }
 
-    var km = kmeans.KMeans(f32, null, null, null, null){
-        .allocator = arena,
-        .n_clusters = k,
-        .max_it = tile_kmeans_max_iter,
-    };
-    try km.fit(feature_vecs);
+    // Run k-means with multiple restarts and pick the result with minimum total inertia.
+    // Random initialization can occasionally produce bad local optima (e.g. grouping a red
+    // with blues, giving a blue representative that covers the red cluster). Multiple restarts
+    // make it very unlikely that all restarts fail to find the correct grouping.
+    const n_restarts: usize = 8;
+    var best_inertia: f32 = std.math.floatMax(f32);
+    var best_labels: ?[]usize = null;
+    var best_centers: ?[][]f32 = null;
 
-    // Get cluster assignment for each unique tile
-    const const_vecs = try arena.alloc([]const f32, n);
-    for (feature_vecs, 0..) |v, i| const_vecs[i] = v;
-    const labels = try km.predict(const_vecs);
+    for (0..n_restarts) |_| {
+        var km = kmeans.KMeans(f32, null, null, null, null){
+            .allocator = arena,
+            .n_clusters = k,
+            .max_it = tile_kmeans_max_iter,
+        };
+        try km.fit(feature_vecs);
 
-    const centers = try km.getCenters();
+        const const_vecs_r = try arena.alloc([]const f32, n);
+        for (feature_vecs, 0..) |v, i| const_vecs_r[i] = v;
+        const labels_r = try km.predict(const_vecs_r);
+        const centers_r = try km.getCenters();
+
+        // Compute total inertia: sum of squared distances from each point to its center
+        var inertia: f32 = 0;
+        for (feature_vecs, labels_r) |fv, label| {
+            for (fv, centers_r[label]) |fv_j, cv_j| {
+                const diff = fv_j - cv_j;
+                inertia += diff * diff;
+            }
+        }
+
+        if (inertia < best_inertia) {
+            best_inertia = inertia;
+            best_labels = labels_r;
+            best_centers = centers_r;
+        }
+    }
+
+    const labels = best_labels.?;
+    const centers = best_centers.?;
 
     // For each cluster, find the unique tile closest to the cluster center
     const representative = try arena.alloc(usize, k);
