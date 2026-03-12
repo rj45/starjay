@@ -226,53 +226,70 @@ pub fn main() !void {
     const write_preview = res.args.@"preview" != 0;
     const write_preview_palette = res.args.@"preview-palette" != 0;
     const formats = res.args.format;
+    const input_paths = res.args.input;
 
-    if (res.args.input.len == 1) {
-        // Single file: use run()
-        const input_path = res.args.input[0];
-        if (cfg.verbose) std.debug.print("Loading {s}\n", .{input_path});
+    // Load all images.
+    const images = try gpa.alloc(lib.input.LoadedImage, input_paths.len);
+    defer {
+        for (images) |*img| img.deinit();
+        gpa.free(images);
+    }
+    for (input_paths, 0..) |path, i| {
+        if (cfg.verbose) std.debug.print("Loading {s}\n", .{path});
+        images[i] = try lib.input.loadImage(gpa, path);
+    }
 
-        var img = try lib.input.loadImage(gpa, input_path);
-        defer img.deinit();
+    // Override tilemap dimensions from first image if not explicitly set.
+    if (res.args.@"tilemap-width" == null)
+        cfg.tilemap_width = images[0].width / cfg.tile_width;
+    if (res.args.@"tilemap-height" == null)
+        cfg.tilemap_height = images[0].height / cfg.tile_height;
 
-        // Override tilemap dimensions from image if not specified
-        if (res.args.@"tilemap-width" == null)
-            cfg.tilemap_width = img.width / cfg.tile_width;
-        if (res.args.@"tilemap-height" == null)
-            cfg.tilemap_height = img.height / cfg.tile_height;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const results = try lib.pipeline.runMulti(arena.allocator(), cfg, images);
+    defer arena.deinit();
 
-        if (cfg.verbose) std.debug.print("Processing {}x{} image\n", .{ img.width, img.height });
+    if (input_paths.len > 1) std.debug.print("Processed {} files\n", .{results.len});
 
-        var result = try lib.pipeline.run(gpa, cfg, img);
-        defer result.deinit();
-
-        std.debug.print("Unique tiles: {}\n", .{result.unique_tiles.len});
-        std.debug.print("Palettes:     {}\n", .{result.palettes.len});
-        std.debug.print("Tilemap:      {}x{}\n", .{ result.tilemap_width, result.tilemap_height });
-
-        if (result.output_pixels) |out_px| {
-            try printErrorMetrics(gpa, img.pixels, img.srgb_bytes, out_px);
+    for (results, input_paths, images, 0..) |r, input_path, orig_img, i| {
+        if (input_paths.len > 1) {
+            std.debug.print("  [{d}] {s}: unique_tiles={} palettes={} tilemap={}x{}\n", .{
+                i, std.fs.path.basename(input_path), r.unique_tiles.len, r.palettes.len, r.tilemap_width, r.tilemap_height,
+            });
+        } else {
+            if (cfg.verbose) std.debug.print("Processing {}x{} image\n", .{ orig_img.width, orig_img.height });
+            std.debug.print("Unique tiles: {}\n", .{r.unique_tiles.len});
+            std.debug.print("Palettes:     {}\n", .{r.palettes.len});
+            std.debug.print("Tilemap:      {}x{}\n", .{ r.tilemap_width, r.tilemap_height });
         }
+
+        try printErrorMetrics(gpa, orig_img.pixels, orig_img.srgb_bytes, r.output_pixels);
 
         const stem = std.fs.path.stem(input_path);
 
-        try writeOutputs(gpa, &result, stem, output_dir, cfg, c_cfg, formats);
+        try writeOutputs(gpa, r, stem, output_dir, cfg, c_cfg, formats);
 
         if (res.args.@"json-dump") |json_path| {
             var jbuf: std.ArrayList(u8) = .empty;
             defer jbuf.deinit(gpa);
-            try json_out.writeJsonDump(jbuf.writer(gpa).any(), &result);
-            try writeFile(&jbuf, json_path);
-            if (cfg.verbose) std.debug.print("Wrote JSON dump: {s}\n", .{json_path});
+            try json_out.writeJsonDump(jbuf.writer(gpa).any(), &r);
+            // Single file: use specified path. Multiple files: derive from stem.
+            if (input_paths.len == 1) {
+                try writeFile(&jbuf, json_path);
+                if (cfg.verbose) std.debug.print("Wrote JSON dump: {s}\n", .{json_path});
+            } else {
+                const out_path = try std.fmt.allocPrint(gpa, "{s}/{s}_dump.json", .{ output_dir, stem });
+                defer gpa.free(out_path);
+                try writeFile(&jbuf, out_path);
+                if (cfg.verbose) std.debug.print("Wrote JSON dump: {s}\n", .{out_path});
+            }
         }
 
         if (write_preview) {
-            if (result.output_pixels) |pixels| {
-                const out_path = try std.fmt.allocPrint(gpa, "{s}/{s}_preview.png", .{ output_dir, stem });
-                defer gpa.free(out_path);
-                try lib.output.image.saveOklabAsPng(gpa, pixels, result.output_width, result.output_height, out_path);
-                if (cfg.verbose) std.debug.print("Wrote preview: {s}\n", .{out_path});
-            }
+            const out_path = try std.fmt.allocPrint(gpa, "{s}/{s}_preview.png", .{ output_dir, stem });
+            defer gpa.free(out_path);
+            try lib.output.image.saveOklabAsPng(gpa, r.output_pixels, r.output_width, r.output_height, out_path);
+            if (cfg.verbose) std.debug.print("Wrote preview: {s}\n", .{out_path});
         }
 
         if (write_preview_palette) {
@@ -283,19 +300,19 @@ pub fn main() !void {
             const image_width = cfg.colors_per_palette * square_size;
             const image_height = cfg.num_palettes * square_size;
 
-            const pixels: []OklabAlpha = try gpa.alloc(OklabAlpha, image_width*image_height);
+            const pixels: []OklabAlpha = try gpa.alloc(OklabAlpha, image_width * image_height);
             defer gpa.free(pixels);
 
-            for (result.palettes, 0..) |palette, sy| {
+            for (r.palettes, 0..) |palette, sy| {
                 for (palette.colors, 0..) |color, sx| {
                     for (0..square_size) |ty| {
                         for (0..square_size) |tx| {
                             const y = (sy * square_size) + ty;
                             const x = (sx * square_size) + tx;
                             if (sx < palette.count) {
-                                pixels[(y*image_width)+x] = color;
+                                pixels[(y * image_width) + x] = color;
                             } else {
-                                pixels[(y*image_width)+x] = .{.alpha = 0};
+                                pixels[(y * image_width) + x] = .{ .alpha = 0 };
                             }
                         }
                     }
@@ -304,51 +321,6 @@ pub fn main() !void {
 
             try lib.output.image.saveOklabAsPng(gpa, pixels, image_width, image_height, out_path);
             if (cfg.verbose) std.debug.print("Wrote palette preview: {s}\n", .{out_path});
-        }
-    } else {
-        // Multiple files: use runMulti()
-        const images = try gpa.alloc(lib.input.LoadedImage, res.args.input.len);
-        defer {
-            for (images) |*img| img.deinit();
-            gpa.free(images);
-        }
-
-        for (res.args.input, 0..) |path, i| {
-            if (cfg.verbose) std.debug.print("Loading {s}\n", .{path});
-            images[i] = try lib.input.loadImage(gpa, path);
-        }
-
-        var result = try lib.pipeline.runMulti(gpa, cfg, images);
-        defer result.deinit();
-
-        std.debug.print("Processed {} files\n", .{result.results.len});
-        for (result.results, res.args.input, 0..) |r, input_path, i| {
-            std.debug.print("  [{d}] unique_tiles={} palettes={} tilemap={}x{}\n", .{
-                i, r.unique_tiles.len, r.palettes.len, r.tilemap_width, r.tilemap_height,
-            });
-
-            const stem = std.fs.path.stem(input_path);
-
-            // Write output formats for this file
-            var single = lib.pipeline.PipelineResult{
-                .unique_tiles = r.unique_tiles,
-                .palettes = r.palettes,
-                .tilemap = r.tilemap,
-                .tilemap_width = r.tilemap_width,
-                .tilemap_height = r.tilemap_height,
-                .output_pixels = r.output_pixels,
-                .output_width = r.output_width,
-                .output_height = r.output_height,
-                ._arena = undefined, // not owned here
-            };
-            try writeOutputs(gpa, &single, stem, output_dir, cfg, c_cfg, formats);
-
-            if (write_preview) {
-                const out_path = try std.fmt.allocPrint(gpa, "{s}/{s}_preview.png", .{ output_dir, stem });
-                defer gpa.free(out_path);
-                try lib.output.image.saveOklabAsPng(gpa, r.output_pixels, r.output_width, r.output_height, out_path);
-                if (cfg.verbose) std.debug.print("Wrote preview: {s}\n", .{out_path});
-            }
         }
     }
 }
@@ -391,7 +363,7 @@ fn writeFile(buf: *std.ArrayList(u8), path: []const u8) !void {
 
 fn writeOutputs(
     gpa: std.mem.Allocator,
-    result: *lib.pipeline.PipelineResult,
+    result: lib.pipeline.PipelineResult,
     stem: []const u8,
     output_dir: []const u8,
     cfg: lib.config.Config,

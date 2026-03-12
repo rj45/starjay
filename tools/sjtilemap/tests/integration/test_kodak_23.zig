@@ -37,8 +37,9 @@ test "Kodak 23 256x256 integration test" {
         .color_similarity_threshold = 0.01,
     };
 
-    var result = try pipeline.run(gpa, cfg, img);
-    defer result.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const result = try pipeline.run(arena.allocator(), cfg, img);
+    defer arena.deinit();
 
     try std.testing.expect(result.unique_tiles.len <= 256);
     try std.testing.expectEqual(@as(usize, 1024), result.tilemap.len);
@@ -48,8 +49,7 @@ test "Kodak 23 256x256 integration test" {
     // Rust baseline (cargo run --release, default config):
     //   Mean delta-E (×100 display): 2.176  → actual avg deltaE = 0.02176
     // Threshold = 0.025 (15% above Rust baseline).
-    const output_pixels = result.output_pixels orelse return error.NoOutputPixels;
-    const metrics = try lib.pipeline.computeErrorMetrics(gpa, img.pixels, img.srgb_bytes, output_pixels);
+    const metrics = try lib.pipeline.computeErrorMetrics(gpa, img.pixels, img.srgb_bytes, result.output_pixels);
 
     std.debug.print("Kodak 23: avg deltaE = {d:.5}\n", .{metrics.mean_de});
     std.debug.print("Kodak 23: pSNR = {d:.5}\n", .{metrics.psnr_avg});

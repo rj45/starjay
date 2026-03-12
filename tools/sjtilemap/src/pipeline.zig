@@ -35,15 +35,9 @@ pub const PipelineResult = struct {
     tilemap_height: u32,
     /// Reconstructed pixel output (in sRGB Colorf32)
     /// Owned by the result arena; caller must free via deinit.
-    output_pixels: ?[]OklabAlpha,
+    output_pixels: []OklabAlpha,
     output_width: u32,
     output_height: u32,
-
-    _arena: std.heap.ArenaAllocator,
-
-    pub fn deinit(self: *@This()) void {
-        self._arena.deinit();
-    }
 };
 
 /// Convert an sRGB [3]u8 color to OKLab using zigimg's conversion pipeline.
@@ -55,6 +49,24 @@ fn srgbToOklab(alloc: std.mem.Allocator, rgb: [3]u8) !OklabAlpha {
     const oklab_pixels = try zigimg.color.sRGB.sliceToOklabAlphaCopy(alloc, image.pixels.float32);
     // oklab_pixels is arena-owned; return the single pixel value
     return oklab_pixels[0];
+}
+
+/// Preprocess pixels for .color transparency: pixels matching cfg.transparent_color get alpha=0.
+/// Returns the original slice unchanged when no preprocessing is needed.
+/// When preprocessing is needed, returns an arena-allocated modified copy.
+fn applyColorTransparency(alloc: std.mem.Allocator, cfg: Config, pixels: []const OklabAlpha) ![]const OklabAlpha {
+    if (cfg.transparency_mode != .color) return pixels;
+    const tc = cfg.transparent_color orelse return pixels;
+    const tc_oklab = try srgbToOklab(alloc, tc);
+    const modified = try alloc.dupe(OklabAlpha, pixels);
+    for (modified) |*px| {
+        const dist = color_mod.deltaESquared(
+            OklabAlpha{ .l = px.l, .a = px.a, .b = px.b, .alpha = 1.0 },
+            OklabAlpha{ .l = tc_oklab.l, .a = tc_oklab.a, .b = tc_oklab.b, .alpha = 1.0 },
+        );
+        if (dist < 1e-5) px.alpha = 0.0;
+    }
+    return modified;
 }
 
 // TODO: this doesn't really belong here....
@@ -163,112 +175,10 @@ pub fn computeErrorMetrics(
 }
 
 /// Run the full conversion pipeline on a pre-loaded image.
-pub fn run(gpa: std.mem.Allocator, cfg: Config, img: LoadedImage) !PipelineResult {
-    var arena = std.heap.ArenaAllocator.init(gpa);
-    errdefer arena.deinit();
-    const alloc = arena.allocator();
-
-    // Validate image dimensions against config
-    try cfg.validateImageDimensions(img.width, img.height);
-
-    // For .color transparency mode, preprocess: mark pixels matching transparent_color as alpha=0
-    const effective_pixels = if (cfg.transparency_mode == .color) blk: {
-        if (cfg.transparent_color) |tc| {
-            const tc_oklab = try srgbToOklab(alloc, tc);
-            const modified = try alloc.dupe(OklabAlpha, img.pixels);
-            for (modified) |*px| {
-                // Compare L/a/b only (ignore alpha). Threshold accounts for f32 precision.
-                const dist = color_mod.deltaESquared(
-                    OklabAlpha{ .l = px.l, .a = px.a, .b = px.b, .alpha = 1.0 },
-                    OklabAlpha{ .l = tc_oklab.l, .a = tc_oklab.a, .b = tc_oklab.b, .alpha = 1.0 },
-                );
-                if (dist < 1e-5) px.alpha = 0.0;
-            }
-            break :blk modified;
-        }
-        break :blk img.pixels;
-    } else img.pixels;
-
-    if (cfg.verbose) std.debug.print("Extracting tiles...\n", .{});
-    const tiles = try tile_mod.extractTiles(
-        alloc,
-        effective_pixels,
-        img.width,
-        img.height,
-        cfg,
-    );
-
-    if (cfg.verbose) std.debug.print("Generating palettes...\n", .{});
-    const palettes = try palette_mod.generatePalettes(alloc, tiles, cfg);
-
-    if (cfg.verbose) std.debug.print("Assigning palettes...\n", .{});
-    const palette_assignments = try assignPalettes(alloc, tiles, palettes);
-
-    if (cfg.verbose) std.debug.print("Quantizing tiles...\n", .{});
-    const tilemap_width = img.width / cfg.tile_width;
-    const tilemap_height = img.height / cfg.tile_height;
-    const quantized_tiles = switch (cfg.dither_algorithm) {
-        .none => try quantizeTiles(alloc, tiles, palettes, palette_assignments, cfg),
-        .sierra => blk: {
-            if (cfg.dither_factor == 0.0) {
-                break :blk try quantizeTiles(alloc, tiles, palettes, palette_assignments, cfg);
-            } else {
-                break :blk try dither_mod.quantizeTilesWithSierra(
-                    alloc,
-                    tiles,
-                    palettes,
-                    palette_assignments,
-                    cfg,
-                    img.width,
-                    img.height,
-                    tilemap_width,
-                    tilemap_height,
-                );
-            }
-        },
-    };
-
-    if (cfg.verbose) std.debug.print("Deduplicating tiles...\n", .{});
-    const tileset = try tileset_mod.deduplicateExact(alloc, quantized_tiles, palette_assignments, palettes, cfg.max_unique_tiles, cfg.tile_kmeans_max_iter, cfg.tile_reducer);
-
-
-    if (cfg.verbose) std.debug.print("Finding best tile assignments...\n", .{});
-    const best = try findBestTileAssignments(alloc, tiles, tileset.unique_tiles, palettes, cfg);
-
-    if (cfg.verbose) std.debug.print("Building tilemap entries...\n", .{});
-    const tilemap = try buildTilemap(
-        alloc,
-        best.tile_indices,
-        best.x_flip_flags,
-        best.palette_indices,
-        tilemap_width,
-        tilemap_height,
-        tiles,
-        cfg,
-    );
-
-    if (cfg.verbose) std.debug.print("Reconstructing output image...\n", .{});
-    const output_pixels = try reconstructPixels(
-        alloc,
-        tilemap,
-        tileset.unique_tiles,
-        palettes,
-        tilemap_width,
-        tilemap_height,
-        cfg,
-    );
-
-    return PipelineResult{
-        .unique_tiles = tileset.unique_tiles,
-        .palettes = palettes,
-        .tilemap = tilemap,
-        .tilemap_width = @intCast(tilemap_width),
-        .tilemap_height = @intCast(tilemap_height),
-        .output_pixels = output_pixels,
-        .output_width = img.width,
-        .output_height = img.height,
-        ._arena = arena,
-    };
+/// Thin wrapper around runMulti for single-image use and test compatibility.
+pub fn run(arena: std.mem.Allocator, cfg: Config, img: LoadedImage) !PipelineResult {
+    const results = try runMulti(arena, cfg, &[_]LoadedImage{img});
+    return results[0];
 }
 
 fn assignPalettes(
@@ -498,64 +408,36 @@ fn reconstructPixels(
     return pixels;
 }
 
-/// Result for a single image within a multi-file pipeline run.
-pub const PerFileResult = struct {
-    /// Unique quantized tiles (may be shared with other results).
-    unique_tiles: []QuantizedTile,
-    /// Generated palettes (may be shared with other results).
-    palettes: []Palette,
-    /// Tilemap: one entry per tile position.
-    tilemap: []TilemapEntry,
-    tilemap_width: u32,
-    tilemap_height: u32,
-    /// Reconstructed output pixels (always present).
-    output_pixels: []OklabAlpha,
-    output_width: u32,
-    output_height: u32,
-};
-
-/// Result of running the multi-file pipeline.
-pub const MultiFileResult = struct {
-    results: []PerFileResult,
-    _arena: std.heap.ArenaAllocator,
-
-    pub fn deinit(self: *@This()) void {
-        self._arena.deinit();
-    }
-};
-
 /// Run the pipeline on multiple images with shared/per-file palette/tileset strategies.
 pub fn runMulti(
-    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
     cfg: Config,
     images: []const LoadedImage,
-) !MultiFileResult {
+) ![]PipelineResult {
     const n = images.len;
 
-    // Use a single arena for all intermediate and final data.
-    var arena = std.heap.ArenaAllocator.init(gpa);
-    const alloc = arena.allocator();
-
     // Step 1: Extract tiles from all images.
-    const all_tiles = try alloc.alloc([]Tile, n);
+    const all_tiles = try arena.alloc([]Tile, n);
     for (images, 0..) |img, i| {
-        all_tiles[i] = try tile_mod.extractTiles(alloc, img.pixels, img.width, img.height, cfg);
+        try cfg.validateImageDimensions(img.width, img.height);
+        const effective_pixels = try applyColorTransparency(arena, cfg, img.pixels);
+        all_tiles[i] = try tile_mod.extractTiles(arena, effective_pixels, img.width, img.height, cfg);
     }
 
     // Step 2: Generate palettes (shared or per-file).
-    const palettes_per_image = try alloc.alloc([]Palette, n);
+    const palettes_per_image = try arena.alloc([]Palette, n);
     switch (cfg.palette_strategy) {
         .shared => {
             // Collect all tiles from all images into one flat slice.
             var total_tiles: usize = 0;
             for (all_tiles) |tiles| total_tiles += tiles.len;
-            const combined_tiles = try alloc.alloc(Tile, total_tiles);
+            const combined_tiles = try arena.alloc(Tile, total_tiles);
             var offset: usize = 0;
             for (all_tiles) |tiles| {
                 @memcpy(combined_tiles[offset..][0..tiles.len], tiles);
                 offset += tiles.len;
             }
-            const shared_palettes = try palette_mod.generatePalettes(alloc, combined_tiles, cfg);
+            const shared_palettes = try palette_mod.generatePalettes(arena, combined_tiles, cfg);
             // All images share the same palette slice.
             for (0..n) |i| {
                 palettes_per_image[i] = shared_palettes;
@@ -563,49 +445,65 @@ pub fn runMulti(
         },
         .per_file => {
             for (all_tiles, 0..) |tiles, i| {
-                palettes_per_image[i] = try palette_mod.generatePalettes(alloc, tiles, cfg);
+                palettes_per_image[i] = try palette_mod.generatePalettes(arena, tiles, cfg);
             }
         },
         .preloaded => {
             const path = cfg.preloaded_palette orelse return error.NoPreloadedPalettePath;
-            const pal_data = try std.fs.cwd().readFileAlloc(alloc, path, 16 * 1024 * 1024);
-            const loaded_palettes = try hex_out.loadPaletteFromHex(alloc, pal_data, cfg.colors_per_palette);
+            const pal_data = try std.fs.cwd().readFileAlloc(arena, path, 16 * 1024 * 1024);
+            const loaded_palettes = try hex_out.loadPaletteFromHex(arena, pal_data, cfg.colors_per_palette);
             if (loaded_palettes.len == 0) return error.EmptyPreloadedPalette;
             for (0..n) |i| palettes_per_image[i] = loaded_palettes;
         },
     }
 
     // Step 3: Assign palettes and quantize per image.
-    const quantized_per_image = try alloc.alloc([]QuantizedTile, n);
-    const palette_assignments_per_image = try alloc.alloc([]u8, n);
+    const quantized_per_image = try arena.alloc([]QuantizedTile, n);
+    const palette_assignments_per_image = try arena.alloc([]u8, n);
     for (0..n) |i| {
-        palette_assignments_per_image[i] = try assignPalettes(alloc, all_tiles[i], palettes_per_image[i]);
-        quantized_per_image[i] = try quantizeTiles(
-            alloc,
-            all_tiles[i],
-            palettes_per_image[i],
-            palette_assignments_per_image[i],
-            cfg,
-        );
+        palette_assignments_per_image[i] = try assignPalettes(arena, all_tiles[i], palettes_per_image[i]);
+        const img = images[i];
+        const tilemap_width = img.width / cfg.tile_width;
+        const tilemap_height = img.height / cfg.tile_height;
+        quantized_per_image[i] = switch (cfg.dither_algorithm) {
+            .none => try quantizeTiles(arena, all_tiles[i], palettes_per_image[i], palette_assignments_per_image[i], cfg),
+            .sierra => blk: {
+                if (cfg.dither_factor == 0.0) {
+                    break :blk try quantizeTiles(arena, all_tiles[i], palettes_per_image[i], palette_assignments_per_image[i], cfg);
+                } else {
+                    break :blk try dither_mod.quantizeTilesWithSierra(
+                        arena,
+                        all_tiles[i],
+                        palettes_per_image[i],
+                        palette_assignments_per_image[i],
+                        cfg,
+                        img.width,
+                        img.height,
+                        tilemap_width,
+                        tilemap_height,
+                    );
+                }
+            },
+        };
     }
 
     // Step 4: Deduplicate tiles (shared or per-file).
     // We store unique_tiles and per-image tile_indices/x_flip_flags separately.
-    const unique_tiles_per_image = try alloc.alloc([]QuantizedTile, n);
-    const tile_indices_per_image = try alloc.alloc([]u8, n);
-    const x_flip_flags_per_image = try alloc.alloc([]bool, n);
+    const unique_tiles_per_image = try arena.alloc([]QuantizedTile, n);
+    const tile_indices_per_image = try arena.alloc([]u8, n);
+    const x_flip_flags_per_image = try arena.alloc([]bool, n);
 
     switch (cfg.tileset_strategy) {
         .shared => {
             // Combine all quantized tiles from all images.
             var total: usize = 0;
             for (quantized_per_image) |qts| total += qts.len;
-            const combined = try alloc.alloc(QuantizedTile, total);
+            const combined = try arena.alloc(QuantizedTile, total);
             // Combine palette assignments and flatten palettes (offsetting indices per image).
             var total_palettes: usize = 0;
             for (palettes_per_image) |pals| total_palettes += pals.len;
-            const combined_palettes = try alloc.alloc(Palette, total_palettes);
-            const combined_assignments = try alloc.alloc(u8, total);
+            const combined_palettes = try arena.alloc(Palette, total_palettes);
+            const combined_assignments = try arena.alloc(u8, total);
             var pal_off: usize = 0;
             var tile_off: usize = 0;
             for (0..n) |i| {
@@ -619,7 +517,7 @@ pub fn runMulti(
                 pal_off += pals.len;
                 tile_off += img_tiles.len;
             }
-            const shared_tileset = try tileset_mod.deduplicateExact(alloc, combined, combined_assignments, combined_palettes, cfg.max_unique_tiles, cfg.tile_kmeans_max_iter, cfg.tile_reducer);
+            const shared_tileset = try tileset_mod.deduplicateExact(arena, combined, combined_assignments, combined_palettes, cfg.max_unique_tiles, cfg.tile_kmeans_max_iter, cfg.tile_reducer);
             // Split tile_indices and x_flip_flags back per image; unique_tiles is shared.
             var split_off: usize = 0;
             for (0..n) |i| {
@@ -632,7 +530,7 @@ pub fn runMulti(
         },
         .per_file => {
             for (0..n) |i| {
-                const ts = try tileset_mod.deduplicateExact(alloc, quantized_per_image[i], palette_assignments_per_image[i], palettes_per_image[i], cfg.max_unique_tiles, cfg.tile_kmeans_max_iter, cfg.tile_reducer);
+                const ts = try tileset_mod.deduplicateExact(arena, quantized_per_image[i], palette_assignments_per_image[i], palettes_per_image[i], cfg.max_unique_tiles, cfg.tile_kmeans_max_iter, cfg.tile_reducer);
                 unique_tiles_per_image[i] = ts.unique_tiles;
                 tile_indices_per_image[i] = ts.tile_indices;
                 x_flip_flags_per_image[i] = ts.x_flip_flags;
@@ -640,10 +538,10 @@ pub fn runMulti(
         },
         .preloaded => {
             const path = cfg.preloaded_tileset orelse return error.NoPreloadedTilesetPath;
-            const ts_data = try std.fs.cwd().readFileAlloc(alloc, path, 64 * 1024 * 1024);
+            const ts_data = try std.fs.cwd().readFileAlloc(arena, path, 64 * 1024 * 1024);
             const num_tiles = if (cfg.num_preloaded_tiles > 0) cfg.num_preloaded_tiles else cfg.max_unique_tiles;
             const loaded_tiles = try hex_out.loadTilesetFromHex(
-                alloc, ts_data, cfg.tile_height, cfg.tile_width, num_tiles,
+                arena, ts_data, cfg.tile_height, cfg.tile_width, num_tiles,
             );
             if (loaded_tiles.len == 0) return error.EmptyPreloadedTileset;
             // Build a TilesetResult-compatible structure: map each original tile to the
@@ -651,8 +549,8 @@ pub fn runMulti(
             for (0..n) |i| {
                 unique_tiles_per_image[i] = loaded_tiles;
                 const img_qt = quantized_per_image[i];
-                tile_indices_per_image[i] = try alloc.alloc(u8, img_qt.len);
-                x_flip_flags_per_image[i] = try alloc.alloc(bool, img_qt.len);
+                tile_indices_per_image[i] = try arena.alloc(u8, img_qt.len);
+                x_flip_flags_per_image[i] = try arena.alloc(bool, img_qt.len);
                 @memset(x_flip_flags_per_image[i], false);
                 // Assign each original tile to closest loaded tile
                 for (all_tiles[i], 0..) |tile, ti| {
@@ -675,14 +573,14 @@ pub fn runMulti(
     }
 
     // Step 5: For each image, find best (unique_tile, palette, x_flip) assignments and build tilemap.
-    const results = try alloc.alloc(PerFileResult, n);
+    const results = try arena.alloc(PipelineResult, n);
     for (0..n) |i| {
         const img = images[i];
         const tw = img.width / cfg.tile_width;
         const th = img.height / cfg.tile_height;
 
         const best = try findBestTileAssignments(
-            alloc,
+            arena,
             all_tiles[i],
             unique_tiles_per_image[i],
             palettes_per_image[i],
@@ -690,7 +588,7 @@ pub fn runMulti(
         );
 
         const tilemap = try buildTilemap(
-            alloc,
+            arena,
             best.tile_indices,
             best.x_flip_flags,
             best.palette_indices,
@@ -701,7 +599,7 @@ pub fn runMulti(
         );
 
         const output_pixels = try reconstructPixels(
-            alloc,
+            arena,
             tilemap,
             unique_tiles_per_image[i],
             palettes_per_image[i],
@@ -710,7 +608,7 @@ pub fn runMulti(
             cfg,
         );
 
-        results[i] = PerFileResult{
+        results[i] = PipelineResult{
             .unique_tiles = unique_tiles_per_image[i],
             .palettes = palettes_per_image[i],
             .tilemap = tilemap,
@@ -722,8 +620,5 @@ pub fn runMulti(
         };
     }
 
-    return MultiFileResult{
-        .results = results,
-        ._arena = arena,
-    };
+    return results;
 }

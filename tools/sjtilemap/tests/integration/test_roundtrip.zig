@@ -113,11 +113,12 @@ test "Phase 4: 16x16 with 4 identical tiles deduplicates to 1 unique tile" {
         .color_similarity_threshold = 0.001,
     };
 
-    var result = try pipeline.run(gpa, cfg, img);
-    defer result.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const result = try pipeline.run(arena.allocator(), cfg, img);
+    defer arena.deinit();
 
     // Assert 1: Pixel-perfect reconstruction
-    const output_pixels = result.output_pixels.?;
+    const output_pixels = result.output_pixels;
     try std.testing.expectEqual(img.pixels.len, output_pixels.len);
     for (img.pixels, output_pixels, 0..) |in_px, out_px, i| {
         const err = color_mod.deltaE(in_px, out_px);
@@ -211,11 +212,12 @@ test "Phase 5: 4 distinct tiles with 1 shared palette, pixel-perfect reconstruct
         .color_similarity_threshold = 0.001,
     };
 
-    var result = try pipeline.run(gpa, cfg, img);
-    defer result.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const result = try pipeline.run(arena.allocator(), cfg, img);
+    defer arena.deinit();
 
     // Assert 1: Pixel-perfect reconstruction
-    const output_pixels = result.output_pixels.?;
+    const output_pixels = result.output_pixels;
     try std.testing.expectEqual(img.pixels.len, output_pixels.len);
     for (img.pixels, output_pixels, 0..) |in_px, out_px, i| {
         const err = color_mod.deltaE(in_px, out_px);
@@ -334,11 +336,12 @@ test "Phase 6: 4 identical tile shapes, 4 different color sets -> 4 palettes, 1 
         .color_similarity_threshold = 0.001,
     };
 
-    var result = try pipeline.run(gpa, cfg, img);
-    defer result.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const result = try pipeline.run(arena.allocator(), cfg, img);
+    defer arena.deinit();
 
     // Assert 1: Pixel-perfect reconstruction (deltaE < 1e-4 per pixel)
-    const output_pixels = result.output_pixels.?;
+    const output_pixels = result.output_pixels;
     try std.testing.expectEqual(img.pixels.len, output_pixels.len);
     for (img.pixels, output_pixels, 0..) |in_px, out_px, i| {
         const err = color_mod.deltaE(in_px, out_px);
@@ -485,8 +488,9 @@ test "Phase 6 extended: palettes are sorted by average luminance (ascending)" {
         .color_similarity_threshold = 0.001,
     };
 
-    var result = try pipeline.run(gpa, cfg, img);
-    defer result.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const result = try pipeline.run(arena.allocator(), cfg, img);
+    defer arena.deinit();
 
     try std.testing.expectEqual(@as(usize, 4), result.palettes.len);
 
@@ -541,8 +545,9 @@ test "Phase 2: 8x8 single tile, 16 exact colors, pixel-perfect reconstruction" {
         .color_similarity_threshold = 0.001,
     };
 
-    var result = try pipeline.run(gpa, cfg, img);
-    defer result.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const result = try pipeline.run(arena.allocator(), cfg, img);
+    defer arena.deinit();
 
     // Assert 1: Tileset has exactly 1 unique tile
     try std.testing.expectEqual(@as(usize, 1), result.unique_tiles.len);
@@ -558,7 +563,7 @@ test "Phase 2: 8x8 single tile, 16 exact colors, pixel-perfect reconstruction" {
     // Assert 4: Pixel-perfect reconstruction
     // Every output pixel must match the input pixel exactly.
     // Since no dithering and 16 exact colors in palette, quantization is lossless.
-    const output_pixels = result.output_pixels.?;
+    const output_pixels = result.output_pixels;
     try std.testing.expectEqual(img.pixels.len, output_pixels.len);
 
     for (img.pixels, output_pixels, 0..) |in_px, out_px, i| {
@@ -649,23 +654,24 @@ test "Phase 7: Sierra dithering changes output compared to no dithering" {
 
     var cfg_none = base_cfg;
     cfg_none.dither_algorithm = .none;
-    var result_none = try pipeline.run(gpa, cfg_none, img);
-    defer result_none.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const result_none = try pipeline.run(arena.allocator(), cfg_none, img);
+    defer arena.deinit();
 
     var cfg_sierra = base_cfg;
     cfg_sierra.dither_algorithm = .sierra;
     cfg_sierra.dither_factor = 1.0;
-    var result_sierra = try pipeline.run(gpa, cfg_sierra, img);
-    defer result_sierra.deinit();
+
+    const result_sierra = try pipeline.run(arena.allocator(), cfg_sierra, img);
 
     // Sierra should produce different output than no-dither (pixels should differ)
     var diff_count: usize = 0;
-    for (result_none.output_pixels.?, result_sierra.output_pixels.?) |pn, ps| {
+    for (result_none.output_pixels, result_sierra.output_pixels) |pn, ps| {
         if (color_mod.deltaE(pn, ps) > 0.001) {
             diff_count += 1;
         }
     }
-    std.debug.print("Phase7: Sierra changed {}/{} pixels vs no-dither\n", .{ diff_count, result_none.output_pixels.?.len });
+    std.debug.print("Phase7: Sierra changed {}/{} pixels vs no-dither\n", .{ diff_count, result_none.output_pixels.len });
 
     // Sierra dithering must change at least some pixels
     if (diff_count == 0) {
@@ -690,8 +696,7 @@ test "Phase 7: Sierra dithering changes output compared to no dithering" {
         .color_similarity_threshold = 0.001,
     };
 
-    var result_exact_none = try pipeline.run(gpa, exact_cfg_none, img2);
-    defer result_exact_none.deinit();
+    const result_exact_none = try pipeline.run(arena.allocator(), exact_cfg_none, img2);
 
     const exact_cfg_zero = Config{
         .tile_width = 8,
@@ -707,10 +712,9 @@ test "Phase 7: Sierra dithering changes output compared to no dithering" {
         .color_similarity_threshold = 0.001,
     };
 
-    var result_exact_zero = try pipeline.run(gpa, exact_cfg_zero, img2);
-    defer result_exact_zero.deinit();
+    const result_exact_zero = try pipeline.run(arena.allocator(), exact_cfg_zero, img2);
 
-    for (result_exact_none.output_pixels.?, result_exact_zero.output_pixels.?, 0..) |pn, pz, i| {
+    for (result_exact_none.output_pixels, result_exact_zero.output_pixels, 0..) |pn, pz, i| {
         const err = color_mod.deltaE(pn, pz);
         if (err > 1e-5) {
             std.debug.print("Phase7 dither_factor=0 pixel {} differs from no-dither: deltaE={d:.8}\n", .{ i, err });
@@ -788,8 +792,9 @@ test "Phase 8A: transparency_mode=alpha preserves transparent pixels" {
         .color_similarity_threshold = 0.001,
     };
 
-    var result = try pipeline.run(gpa, cfg, img);
-    defer result.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const result = try pipeline.run(arena.allocator(), cfg, img);
+    defer arena.deinit();
 
     // Assert: tilemap entry has transparent=true
     const entry = result.tilemap[0];
@@ -799,7 +804,7 @@ test "Phase 8A: transparency_mode=alpha preserves transparent pixels" {
     }
 
     // Assert: transparent pixels in output have alpha close to 0
-    const output_pixels = result.output_pixels.?;
+    const output_pixels = result.output_pixels;
     for (img.pixels, output_pixels, 0..) |in_px, out_px, i| {
         const y = i / 8;
         const x = i % 8;
@@ -841,8 +846,9 @@ test "Phase 8B: transparency_mode=alpha, all opaque -> transparent=false" {
         .color_similarity_threshold = 0.001,
     };
 
-    var result = try pipeline.run(gpa, cfg, img);
-    defer result.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const result = try pipeline.run(arena.allocator(), cfg, img);
+    defer arena.deinit();
 
     // All-opaque image: tilemap entry should have transparent=false
     const entry = result.tilemap[0];
@@ -873,8 +879,9 @@ test "Phase 8C: transparency_mode=none ignores alpha channel" {
         .color_similarity_threshold = 0.001,
     };
 
-    var result = try pipeline.run(gpa, cfg, img);
-    defer result.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const result = try pipeline.run(arena.allocator(), cfg, img);
+    defer arena.deinit();
 
     // transparency_mode=none: all tilemap entries should have transparent=false
     for (result.tilemap, 0..) |entry, i| {
@@ -940,11 +947,12 @@ test "Phase 9: x_flip deduplication - mirrored tile deduplicates to 1 unique til
         .color_similarity_threshold = 0.001,
     };
 
-    var result = try pipeline.run(gpa, cfg, img);
-    defer result.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const result = try pipeline.run(arena.allocator(), cfg, img);
+    defer arena.deinit();
 
     // Assert 1: Pixel-perfect reconstruction
-    const output_pixels = result.output_pixels.?;
+    const output_pixels = result.output_pixels;
     try std.testing.expectEqual(img.pixels.len, output_pixels.len);
     for (img.pixels, output_pixels, 0..) |in_px, out_px, i| {
         const err = color_mod.deltaE(in_px, out_px);
@@ -1262,32 +1270,33 @@ test "Phase 12: shared palette, shared tileset - common tiles appear once" {
     };
 
     const images = [_]LoadedImage{ img_a, img_b };
-    var mresult = try pipeline.runMulti(gpa, cfg, &images);
-    defer mresult.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const mresults = try lib.pipeline.runMulti(arena.allocator(), cfg, &images);
+    defer arena.deinit();
 
     // Assert 1: shared tileset -> results[0] and results[1] have same unique_tiles pointer
     try std.testing.expectEqual(
-        mresult.results[0].unique_tiles.ptr,
-        mresult.results[1].unique_tiles.ptr,
+        mresults[0].unique_tiles.ptr,
+        mresults[1].unique_tiles.ptr,
     );
 
     // Assert 2: shared tileset has exactly 3 unique tiles (P1, P2, P3)
-    try std.testing.expectEqual(@as(usize, 3), mresult.results[0].unique_tiles.len);
+    try std.testing.expectEqual(@as(usize, 3), mresults[0].unique_tiles.len);
 
     // Assert 3: Image A tilemap[0] and Image B tilemap[0] point to the same tile index (P1)
     try std.testing.expectEqual(
-        mresult.results[0].tilemap[0].tile_index,
-        mresult.results[1].tilemap[0].tile_index,
+        mresults[0].tilemap[0].tile_index,
+        mresults[1].tilemap[0].tile_index,
     );
 
     // Assert 4: shared palette -> same palette pointer for both results
     try std.testing.expectEqual(
-        mresult.results[0].palettes.ptr,
-        mresult.results[1].palettes.ptr,
+        mresults[0].palettes.ptr,
+        mresults[1].palettes.ptr,
     );
 
     // Assert 5: pixel-perfect reconstruction for both images
-    for (mresult.results, [_]LoadedImage{ img_a, img_b }, 0..) |res, orig_img, img_idx| {
+    for (mresults, [_]LoadedImage{ img_a, img_b }, 0..) |res, orig_img, img_idx| {
         const output_pixels = res.output_pixels;
         try std.testing.expectEqual(orig_img.pixels.len, output_pixels.len);
         for (orig_img.pixels, output_pixels, 0..) |in_px, out_px, i| {
@@ -1327,25 +1336,26 @@ test "Phase 12: per-file palette, shared tileset - common tiles with separate pa
     };
 
     const images = [_]LoadedImage{ img_a, img_b };
-    var mresult = try pipeline.runMulti(gpa, cfg, &images);
-    defer mresult.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const mresults = try lib.pipeline.runMulti(arena.allocator(), cfg, &images);
+    defer arena.deinit();
 
     // Assert 1: per-file palette -> different palette pointers
     try std.testing.expect(
-        mresult.results[0].palettes.ptr != mresult.results[1].palettes.ptr,
+        mresults[0].palettes.ptr != mresults[1].palettes.ptr,
     );
 
     // Assert 2: shared tileset -> same unique_tiles pointer
     try std.testing.expectEqual(
-        mresult.results[0].unique_tiles.ptr,
-        mresult.results[1].unique_tiles.ptr,
+        mresults[0].unique_tiles.ptr,
+        mresults[1].unique_tiles.ptr,
     );
 
     // Assert 3: tileset has exactly 3 unique tiles (P1, P2, P3)
-    try std.testing.expectEqual(@as(usize, 3), mresult.results[0].unique_tiles.len);
+    try std.testing.expectEqual(@as(usize, 3), mresults[0].unique_tiles.len);
 
     // Assert 4: pixel-perfect reconstruction
-    for (mresult.results, [_]LoadedImage{ img_a, img_b }, 0..) |res, orig_img, img_idx| {
+    for (mresults, [_]LoadedImage{ img_a, img_b }, 0..) |res, orig_img, img_idx| {
         for (orig_img.pixels, res.output_pixels, 0..) |in_px, out_px, i| {
             const err = color_mod.deltaE(in_px, out_px);
             if (err > 1e-4) {
@@ -1383,26 +1393,27 @@ test "Phase 12: shared palette, per-file tileset - each image has own tileset" {
     };
 
     const images = [_]LoadedImage{ img_a, img_b };
-    var mresult = try pipeline.runMulti(gpa, cfg, &images);
-    defer mresult.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const mresults = try lib.pipeline.runMulti(arena.allocator(), cfg, &images);
+    defer arena.deinit();
 
     // Assert 1: per-file tileset -> different unique_tiles pointers
     try std.testing.expect(
-        mresult.results[0].unique_tiles.ptr != mresult.results[1].unique_tiles.ptr,
+        mresults[0].unique_tiles.ptr != mresults[1].unique_tiles.ptr,
     );
 
     // Assert 2: each image has 2 unique tiles (P1+P2 for A, P1+P3 for B)
-    try std.testing.expectEqual(@as(usize, 2), mresult.results[0].unique_tiles.len);
-    try std.testing.expectEqual(@as(usize, 2), mresult.results[1].unique_tiles.len);
+    try std.testing.expectEqual(@as(usize, 2), mresults[0].unique_tiles.len);
+    try std.testing.expectEqual(@as(usize, 2), mresults[1].unique_tiles.len);
 
     // Assert 3: shared palette -> same palette pointer
     try std.testing.expectEqual(
-        mresult.results[0].palettes.ptr,
-        mresult.results[1].palettes.ptr,
+        mresults[0].palettes.ptr,
+        mresults[1].palettes.ptr,
     );
 
     // Assert 4: pixel-perfect reconstruction
-    for (mresult.results, [_]LoadedImage{ img_a, img_b }, 0..) |res, orig_img, img_idx| {
+    for (mresults, [_]LoadedImage{ img_a, img_b }, 0..) |res, orig_img, img_idx| {
         for (orig_img.pixels, res.output_pixels, 0..) |in_px, out_px, i| {
             const err = color_mod.deltaE(in_px, out_px);
             if (err > 1e-4) {
@@ -1602,8 +1613,9 @@ test "Phase 11: palette_0_color_0_is_black=true forces black at palettes[0].colo
         .color_similarity_threshold = 0.001,
     };
 
-    var result = try pipeline.run(gpa, cfg, img);
-    defer result.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const result = try pipeline.run(arena.allocator(), cfg, img);
+    defer arena.deinit();
 
     const first_color = result.palettes[0].colors[0];
     // Black in OKLab: L=0, a=0, b=0
@@ -1690,8 +1702,9 @@ test "Phase 11: Config.load() parses ZON file with tile_width=16 and runs pipeli
     var loaded_img = LoadedImage{ .pixels = oklab_pixels, .width = 16, .height = 16, .allocator = gpa };
     defer loaded_img.deinit();
 
-    var result = try pipeline.run(gpa, cfg, loaded_img);
-    defer result.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const result = try pipeline.run(arena.allocator(), cfg, loaded_img);
+    defer arena.deinit();
 
     // 1 unique tile, 1x1 tilemap
     try std.testing.expectEqual(@as(usize, 1), result.unique_tiles.len);
@@ -1750,14 +1763,15 @@ test "Phase 8D: transparency_mode=color treats matching pixels as transparent" {
         .color_similarity_threshold = 0.001,
     };
 
-    var result = try pipeline.run(gpa, cfg, img);
-    defer result.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const result = try pipeline.run(arena.allocator(), cfg, img);
+    defer arena.deinit();
 
     // Assert 1: tilemap entry has transparent=true (tile contains transparent pixels)
     try std.testing.expect(result.tilemap[0].transparent);
 
     // Assert 2: reconstructed magenta pixels have alpha=0 (transparent)
-    const output_pixels = result.output_pixels.?;
+    const output_pixels = result.output_pixels;
     for (0..height) |y| {
         for (0..width) |x| {
             const i = y * width + x;
@@ -1935,25 +1949,26 @@ test "Phase 12: per-file palette, per-file tileset - fully independent" {
     };
 
     const images = [_]LoadedImage{ img_a, img_b };
-    var mresult = try pipeline.runMulti(gpa, cfg, &images);
-    defer mresult.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const mresults = try lib.pipeline.runMulti(arena.allocator(), cfg, &images);
+    defer arena.deinit();
 
     // Assert 1: per-file palette -> different palette pointers
     try std.testing.expect(
-        mresult.results[0].palettes.ptr != mresult.results[1].palettes.ptr,
+        mresults[0].palettes.ptr != mresults[1].palettes.ptr,
     );
 
     // Assert 2: per-file tileset -> different unique_tiles pointers
     try std.testing.expect(
-        mresult.results[0].unique_tiles.ptr != mresult.results[1].unique_tiles.ptr,
+        mresults[0].unique_tiles.ptr != mresults[1].unique_tiles.ptr,
     );
 
     // Assert 3: each image has 2 unique tiles
-    try std.testing.expectEqual(@as(usize, 2), mresult.results[0].unique_tiles.len);
-    try std.testing.expectEqual(@as(usize, 2), mresult.results[1].unique_tiles.len);
+    try std.testing.expectEqual(@as(usize, 2), mresults[0].unique_tiles.len);
+    try std.testing.expectEqual(@as(usize, 2), mresults[1].unique_tiles.len);
 
     // Assert 4: pixel-perfect reconstruction for both images
-    for (mresult.results, [_]LoadedImage{ img_a, img_b }, 0..) |res, orig_img, img_idx| {
+    for (mresults, [_]LoadedImage{ img_a, img_b }, 0..) |res, orig_img, img_idx| {
         for (orig_img.pixels, res.output_pixels, 0..) |in_px, out_px, i| {
             const err = color_mod.deltaE(in_px, out_px);
             if (err > 1e-4) {
@@ -2123,8 +2138,9 @@ test "Tileset k-means reducer: max_unique_tiles is respected when exceeded" {
         .color_similarity_threshold = 0.001,
     };
 
-    var result = try pipeline.run(gpa, cfg, img);
-    defer result.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const result = try pipeline.run(arena.allocator(), cfg, img);
+    defer arena.deinit();
 
     // Assert 1: unique tile count respects max_unique_tiles
     if (result.unique_tiles.len > cfg.max_unique_tiles) {
@@ -2162,7 +2178,7 @@ test "Tileset k-means reducer: max_unique_tiles is respected when exceeded" {
     // groups reds/blues/greens by hue. Each tile's reconstructed color should stay within
     // deltaE 0.25 of the original (within-hue error is ~0.05-0.15). If clustering is
     // index-based (wrong), cross-hue mappings produce deltaE ~0.5-0.8, failing this check.
-    const output_pixels = result.output_pixels.?;
+    const output_pixels = result.output_pixels;
     const tw = cfg.tile_width;
     const th = cfg.tile_height;
     for (result.tilemap, 0..) |_, tile_pos| {
@@ -2214,8 +2230,9 @@ test "JSON dump: tilemap, palette, and tileset data are correctly serialized" {
         .color_similarity_threshold = 0.001,
     };
 
-    var result = try pipeline.run(gpa, cfg, img);
-    defer result.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const result = try pipeline.run(arena.allocator(), cfg, img);
+    defer arena.deinit();
 
     // Write JSON dump to a buffer
     var buf: std.ArrayList(u8) = .empty;
@@ -2273,8 +2290,9 @@ test "Phase 12: preloaded palette strategy uses loaded palettes without regenera
         .color_similarity_threshold = 0.001,
     };
 
-    var ref_result = try pipeline.run(gpa, base_cfg, img_ref);
-    defer ref_result.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const ref_result = try pipeline.run(arena.allocator(), base_cfg, img_ref);
+    defer arena.deinit();
 
     // Step 2: write the reference palette to a temp file.
     var tmp_dir = std.testing.tmpDir(.{});
@@ -2300,19 +2318,18 @@ test "Phase 12: preloaded palette strategy uses loaded palettes without regenera
     preloaded_cfg.preloaded_palette = pal_path;
 
     const images = [_]LoadedImage{img_b};
-    var mresult = try pipeline.runMulti(gpa, preloaded_cfg, &images);
-    defer mresult.deinit();
+    const mresults = try pipeline.runMulti(arena.allocator(), preloaded_cfg, &images);
 
     // Assert 1: exactly 1 palette was loaded (from the file).
-    try std.testing.expectEqual(@as(usize, 1), mresult.results[0].palettes.len);
+    try std.testing.expectEqual(@as(usize, 1), mresults[0].palettes.len);
 
     // Assert 2: every tilemap entry uses a valid palette index.
-    for (mresult.results[0].tilemap) |entry| {
-        try std.testing.expect(entry.palette_index < mresult.results[0].palettes.len);
+    for (mresults[0].tilemap) |entry| {
+        try std.testing.expect(entry.palette_index < mresults[0].palettes.len);
     }
 
     // Assert 3: reconstruction quality — same 16 colors → pixel-perfect match.
-    for (img_b.pixels, mresult.results[0].output_pixels, 0..) |in_px, out_px, i| {
+    for (img_b.pixels, mresults[0].output_pixels, 0..) |in_px, out_px, i| {
         const err = color_mod.deltaE(in_px, out_px);
         if (err > 1e-3) {
             std.debug.print("Preloaded palette: pixel {} deltaE={d:.6}\n", .{ i, err });
@@ -2346,8 +2363,9 @@ test "Phase 12: preloaded tileset strategy uses loaded tiles without regeneratin
         .color_similarity_threshold = 0.001,
     };
 
-    var ref_result = try pipeline.run(gpa, base_cfg, img_ref);
-    defer ref_result.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const ref_result = try pipeline.run(arena.allocator(), base_cfg, img_ref);
+    defer arena.deinit();
 
     const n_tiles = ref_result.unique_tiles.len;
     std.debug.print("Preloaded tileset: reference has {} unique tile(s)\n", .{n_tiles});
@@ -2380,19 +2398,18 @@ test "Phase 12: preloaded tileset strategy uses loaded tiles without regeneratin
     preloaded_cfg.num_preloaded_tiles = @intCast(n_tiles);
 
     const images = [_]LoadedImage{img_b};
-    var mresult = try pipeline.runMulti(gpa, preloaded_cfg, &images);
-    defer mresult.deinit();
+    const mresults = try pipeline.runMulti(arena.allocator(), preloaded_cfg, &images);
 
     // Assert 1: the loaded tileset has exactly n_tiles tiles.
-    try std.testing.expectEqual(n_tiles, mresult.results[0].unique_tiles.len);
+    try std.testing.expectEqual(n_tiles, mresults[0].unique_tiles.len);
 
     // Assert 2: all tilemap entries reference valid tile indices.
-    for (mresult.results[0].tilemap) |entry| {
+    for (mresults[0].tilemap) |entry| {
         try std.testing.expect(entry.tile_index < n_tiles);
     }
 
     // Assert 3: reconstruction quality — same tile pattern → pixel-perfect.
-    for (img_b.pixels, mresult.results[0].output_pixels, 0..) |in_px, out_px, i| {
+    for (img_b.pixels, mresults[0].output_pixels, 0..) |in_px, out_px, i| {
         const err = color_mod.deltaE(in_px, out_px);
         if (err > 1e-3) {
             std.debug.print("Preloaded tileset: pixel {} deltaE={d:.6}\n", .{ i, err });
@@ -2430,17 +2447,18 @@ test "Phase 12: multi-file shared pipeline with Sierra dithering produces accept
     };
 
     const images = [_]LoadedImage{ img_a, img_b };
-    var mresult = try pipeline.runMulti(gpa, cfg, &images);
-    defer mresult.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const mresults = try lib.pipeline.runMulti(arena.allocator(), cfg, &images);
+    defer arena.deinit();
 
     // Assert 1: tilemap dimensions correct for both images.
-    try std.testing.expectEqual(@as(usize, 2), mresult.results.len);
-    try std.testing.expectEqual(@as(usize, 2), mresult.results[0].tilemap.len);
-    try std.testing.expectEqual(@as(usize, 2), mresult.results[1].tilemap.len);
+    try std.testing.expectEqual(@as(usize, 2), mresults.len);
+    try std.testing.expectEqual(@as(usize, 2), mresults[0].tilemap.len);
+    try std.testing.expectEqual(@as(usize, 2), mresults[1].tilemap.len);
 
     // Assert 2: quality — these images have 16 exact colors so even with dithering,
     // reconstruction should be near-perfect (dithering shouldn't hurt exact-color tiles).
-    for (mresult.results, [_]LoadedImage{ img_a, img_b }, 0..) |res, orig_img, img_idx| {
+    for (mresults, [_]LoadedImage{ img_a, img_b }, 0..) |res, orig_img, img_idx| {
         const metrics = try lib.pipeline.computeErrorMetrics(gpa, orig_img.pixels, null, res.output_pixels);
         std.debug.print("Phase12 Sierra img{}: avg deltaE={d:.5}\n", .{ img_idx, metrics.mean_de });
         // With exact 16 colors, sierra dithering should keep quality very high.
@@ -2470,8 +2488,9 @@ test "tile_reducer=exact_hash succeeds when unique tile count is within limit" {
         .tile_reducer = .exact_hash,
     };
 
-    var result = try pipeline.run(gpa, cfg, img);
-    defer result.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const result = try pipeline.run(arena.allocator(), cfg, img);
+    defer arena.deinit();
 
     try std.testing.expectEqual(@as(usize, 4), result.unique_tiles.len);
 }
@@ -2494,6 +2513,9 @@ test "tile_reducer=exact_hash fails when unique tile count exceeds limit" {
         .tile_reducer = .exact_hash,
     };
 
-    const result = pipeline.run(gpa, cfg, img);
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const result = pipeline.run(arena.allocator(), cfg, img);
+    defer arena.deinit();
+
     try std.testing.expectError(error.TooManyUniqueTiles, result);
 }

@@ -40,8 +40,9 @@ test "Gouldian Finch 256x256 integration test" {
         .color_similarity_threshold = 0.01,
     };
 
-    var result = try pipeline.run(gpa, cfg, img);
-    defer result.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    const result = try pipeline.run(arena.allocator(), cfg, img);
+    defer arena.deinit();
 
     // Assert 1: Unique tiles <= 256
     if (result.unique_tiles.len > 256) {
@@ -56,10 +57,9 @@ test "Gouldian Finch 256x256 integration test" {
     try std.testing.expectEqual(@as(u32, 32), result.tilemap_height);
 
     // Assert 3: Output pixels exist
-    const output_pixels = result.output_pixels orelse return error.NoOutputPixels;
-    try std.testing.expectEqual(@as(usize, 256 * 256), output_pixels.len);
+    try std.testing.expectEqual(@as(usize, 256 * 256), result.output_pixels.len);
 
-    const metrics = try lib.pipeline.computeErrorMetrics(gpa, img.pixels, img.srgb_bytes, output_pixels);
+    const metrics = try lib.pipeline.computeErrorMetrics(gpa, img.pixels, img.srgb_bytes, result.output_pixels);
 
     // Assert 4: Quality metrics — Zig must match or beat Rust baseline.
     // Rust baseline (cargo run --release, dither_factor=1.0, 32 palettes, 16 colors, sierra):
