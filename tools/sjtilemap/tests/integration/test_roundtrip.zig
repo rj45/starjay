@@ -578,21 +578,6 @@ test "Phase 2: 8x8 single tile, 16 exact colors, pixel-perfect reconstruction" {
     }
 }
 
-/// Compute PSNR between two OKLab pixel slices.
-/// Returns a high value (infinity-like) if MSE=0, otherwise 10*log10(1/MSE).
-fn computePSNR(orig: []const OklabAlpha, recon: []const OklabAlpha) f32 {
-    var mse: f32 = 0;
-    for (orig, recon) |a, b| {
-        const dl = a.l - b.l;
-        const da = a.a - b.a;
-        const db = a.b - b.b;
-        mse += dl * dl + da * da + db * db;
-    }
-    mse /= @as(f32, @floatFromInt(orig.len * 3));
-    if (mse == 0) return std.math.floatMax(f32);
-    return 10.0 * std.math.log10(1.0 / mse);
-}
-
 /// Build an 8x8 image with a smooth gradient (64 distinct colors, limited to 16-color palette).
 fn buildGradientImage8x8(allocator: std.mem.Allocator) !LoadedImage {
     const width: u32 = 8;
