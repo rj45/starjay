@@ -63,7 +63,7 @@ pub fn writeTilesetHexRowMajor(
     }
 }
 
-/// Write palettes as hex. Format matches Rust imgconv.rs:924-942:
+/// Write palettes as hex:
 /// One palette per line, `{RR}{GG}{BB} ` per color in sRGB u8, padded to colors_per_palette entries.
 /// OKLab colors are converted to sRGB via zigimg.
 pub fn writePaletteHex(

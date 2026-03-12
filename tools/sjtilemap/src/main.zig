@@ -353,9 +353,9 @@ pub fn main() !void {
     }
 }
 
-/// Print image quality metrics to stdout matching the Rust imgconv format.
-/// Delta-E is reported with the ×100 display factor (as in Rust's DELTA_E_DISPLAY_FACTOR=100).
-/// PSNR is computed in sRGB u8 space (MAX=255), matching Rust's generate_error_metrics().
+/// Print image quality metrics to stdout.
+/// Delta-E is reported with the ×100 display factor.
+/// PSNR is computed in sRGB u8 space (MAX=255).
 fn printErrorMetrics(
     allocator: std.mem.Allocator,
     orig_pixels: []const OklabAlpha,

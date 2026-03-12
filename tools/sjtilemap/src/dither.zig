@@ -29,7 +29,6 @@ pub const sierra_pattern = [_]SierraCoeff{
 
 /// The error divisor for Sierra dithering: the sum of all kernel coefficients.
 /// This is the single source of truth — computed from `sierra_pattern`, not hardcoded.
-/// Matches Rust `DITHER_ERROR_DIVISOR = 32.0` in `imgconv.rs:30`.
 pub const sierra_error_divisor: f32 = blk: {
     var sum: f32 = 0;
     for (sierra_pattern) |c| sum += c.num;

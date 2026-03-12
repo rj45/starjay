@@ -110,7 +110,7 @@ pub fn computeErrorMetrics(
     metrics.p95_de = delta_e_values[@as(usize, @intFromFloat(@as(f32, @floatFromInt(n)) * 0.95))];
     metrics.p99_de = delta_e_values[@as(usize, @intFromFloat(@as(f32, @floatFromInt(n)) * 0.99))];
 
-    // PSNR: compare in sRGB u8 space (MAX=255), matching Rust generate_error_metrics().
+    // PSNR: compare in sRGB u8 space (MAX=255).
     // Use orig_srgb_bytes when available (no round-trip loss).
     // Fallback: convert OKLab → sRGB float32 (introduces small precision loss).
     const out_srgb = try zigimg.color.sRGB.sliceFromOkLabAlphaCopy(allocator, out_pixels, .clamp);

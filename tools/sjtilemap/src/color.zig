@@ -27,8 +27,8 @@ pub inline fn hueAngle(c: OklabAlpha) f32 {
 }
 
 /// Euclidean distance squared in OKLab Cartesian space (avoids sqrt for hot loops).
-/// Mathematically equivalent to dL^2 + dC^2 + dH^2 (Rust oklab_delta_e formula)
-/// while requiring no trigonometry. Single query site for all color comparisons.
+/// Mathematically equivalent to dL^2 + dC^2 + dH^2 while requiring no trigonometry.
+/// Single query site for all color comparisons.
 pub inline fn deltaESquared(a: OklabAlpha, b: OklabAlpha) f32 {
     const dl = a.l - b.l;
     const da = a.a - b.a;
@@ -43,7 +43,7 @@ pub inline fn deltaE(a: OklabAlpha, b: OklabAlpha) f32 {
 
 // Ground-truth deltaE values gathered from colorjs.io `deltaEOK` (npm: colorjs.io@0.5.2).
 // colorjs deltaEOK is the Euclidean distance in OKLab: sqrt(dL^2 + da^2 + db^2).
-// This is mathematically equivalent to the Rust oklab_delta_e chroma-hue decomposition
+// This is mathematically equivalent to the chroma-hue decomposition
 // (dL^2 + dC^2 + dH^2 expands to dL^2 + da^2 + db^2). All values verified externally.
 const DeltaECase = struct { a: OklabAlpha, b: OklabAlpha, expected: f32 };
 const deltaE_cases = [_]DeltaECase{

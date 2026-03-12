@@ -78,9 +78,8 @@ pub fn generatePaletteFromTiles(
         colors = unique_colors.items;
     } else {
         // More unique colors than the palette can hold — reduce via k-means then
-        // compute frequency-weighted centroids (reduce_colors equivalent from Rust
-        // imgconv.rs:525-568). Frequency-weighted centroids pull the representative
-        // toward the dominant color in each cluster, matching the Rust approach.
+        // compute frequency-weighted centroids. Frequency-weighted centroids pull
+        // the representative toward the dominant color in each cluster.
         const n = unique_colors.items.len;
 
         // Build input data: each unique color is a 3-float feature vector [L, a, b]
@@ -107,7 +106,6 @@ pub fn generatePaletteFromTiles(
 
         // Compute frequency-weighted centroids: each unique color's weight is how many
         // pixels in the original image matched that unique color (i.e., its frequency).
-        // This is the reduce_colors() algorithm from Rust imgconv.rs:548-565.
         // We reconstruct frequencies from the pixel data by counting how many pixels
         // matched each unique color entry.
         const freq = try arena.alloc(u32, n);
@@ -239,9 +237,9 @@ pub fn generatePalettes(
     }
 
     // Sort palettes by average luminance (ascending) for better visual organization.
-    // Matches Rust imgconv.rs:404-409. This ensures palette[0] is darkest, palette[n-1]
-    // is brightest. Required so that palette index 0 (often reserved for transparency or
-    // color[0]=black) naturally contains the darkest color group.
+    // This ensures palette[0] is darkest, palette[n-1] is brightest. Required so
+    // that palette index 0 (often reserved for transparency or color[0]=black)
+    // naturally contains the darkest color group.
     std.sort.block(Palette, palettes, {}, struct {
         pub fn lessThan(_: void, a: Palette, b: Palette) bool {
             var sum_a: f32 = 0;

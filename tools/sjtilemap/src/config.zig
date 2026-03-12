@@ -61,7 +61,7 @@ pub const Config = struct {
 
     // Dithering
     dither_algorithm: DitherAlgorithm = .sierra,
-    /// Error diffusion strength [0.0, 1.0]. Default 0.75 matches Rust imgconv reference.
+    /// Error diffusion strength [0.0, 1.0].
     dither_factor: f32 = 0.75,
 
     // Transparency
@@ -72,15 +72,14 @@ pub const Config = struct {
 
     // Palette generation options
     /// Two colors closer than this deltaE threshold are treated as the same color.
-    /// Default 0.005 matches Rust imgconv SIMILARITY_THRESHOLD.
     color_similarity_threshold: f32 = 0.005,
     /// When true, palette[0].color[0] is forced to OKLab black (L=0,a=0,b=0).
     palette_0_color_0_is_black: bool = true,
 
     // K-means settings
-    /// Max k-means iterations for palette color generation. Default 10_000 matches Rust KMEANS_MAX_ITERATIONS.
+    /// Max k-means iterations for palette color generation.
     palette_kmeans_max_iter: u64 = 10_000,
-    /// Max k-means iterations for tile color reduction. Default 100_000 matches Rust COLOR_REDUCTION_MAX_ITERATIONS.
+    /// Max k-means iterations for tile color reduction.
     tile_kmeans_max_iter: u64 = 100_000,
 
     // Output
