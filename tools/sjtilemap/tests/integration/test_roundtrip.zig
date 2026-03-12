@@ -436,7 +436,7 @@ test "Palette reduce_colors: frequency-weighted centroids for skewed distributio
         .palette_kmeans_max_iter = 10_000,
     };
 
-    const palette = try palette_gen_mod.generatePaletteFromTiles(alloc, &tiles, cfg, true);
+    const palette = try palette_gen_mod.generatePaletteFromTiles(alloc, &tiles, cfg);
 
     // The palette must have a representative close to color_a.
     // With frequency-weighted centroids, the representative for A's cluster

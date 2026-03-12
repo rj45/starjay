@@ -5,6 +5,8 @@ const Config = @import("config.zig").Config;
 const Tile = @import("tile.zig").Tile;
 const kmeans = @import("kmeans");
 
+const black = OklabAlpha{ .l = 0.0, .a = 0.0, .b = 0.0, .alpha = 1.0 };
+
 /// Build a per-tile feature vector for palette clustering.
 /// Pixels are sorted by OKLab hue angle (atan2(b, a) in [0, 2π)), then flattened
 /// as [L, a, b, L, a, b, ...]. Sorting by hue makes the feature vector
@@ -45,7 +47,6 @@ pub fn generatePaletteFromTiles(
     arena: std.mem.Allocator,
     tiles: []const Tile,
     cfg: Config,
-    is_palette_0: bool,
 ) !Palette {
     const threshold_sq = cfg.color_similarity_threshold * cfg.color_similarity_threshold;
     const max_colors = cfg.colors_per_palette;
@@ -167,22 +168,6 @@ pub fn generatePaletteFromTiles(
         }
     }.lessThan);
 
-    // Force palette[0] = black if configured
-    const black = OklabAlpha{ .l = 0.0, .a = 0.0, .b = 0.0, .alpha = 1.0 };
-    if (is_palette_0 and cfg.palette_0_color_0_is_black and colors.len > 0) {
-        // Shift everything up, insert black at index 0
-        // Only insert if first color is not already black
-        const first = colors[0];
-        if (color_mod.deltaESquared(first, black) > 1e-8) {
-            // Drop the last color to make room
-            var i: usize = colors.len - 1;
-            while (i > 0) : (i -= 1) {
-                colors[i] = colors[i - 1];
-            }
-            colors[0] = black;
-        }
-    }
-
     const actual_count: u32 = @intCast(colors.len);
 
     // Always pad to colors_per_palette so palette.colors.len is always colors_per_palette.
@@ -208,8 +193,9 @@ pub fn generatePalettes(
     const palettes = try arena.alloc(Palette, cfg.num_palettes);
 
     if (cfg.num_palettes == 1 or tiles.len == 0) {
-        palettes[0] = try generatePaletteFromTiles(arena, tiles, cfg, true);
+        palettes[0] = try generatePaletteFromTiles(arena, tiles, cfg);
         for (palettes[1..]) |*p| p.* = palettes[0];
+        forceFirstColorToBlack(&palettes[0], cfg);
         return palettes;
     }
 
@@ -246,9 +232,9 @@ pub fn generatePalettes(
     // Generate one palette per cluster; empty clusters get a palette from all tiles
     for (0..cfg.num_palettes) |pi| {
         if (cluster_tiles[pi].items.len > 0) {
-            palettes[pi] = try generatePaletteFromTiles(arena, cluster_tiles[pi].items, cfg, pi == 0);
+            palettes[pi] = try generatePaletteFromTiles(arena, cluster_tiles[pi].items, cfg);
         } else {
-            palettes[pi] = try generatePaletteFromTiles(arena, tiles, cfg, pi == 0);
+            palettes[pi] = try generatePaletteFromTiles(arena, tiles, cfg);
         }
     }
 
@@ -268,5 +254,25 @@ pub fn generatePalettes(
         }
     }.lessThan);
 
+    forceFirstColorToBlack(&palettes[0], cfg);
+
     return palettes;
+}
+
+fn forceFirstColorToBlack(palette: *Palette, cfg: Config) void {
+    // Force palette[0] = black if configured
+    if (cfg.palette_0_color_0_is_black) {
+        // if there is room in the palette, add black but only if the first color isn't close to black
+        // otherwise: always replace the darkest color (which should be the first one) with black
+        const first = palette.colors[0];
+        if (
+            color_mod.deltaESquared(first, black) > cfg.color_similarity_threshold and
+            palette.count < cfg.colors_per_palette
+        ) {
+            const count = palette.count;
+            @memmove(palette.colors[1..count+1], palette.colors[0..count]);
+            palette.count += 1;
+        }
+        palette.colors[0] = black;
+    }
 }
