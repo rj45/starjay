@@ -36,6 +36,8 @@ pub const PaletteStrategy = enum { shared, per_file, preloaded };
 pub const TilesetStrategy = enum { shared, per_file, preloaded };
 
 pub const Config = struct {
+    verbose: bool = false,
+
     // Tile geometry
     tile_width: u32 = 8,
     tile_height: u32 = 8,
@@ -188,62 +190,8 @@ pub const Config = struct {
     }
 
     /// Write default config as ZON to the given writer.
-    /// Accepts any writer that provides a `print` method (GenericWriter, AnyWriter, etc.).
-    pub fn generateDefault(out: anytype) !void {
+    pub fn generateDefault(out: *std.io.Writer) !void {
         const defaults = Config{};
-        try out.print(
-            \\.{{
-            \\    .tile_width = {d},
-            \\    .tile_height = {d},
-            \\    .tilemap_width = {d},
-            \\    .tilemap_height = {d},
-            \\    .num_palettes = {d},
-            \\    .palette_start_offset = {d},
-            \\    .colors_per_palette = {d},
-            \\    .max_unique_tiles = {d},
-            \\    .tileset_start_offset = {d},
-            \\    .dither_algorithm = .{s},
-            \\    .dither_factor = {d},
-            \\    .transparency_mode = .{s},
-            \\    .transparent_color = null,
-            \\    .color_similarity_threshold = {d},
-            \\    .palette_0_color_0_is_black = {s},
-            \\    .palette_kmeans_max_iter = {d},
-            \\    .tile_kmeans_max_iter = {d},
-            \\    .tileset_storage_order = .{s},
-            \\    .palette_strategy = .{s},
-            \\    .tileset_strategy = .{s},
-            \\    .preloaded_palette = null,
-            \\    .preloaded_tileset = null,
-            \\    .num_preloaded_tiles = {d},
-            \\    .num_preloaded_palettes = {d},
-            \\    .palette_generator = .{s},
-            \\    .tile_reducer = .{s},
-            \\}}
-        , .{
-            defaults.tile_width,
-            defaults.tile_height,
-            defaults.tilemap_width,
-            defaults.tilemap_height,
-            defaults.num_palettes,
-            defaults.palette_start_offset,
-            defaults.colors_per_palette,
-            defaults.max_unique_tiles,
-            defaults.tileset_start_offset,
-            @tagName(defaults.dither_algorithm),
-            defaults.dither_factor,
-            @tagName(defaults.transparency_mode),
-            defaults.color_similarity_threshold,
-            if (defaults.palette_0_color_0_is_black) "true" else "false",
-            defaults.palette_kmeans_max_iter,
-            defaults.tile_kmeans_max_iter,
-            @tagName(defaults.tileset_storage_order),
-            @tagName(defaults.palette_strategy),
-            @tagName(defaults.tileset_strategy),
-            defaults.num_preloaded_tiles,
-            defaults.num_preloaded_palettes,
-            @tagName(defaults.palette_generator),
-            @tagName(defaults.tile_reducer),
-        });
+        try std.zon.stringify.serialize(defaults, .{}, out);
     }
 };

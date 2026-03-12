@@ -45,6 +45,7 @@ pub fn generatePaletteFromTiles(
     arena: std.mem.Allocator,
     tiles: []const Tile,
     cfg: Config,
+    is_palette_0: bool,
 ) !Palette {
     const threshold_sq = cfg.color_similarity_threshold * cfg.color_similarity_threshold;
     const max_colors = cfg.colors_per_palette;
@@ -168,7 +169,7 @@ pub fn generatePaletteFromTiles(
 
     // Force palette[0] = black if configured
     const black = OklabAlpha{ .l = 0.0, .a = 0.0, .b = 0.0, .alpha = 1.0 };
-    if (cfg.palette_0_color_0_is_black and colors.len > 0) {
+    if (is_palette_0 and cfg.palette_0_color_0_is_black and colors.len > 0) {
         // Shift everything up, insert black at index 0
         // Only insert if first color is not already black
         const first = colors[0];
@@ -207,7 +208,7 @@ pub fn generatePalettes(
     const palettes = try arena.alloc(Palette, cfg.num_palettes);
 
     if (cfg.num_palettes == 1 or tiles.len == 0) {
-        palettes[0] = try generatePaletteFromTiles(arena, tiles, cfg);
+        palettes[0] = try generatePaletteFromTiles(arena, tiles, cfg, true);
         for (palettes[1..]) |*p| p.* = palettes[0];
         return palettes;
     }
@@ -245,9 +246,9 @@ pub fn generatePalettes(
     // Generate one palette per cluster; empty clusters get a palette from all tiles
     for (0..cfg.num_palettes) |pi| {
         if (cluster_tiles[pi].items.len > 0) {
-            palettes[pi] = try generatePaletteFromTiles(arena, cluster_tiles[pi].items, cfg);
+            palettes[pi] = try generatePaletteFromTiles(arena, cluster_tiles[pi].items, cfg, pi == 0);
         } else {
-            palettes[pi] = try generatePaletteFromTiles(arena, tiles, cfg);
+            palettes[pi] = try generatePaletteFromTiles(arena, tiles, cfg, pi == 0);
         }
     }
 

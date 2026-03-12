@@ -189,7 +189,7 @@ pub fn run(gpa: std.mem.Allocator, cfg: Config, img: LoadedImage) !PipelineResul
         break :blk img.pixels;
     } else img.pixels;
 
-    // Step 1: Extract tiles
+    if (cfg.verbose) std.debug.print("Extracting tiles...\n", .{});
     const tiles = try tile_mod.extractTiles(
         alloc,
         effective_pixels,
@@ -198,13 +198,13 @@ pub fn run(gpa: std.mem.Allocator, cfg: Config, img: LoadedImage) !PipelineResul
         cfg,
     );
 
-    // Step 2: Generate palettes
+    if (cfg.verbose) std.debug.print("Generating palettes...\n", .{});
     const palettes = try palette_mod.generatePalettes(alloc, tiles, cfg);
 
-    // Step 3: Assign palette to each tile
+    if (cfg.verbose) std.debug.print("Assigning palettes...\n", .{});
     const palette_assignments = try assignPalettes(alloc, tiles, palettes);
 
-    // Step 4: Quantize each tile (with optional dithering)
+    if (cfg.verbose) std.debug.print("Quantizing tiles...\n", .{});
     const tilemap_width = img.width / cfg.tile_width;
     const tilemap_height = img.height / cfg.tile_height;
     const quantized_tiles = switch (cfg.dither_algorithm) {
@@ -228,15 +228,14 @@ pub fn run(gpa: std.mem.Allocator, cfg: Config, img: LoadedImage) !PipelineResul
         },
     };
 
-    // Step 5: Deduplicate tiles
+    if (cfg.verbose) std.debug.print("Deduplicating tiles...\n", .{});
     const tileset = try tileset_mod.deduplicateExact(alloc, quantized_tiles, palette_assignments, palettes, cfg.max_unique_tiles, cfg.tile_kmeans_max_iter, cfg.tile_reducer);
 
-    // Step 6: Find best (unique_tile, palette, x_flip) for each original tile position.
-    // Re-evaluates every combination — equivalent to Rust imgconv.rs:702-740.
-    // This second pass corrects suboptimal palette+tile pairings left by the initial assignment.
+
+    if (cfg.verbose) std.debug.print("Finding best tile assignments...\n", .{});
     const best = try findBestTileAssignments(alloc, tiles, tileset.unique_tiles, palettes, cfg);
 
-    // Step 7: Build tilemap entries
+    if (cfg.verbose) std.debug.print("Building tilemap entries...\n", .{});
     const tilemap = try buildTilemap(
         alloc,
         best.tile_indices,
@@ -248,7 +247,7 @@ pub fn run(gpa: std.mem.Allocator, cfg: Config, img: LoadedImage) !PipelineResul
         cfg,
     );
 
-    // Step 7: Reconstruct output pixels
+    if (cfg.verbose) std.debug.print("Reconstructing output image...\n", .{});
     const output_pixels = try reconstructPixels(
         alloc,
         tilemap,
@@ -373,7 +372,6 @@ fn calculateReconstructionError(
 
 /// For each original tile, find the best (unique_tile_index, palette_index, x_flip) combination
 /// by evaluating reconstruction error across all (unique_tile × palette × {normal, flipped}) triples.
-/// This is the Zig equivalent of Rust imgconv.rs:702-740 `find_best_tile_assignments()`.
 /// Complexity: O(N_tiles × N_unique × N_palettes × 2) with N_pixels deltaE calls per evaluation.
 fn findBestTileAssignments(
     arena: std.mem.Allocator,

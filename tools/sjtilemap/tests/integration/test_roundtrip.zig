@@ -436,7 +436,7 @@ test "Palette reduce_colors: frequency-weighted centroids for skewed distributio
         .palette_kmeans_max_iter = 10_000,
     };
 
-    const palette = try palette_gen_mod.generatePaletteFromTiles(alloc, &tiles, cfg);
+    const palette = try palette_gen_mod.generatePaletteFromTiles(alloc, &tiles, cfg, true);
 
     // The palette must have a representative close to color_a.
     // With frequency-weighted centroids, the representative for A's cluster
@@ -1142,13 +1142,13 @@ test "Phase 11: Config validate catches colors_per_palette > 16" {
 }
 
 test "Phase 11: Config generateDefault produces parseable ZON" {
-    var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(std.testing.allocator);
+    var writer = std.io.Writer.Allocating.init(std.testing.allocator);
+    defer writer.deinit();
 
-    try Config.generateDefault(buf.writer(std.testing.allocator));
+    try Config.generateDefault(&writer.writer);
 
     // Parse back with ZON
-    const source = try std.testing.allocator.dupeZ(u8, buf.items);
+    const source = try writer.toOwnedSliceSentinel(0);
     defer std.testing.allocator.free(source);
 
     // Config has many enum fields; increase comptime branch quota for ZON parsing.
@@ -1559,12 +1559,13 @@ test "Phase 11: validateImageDimensions accepts valid dimensions" {
 }
 
 test "Phase 11: ZON round-trip includes palette_strategy and tileset_strategy" {
-    var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(std.testing.allocator);
+    var writer = std.io.Writer.Allocating.init(std.testing.allocator);
+    defer writer.deinit();
 
-    try Config.generateDefault(buf.writer(std.testing.allocator));
+    try Config.generateDefault(&writer.writer);
 
-    const source = try std.testing.allocator.dupeZ(u8, buf.items);
+    // Parse back with ZON
+    const source = try writer.toOwnedSliceSentinel(0);
     defer std.testing.allocator.free(source);
 
     // Config has many enum fields; increase comptime branch quota for ZON parsing.

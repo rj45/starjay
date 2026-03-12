@@ -554,7 +554,7 @@ sjtilemap [OPTIONS] [INPUT_FILES...]
       --no-c-include-stdint         Disable C `#include <stdint.h>`
       --no-c-const                  Disable C `const` keyword usage
       --no-c-uppercase-hex          Disable C hex being uppercase
-      --preview-png                 Write preview PNG reconstruction
+      --preview                 Write preview PNG reconstruction
       --json-dump                   Write full JSON dump
       -v, --verbose                 Progress output to stderr
 ```
@@ -882,7 +882,7 @@ zig build
 zig build test
 
 # Run on a real image
-zig build run -- -i test_assets/Gouldian_Finch_256x256.png -f hex -f c_array --preview-png -o /tmp/out
+zig build run -- -i test_assets/Gouldian_Finch_256x256.png -f hex -f c_array --preview -o /tmp/out
 
 # Benchmarks
 zig build bench

@@ -43,7 +43,6 @@ pub fn main() !void {
         \\    --num-preloaded-palettes <u32> Number of palettes to use from preloaded palette (0 = load all).
         \\    --palette-generator <str>      Palette generation algorithm: kmeans (default).
         \\    --tile-reducer <str>           Tile dedup algorithm: auto|exact_hash|kmeans_color (default: auto).
-        \\    --preview-png                  Write preview PNG reconstruction.
         \\    --c-var-prefix <str>           C array variable name prefix (default: "tilemap").
         \\    --c-tilemap-type <str>         C type for tilemap entries (default: "uint16_t").
         \\    --c-tileset-row-type <str>     C type for tileset row words (default: "uint32_t").
@@ -52,6 +51,8 @@ pub fn main() !void {
         \\    --no-c-const                   Omit const qualifier from C array declarations.
         \\    --no-c-uppercase-hex           Use lowercase hex in C array output.
         \\    --json-dump <str>              Write full JSON dump to file.
+        \\    --preview                      Write preview PNG reconstruction.
+        \\    --preview-palette              Write palette squares to an output PNG.
         \\-v, --verbose                      Progress output to stderr.
     );
 
@@ -72,12 +73,14 @@ pub fn main() !void {
 
     // --generate-config: write defaults to file and exit
     if (res.args.@"generate-config") |path| {
-        var gbuf: std.ArrayList(u8) = .empty;
-        defer gbuf.deinit(gpa);
-        try lib.config.Config.generateDefault(gbuf.writer(gpa));
+        var writer = std.io.Writer.Allocating.init(gpa);
+        defer writer.deinit();
+
+        try lib.config.Config.generateDefault(&writer.writer);
+
         const file = try std.fs.cwd().createFile(path, .{});
         defer file.close();
-        try file.writeAll(gbuf.items);
+        try file.writeAll(writer.written());
         std.debug.print("Wrote default config to {s}\n", .{path});
         return;
     }
@@ -88,7 +91,6 @@ pub fn main() !void {
         return;
     }
 
-    const verbose = res.args.verbose != 0;
     const output_dir = res.args.@"output-dir" orelse ".";
 
     // Build config: start from ZON file if -c is given, otherwise use defaults
@@ -97,6 +99,7 @@ pub fn main() !void {
     else
         lib.config.Config{};
 
+    if (res.args.verbose != 0) cfg.verbose = true;
     if (res.args.@"tile-width") |v| cfg.tile_width = v;
     if (res.args.@"tile-height") |v| cfg.tile_height = v;
     if (res.args.@"tilemap-width") |v| cfg.tilemap_width = v;
@@ -220,13 +223,14 @@ pub fn main() !void {
     if (res.args.@"no-c-const" != 0) c_cfg.use_const = false;
     if (res.args.@"no-c-uppercase-hex" != 0) c_cfg.hex_uppercase = false;
 
-    const write_preview = res.args.@"preview-png" != 0;
+    const write_preview = res.args.@"preview" != 0;
+    const write_preview_palette = res.args.@"preview-palette" != 0;
     const formats = res.args.format;
 
     if (res.args.input.len == 1) {
         // Single file: use run()
         const input_path = res.args.input[0];
-        if (verbose) std.debug.print("Loading {s}\n", .{input_path});
+        if (cfg.verbose) std.debug.print("Loading {s}\n", .{input_path});
 
         var img = try lib.input.loadImage(gpa, input_path);
         defer img.deinit();
@@ -237,7 +241,7 @@ pub fn main() !void {
         if (res.args.@"tilemap-height" == null)
             cfg.tilemap_height = img.height / cfg.tile_height;
 
-        if (verbose) std.debug.print("Processing {}x{} image\n", .{ img.width, img.height });
+        if (cfg.verbose) std.debug.print("Processing {}x{} image\n", .{ img.width, img.height });
 
         var result = try lib.pipeline.run(gpa, cfg, img);
         defer result.deinit();
@@ -252,14 +256,14 @@ pub fn main() !void {
 
         const stem = std.fs.path.stem(input_path);
 
-        try writeOutputs(gpa, &result, stem, output_dir, cfg, c_cfg, formats, verbose);
+        try writeOutputs(gpa, &result, stem, output_dir, cfg, c_cfg, formats);
 
         if (res.args.@"json-dump") |json_path| {
             var jbuf: std.ArrayList(u8) = .empty;
             defer jbuf.deinit(gpa);
             try json_out.writeJsonDump(jbuf.writer(gpa).any(), &result);
             try writeFile(&jbuf, json_path);
-            if (verbose) std.debug.print("Wrote JSON dump: {s}\n", .{json_path});
+            if (cfg.verbose) std.debug.print("Wrote JSON dump: {s}\n", .{json_path});
         }
 
         if (write_preview) {
@@ -267,8 +271,39 @@ pub fn main() !void {
                 const out_path = try std.fmt.allocPrint(gpa, "{s}/{s}_preview.png", .{ output_dir, stem });
                 defer gpa.free(out_path);
                 try lib.output.image.saveOklabAsPng(gpa, pixels, result.output_width, result.output_height, out_path);
-                if (verbose) std.debug.print("Wrote preview: {s}\n", .{out_path});
+                if (cfg.verbose) std.debug.print("Wrote preview: {s}\n", .{out_path});
             }
+        }
+
+        if (write_preview_palette) {
+            const out_path = try std.fmt.allocPrint(gpa, "{s}/{s}_palette.png", .{ output_dir, stem });
+            defer gpa.free(out_path);
+
+            const square_size = 32;
+            const image_width = cfg.colors_per_palette * square_size;
+            const image_height = cfg.num_palettes * square_size;
+
+            const pixels: []OklabAlpha = try gpa.alloc(OklabAlpha, image_width*image_height);
+            defer gpa.free(pixels);
+
+            for (result.palettes, 0..) |palette, sy| {
+                for (palette.colors, 0..) |color, sx| {
+                    for (0..square_size) |ty| {
+                        for (0..square_size) |tx| {
+                            const y = (sy * square_size) + ty;
+                            const x = (sx * square_size) + tx;
+                            if (sx < palette.count) {
+                                pixels[(y*image_width)+x] = color;
+                            } else {
+                                pixels[(y*image_width)+x] = .{.alpha = 0};
+                            }
+                        }
+                    }
+                }
+            }
+
+            try lib.output.image.saveOklabAsPng(gpa, pixels, image_width, image_height, out_path);
+            if (cfg.verbose) std.debug.print("Wrote palette preview: {s}\n", .{out_path});
         }
     } else {
         // Multiple files: use runMulti()
@@ -279,7 +314,7 @@ pub fn main() !void {
         }
 
         for (res.args.input, 0..) |path, i| {
-            if (verbose) std.debug.print("Loading {s}\n", .{path});
+            if (cfg.verbose) std.debug.print("Loading {s}\n", .{path});
             images[i] = try lib.input.loadImage(gpa, path);
         }
 
@@ -306,13 +341,13 @@ pub fn main() !void {
                 .output_height = r.output_height,
                 ._arena = undefined, // not owned here
             };
-            try writeOutputs(gpa, &single, stem, output_dir, cfg, c_cfg, formats, verbose);
+            try writeOutputs(gpa, &single, stem, output_dir, cfg, c_cfg, formats);
 
             if (write_preview) {
                 const out_path = try std.fmt.allocPrint(gpa, "{s}/{s}_preview.png", .{ output_dir, stem });
                 defer gpa.free(out_path);
                 try lib.output.image.saveOklabAsPng(gpa, r.output_pixels, r.output_width, r.output_height, out_path);
-                if (verbose) std.debug.print("Wrote preview: {s}\n", .{out_path});
+                if (cfg.verbose) std.debug.print("Wrote preview: {s}\n", .{out_path});
             }
         }
     }
@@ -362,7 +397,6 @@ fn writeOutputs(
     cfg: lib.config.Config,
     c_cfg: c_array_out.CArrayConfig,
     formats: []const []const u8,
-    verbose: bool,
 ) !void {
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(gpa);
@@ -370,20 +404,19 @@ fn writeOutputs(
     for (formats) |fmt| {
         if (std.mem.eql(u8, fmt, "hex") or std.mem.eql(u8, fmt, "logisim")) {
             const logisim = std.mem.eql(u8, fmt, "logisim");
-            const ext: []const u8 = if (logisim) "logisim" else "hex";
 
             // Tilemap hex
             {
-                const path = try std.fmt.allocPrint(gpa, "{s}/{s}_tilemap.{s}", .{ output_dir, stem, ext });
+                const path = try std.fmt.allocPrint(gpa, "{s}/{s}_tilemap.hex", .{ output_dir, stem });
                 defer gpa.free(path);
                 try hex_out.writeTilemapHex(buf.writer(gpa).any(), result.tilemap, result.tilemap_width, logisim);
                 try writeFile(&buf, path);
-                if (verbose) std.debug.print("Wrote: {s}\n", .{path});
+                if (cfg.verbose) std.debug.print("Wrote: {s}\n", .{path});
             }
 
             // Tileset hex
             {
-                const path = try std.fmt.allocPrint(gpa, "{s}/{s}_tileset.{s}", .{ output_dir, stem, ext });
+                const path = try std.fmt.allocPrint(gpa, "{s}/{s}_tileset.hex", .{ output_dir, stem });
                 defer gpa.free(path);
                 switch (cfg.tileset_storage_order) {
                     .row_major => try hex_out.writeTilesetHexRowMajor(
@@ -394,16 +427,16 @@ fn writeOutputs(
                     ),
                 }
                 try writeFile(&buf, path);
-                if (verbose) std.debug.print("Wrote: {s}\n", .{path});
+                if (cfg.verbose) std.debug.print("Wrote: {s}\n", .{path});
             }
 
             // Palette hex
             {
-                const path = try std.fmt.allocPrint(gpa, "{s}/{s}_palette.{s}", .{ output_dir, stem, ext });
+                const path = try std.fmt.allocPrint(gpa, "{s}/{s}_palette.hex", .{ output_dir, stem });
                 defer gpa.free(path);
                 try hex_out.writePaletteHex(buf.writer(gpa).any(), result.palettes, cfg.colors_per_palette);
                 try writeFile(&buf, path);
-                if (verbose) std.debug.print("Wrote: {s}\n", .{path});
+                if (cfg.verbose) std.debug.print("Wrote: {s}\n", .{path});
             }
         } else if (std.mem.eql(u8, fmt, "binary")) {
             // Tilemap binary
@@ -412,7 +445,7 @@ fn writeOutputs(
                 defer gpa.free(path);
                 try binary_out.writeTilemapBinary(buf.writer(gpa).any(), result.tilemap);
                 try writeFile(&buf, path);
-                if (verbose) std.debug.print("Wrote: {s}\n", .{path});
+                if (cfg.verbose) std.debug.print("Wrote: {s}\n", .{path});
             }
 
             // Tileset binary
@@ -428,7 +461,7 @@ fn writeOutputs(
                     ),
                 }
                 try writeFile(&buf, path);
-                if (verbose) std.debug.print("Wrote: {s}\n", .{path});
+                if (cfg.verbose) std.debug.print("Wrote: {s}\n", .{path});
             }
 
             // Palette binary
@@ -437,7 +470,7 @@ fn writeOutputs(
                 defer gpa.free(path);
                 try binary_out.writePaletteBinary(buf.writer(gpa).any(), result.palettes, cfg.colors_per_palette);
                 try writeFile(&buf, path);
-                if (verbose) std.debug.print("Wrote: {s}\n", .{path});
+                if (cfg.verbose) std.debug.print("Wrote: {s}\n", .{path});
             }
         } else if (std.mem.eql(u8, fmt, "c_array")) {
             // Tilemap C array
@@ -446,7 +479,7 @@ fn writeOutputs(
                 defer gpa.free(path);
                 try c_array_out.writeTilemapCArray(buf.writer(gpa).any(), result.tilemap, c_cfg);
                 try writeFile(&buf, path);
-                if (verbose) std.debug.print("Wrote: {s}\n", .{path});
+                if (cfg.verbose) std.debug.print("Wrote: {s}\n", .{path});
             }
 
             // Tileset C array
@@ -462,7 +495,7 @@ fn writeOutputs(
                     ),
                 }
                 try writeFile(&buf, path);
-                if (verbose) std.debug.print("Wrote: {s}\n", .{path});
+                if (cfg.verbose) std.debug.print("Wrote: {s}\n", .{path});
             }
 
             // Palette C array (use c_cfg but with palette-specific guard/prefix)
@@ -474,7 +507,7 @@ fn writeOutputs(
                 pal_c_cfg.include_guard = "PALETTE_H";
                 try c_array_out.writePaletteCArray(buf.writer(gpa).any(), result.palettes, cfg.colors_per_palette, pal_c_cfg);
                 try writeFile(&buf, path);
-                if (verbose) std.debug.print("Wrote: {s}\n", .{path});
+                if (cfg.verbose) std.debug.print("Wrote: {s}\n", .{path});
             }
         } else {
             std.debug.print("Unknown format: {s} (use hex, logisim, binary, or c_array)\n", .{fmt});
