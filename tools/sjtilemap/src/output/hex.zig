@@ -6,6 +6,7 @@ const QuantizedTile = quantize_mod.QuantizedTile;
 const palette_mod = @import("../palette.zig");
 const Palette = palette_mod.Palette;
 const zigimg = @import("zigimg");
+const common = @import("common.zig");
 
 /// Write tilemap as hex. Format: `{XXXX} ` per entry (lowercase), newline per row.
 pub fn writeTilemapHex(
@@ -21,23 +22,10 @@ pub fn writeTilemapHex(
     }
 }
 
-/// Pack a row of 8 pixel indices (u8, value 0-15) into 2 u16 chunks.
-/// chunk0 packs pixels 0..3: p[0] | (p[1]<<4) | (p[2]<<8) | (p[3]<<12)
-/// chunk1 packs pixels 4..7: same pattern
-fn packRow8(row_pixels: []const u8) [2]u16 {
-    var chunks: [2]u16 = .{ 0, 0 };
-    for (row_pixels, 0..) |px, i| {
-        const chunk_idx = i / 4;
-        const bit_pos: u4 = @intCast((i % 4) * 4);
-        chunks[chunk_idx] |= @as(u16, px) << bit_pos;
-    }
-    return chunks;
-}
-
 /// Write tileset as hex in row-major order.
 /// For each row r (0..tile_height):
-///   for each unique tile: write 2 u16 chunks for row r
-///   pad to max_unique_tiles with 0000 0000
+///   for each unique tile: write chunksPerRow u16 chunks for row r
+///   pad to max_unique_tiles with zero chunks
 ///   newline
 pub fn writeTilesetHexRowMajor(
     out: std.io.AnyWriter,
@@ -45,19 +33,24 @@ pub fn writeTilesetHexRowMajor(
     tile_height: usize,
     tile_width: usize,
     max_unique_tiles: usize,
+    bits_per_pixel: u4,
     logisim: bool,
 ) !void {
     if (logisim) try out.writeAll("v2.0 raw\n");
+    const n_chunks = common.chunksPerRow(tile_width, bits_per_pixel);
+    var chunks_buf: [common.max_chunks_per_row]u16 = undefined;
     for (0..tile_height) |row| {
         for (tiles) |tile| {
             const row_start = row * tile_width;
             const row_pixels = tile.data[row_start .. row_start + tile_width];
-            const chunks = packRow8(row_pixels);
-            try out.print("{x:0>4} {x:0>4} ", .{ chunks[0], chunks[1] });
+            common.packRow(row_pixels, bits_per_pixel, chunks_buf[0..n_chunks]);
+            for (chunks_buf[0..n_chunks]) |chunk| {
+                try out.print("{x:0>4} ", .{chunk});
+            }
         }
         // Pad to max_unique_tiles
         for (tiles.len..max_unique_tiles) |_| {
-            try out.writeAll("0000 0000 ");
+            for (0..n_chunks) |_| try out.writeAll("0000 ");
         }
         try out.writeByte('\n');
     }
@@ -73,12 +66,8 @@ pub fn writePaletteHex(
 ) !void {
     for (palettes) |palette| {
         for (palette.colors) |oklab| {
-            // Convert OKLab to sRGB float32 via zigimg, then clamp and encode as u8
-            const srgb = zigimg.color.sRGB.fromOkLabAlpha(oklab, .clamp);
-            const r8: u8 = @intFromFloat(@round(srgb.r * 255.0));
-            const g8: u8 = @intFromFloat(@round(srgb.g * 255.0));
-            const b8: u8 = @intFromFloat(@round(srgb.b * 255.0));
-            try out.print("{x:0>2}{x:0>2}{x:0>2} ", .{ r8, g8, b8 });
+            const rgb = common.oklabToSrgbU8(oklab);
+            try out.print("{x:0>2}{x:0>2}{x:0>2} ", .{ rgb.r, rgb.g, rgb.b });
         }
         // Pad to colors_per_palette entries
         for (palette.count..colors_per_palette) |_| {
@@ -132,19 +121,9 @@ pub fn loadPaletteFromHex(
     return palettes.toOwnedSlice(arena);
 }
 
-/// Unpack 2 u16 chunks (row-major 4bpp packing) into 8 pixel indices (0..15).
-/// Inverse of packRow8: chunk0 carries pixels 0..3, chunk1 carries pixels 4..7.
-fn unpackRow8(chunks: [2]u16, out: []u8) void {
-    for (0..4) |i| {
-        out[i]     = @truncate((chunks[0] >> @intCast(i * 4)) & 0xF);
-        out[i + 4] = @truncate((chunks[1] >> @intCast(i * 4)) & 0xF);
-    }
-}
-
 /// Load tileset from a row-major hex file.
-/// Format: tile_height lines; each line contains `num_tiles` pairs of u16 hex chunks.
+/// Format: tile_height lines; each line contains `num_tiles` groups of chunksPerRow u16 hex words.
 /// `num_tiles`: number of tiles to load (leading tiles; remainder is ignored padding).
-/// `tile_width` must match what was used when writing (default 8 → 2 chunks per tile per row).
 /// Tiles are allocated with arena and returned as []QuantizedTile.
 pub fn loadTilesetFromHex(
     arena: std.mem.Allocator,
@@ -152,8 +131,8 @@ pub fn loadTilesetFromHex(
     tile_height: usize,
     tile_width: usize,
     num_tiles: usize,
+    bits_per_pixel: u4,
 ) ![]QuantizedTile {
-    // Allocate tile storage: each tile has tile_height * tile_width pixels (u8 each)
     const tiles = try arena.alloc(QuantizedTile, num_tiles);
     for (tiles) |*t| {
         t.data = try arena.alloc(u8, tile_height * tile_width);
@@ -162,7 +141,11 @@ pub fn loadTilesetFromHex(
         @memset(t.data, 0);
     }
 
-    const chunks_per_tile = tile_width / 4; // 8-wide tiles → 2 chunks per row
+    const chunks_per_tile = common.chunksPerRow(tile_width, bits_per_pixel);
+    // Allocate row buffers once; reused across all tiles and rows.
+    const row_pixels = try arena.alloc(u8, tile_width);
+    const chunks = try arena.alloc(u16, chunks_per_tile);
+
     var row: usize = 0;
     var lines = std.mem.splitScalar(u8, data, '\n');
     while (lines.next()) |line| {
@@ -172,22 +155,18 @@ pub fn loadTilesetFromHex(
 
         var tokens = std.mem.splitScalar(u8, trimmed, ' ');
         for (0..num_tiles) |ti| {
-            var row_pixels: [8]u8 = undefined;
+            @memset(chunks, 0);
             var chunks_read: usize = 0;
-            var chunks: [2]u16 = .{ 0, 0 };
             while (chunks_read < chunks_per_tile) {
                 const tok = tokens.next() orelse break;
                 const t = std.mem.trim(u8, tok, " \t");
-                if (t.len == 0) {
-                    // try again
-                    continue;
-                }
+                if (t.len == 0) continue;
                 chunks[chunks_read] = try std.fmt.parseInt(u16, t, 16);
                 chunks_read += 1;
             }
-            unpackRow8(chunks, &row_pixels);
+            common.unpackRow(chunks, bits_per_pixel, row_pixels);
             const row_start = row * tile_width;
-            @memcpy(tiles[ti].data[row_start .. row_start + tile_width], &row_pixels);
+            @memcpy(tiles[ti].data[row_start .. row_start + tile_width], row_pixels);
         }
         row += 1;
     }
@@ -200,15 +179,20 @@ pub fn writeTilesetHexSequential(
     tiles: []const QuantizedTile,
     tile_height: usize,
     tile_width: usize,
+    bits_per_pixel: u4,
     logisim: bool,
 ) !void {
     if (logisim) try out.writeAll("v2.0 raw\n");
+    const n_chunks = common.chunksPerRow(tile_width, bits_per_pixel);
+    var chunks_buf: [common.max_chunks_per_row]u16 = undefined;
     for (tiles) |tile| {
         for (0..tile_height) |row| {
             const row_start = row * tile_width;
             const row_pixels = tile.data[row_start .. row_start + tile_width];
-            const chunks = packRow8(row_pixels);
-            try out.print("{x:0>4} {x:0>4} ", .{ chunks[0], chunks[1] });
+            common.packRow(row_pixels, bits_per_pixel, chunks_buf[0..n_chunks]);
+            for (chunks_buf[0..n_chunks]) |chunk| {
+                try out.print("{x:0>4} ", .{chunk});
+            }
             try out.writeByte('\n');
         }
     }

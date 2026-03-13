@@ -114,8 +114,8 @@ test "Phase 4: 16x16 with 4 identical tiles deduplicates to 1 unique tile" {
     };
 
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const result = try pipeline.run(arena.allocator(), cfg, img);
     defer arena.deinit();
+    const result = try pipeline.run(arena.allocator(), cfg, img);
 
     // Assert 1: Pixel-perfect reconstruction
     const output_pixels = result.output_pixels;
@@ -213,8 +213,8 @@ test "Phase 5: 4 distinct tiles with 1 shared palette, pixel-perfect reconstruct
     };
 
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const result = try pipeline.run(arena.allocator(), cfg, img);
     defer arena.deinit();
+    const result = try pipeline.run(arena.allocator(), cfg, img);
 
     // Assert 1: Pixel-perfect reconstruction
     const output_pixels = result.output_pixels;
@@ -337,8 +337,8 @@ test "Phase 6: 4 identical tile shapes, 4 different color sets -> 4 palettes, 1 
     };
 
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const result = try pipeline.run(arena.allocator(), cfg, img);
     defer arena.deinit();
+    const result = try pipeline.run(arena.allocator(), cfg, img);
 
     // Assert 1: Pixel-perfect reconstruction (deltaE < 1e-4 per pixel)
     const output_pixels = result.output_pixels;
@@ -489,8 +489,8 @@ test "Phase 6 extended: palettes are sorted by average luminance (ascending)" {
     };
 
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const result = try pipeline.run(arena.allocator(), cfg, img);
     defer arena.deinit();
+    const result = try pipeline.run(arena.allocator(), cfg, img);
 
     try std.testing.expectEqual(@as(usize, 4), result.palettes.len);
 
@@ -546,8 +546,8 @@ test "Phase 2: 8x8 single tile, 16 exact colors, pixel-perfect reconstruction" {
     };
 
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const result = try pipeline.run(arena.allocator(), cfg, img);
     defer arena.deinit();
+    const result = try pipeline.run(arena.allocator(), cfg, img);
 
     // Assert 1: Tileset has exactly 1 unique tile
     try std.testing.expectEqual(@as(usize, 1), result.unique_tiles.len);
@@ -640,8 +640,8 @@ test "Phase 7: Sierra dithering changes output compared to no dithering" {
     var cfg_none = base_cfg;
     cfg_none.dither_algorithm = .none;
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const result_none = try pipeline.run(arena.allocator(), cfg_none, img);
     defer arena.deinit();
+    const result_none = try pipeline.run(arena.allocator(), cfg_none, img);
 
     var cfg_sierra = base_cfg;
     cfg_sierra.dither_algorithm = .sierra;
@@ -778,8 +778,8 @@ test "Phase 8A: transparency_mode=alpha preserves transparent pixels" {
     };
 
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const result = try pipeline.run(arena.allocator(), cfg, img);
     defer arena.deinit();
+    const result = try pipeline.run(arena.allocator(), cfg, img);
 
     // Assert: tilemap entry has transparent=true
     const entry = result.tilemap[0];
@@ -832,8 +832,8 @@ test "Phase 8B: transparency_mode=alpha, all opaque -> transparent=false" {
     };
 
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const result = try pipeline.run(arena.allocator(), cfg, img);
     defer arena.deinit();
+    const result = try pipeline.run(arena.allocator(), cfg, img);
 
     // All-opaque image: tilemap entry should have transparent=false
     const entry = result.tilemap[0];
@@ -865,8 +865,8 @@ test "Phase 8C: transparency_mode=none ignores alpha channel" {
     };
 
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const result = try pipeline.run(arena.allocator(), cfg, img);
     defer arena.deinit();
+    const result = try pipeline.run(arena.allocator(), cfg, img);
 
     // transparency_mode=none: all tilemap entries should have transparent=false
     for (result.tilemap, 0..) |entry, i| {
@@ -933,8 +933,8 @@ test "Phase 9: x_flip deduplication - mirrored tile deduplicates to 1 unique til
     };
 
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const result = try pipeline.run(arena.allocator(), cfg, img);
     defer arena.deinit();
+    const result = try pipeline.run(arena.allocator(), cfg, img);
 
     // Assert 1: Pixel-perfect reconstruction
     const output_pixels = result.output_pixels;
@@ -1061,7 +1061,7 @@ test "Phase 10: tileset row-major storage" {
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(std.testing.allocator);
 
-    try hex_out.writeTilesetHexRowMajor(buf.writer(std.testing.allocator).any(), &tiles, tile_h, tile_w, 2, false);
+    try hex_out.writeTilesetHexRowMajor(buf.writer(std.testing.allocator).any(), &tiles, tile_h, tile_w, 2, 4, false);
 
     // Row 0: tile0 chunk0 = 1|(2<<4)|(3<<8)|(4<<12) = 0x4321, chunk1 = 0x4321
     // tile1 chunk0 = 5|(6<<4)|(7<<8)|(8<<12) = 0x8765, chunk1 = 0x8765
@@ -1093,7 +1093,7 @@ test "Phase 10: tileset sequential storage" {
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(std.testing.allocator);
 
-    try hex_out.writeTilesetHexSequential(buf.writer(std.testing.allocator).any(), &tiles, tile_h, tile_w, false);
+    try hex_out.writeTilesetHexSequential(buf.writer(std.testing.allocator).any(), &tiles, tile_h, tile_w, 4, false);
 
     // Sequential: tile0 row0, tile0 row1..7, then tile1 row0, tile1 row1..7
     // All 8-tile-row lines: each line is "XXXX XXXX \n"
@@ -1256,8 +1256,8 @@ test "Phase 12: shared palette, shared tileset - common tiles appear once" {
 
     const images = [_]LoadedImage{ img_a, img_b };
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const mresults = try lib.pipeline.runMulti(arena.allocator(), cfg, &images);
     defer arena.deinit();
+    const mresults = try lib.pipeline.runMulti(arena.allocator(), cfg, &images);
 
     // Assert 1: shared tileset -> results[0] and results[1] have same unique_tiles pointer
     try std.testing.expectEqual(
@@ -1322,8 +1322,8 @@ test "Phase 12: per-file palette, shared tileset - common tiles with separate pa
 
     const images = [_]LoadedImage{ img_a, img_b };
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const mresults = try lib.pipeline.runMulti(arena.allocator(), cfg, &images);
     defer arena.deinit();
+    const mresults = try lib.pipeline.runMulti(arena.allocator(), cfg, &images);
 
     // Assert 1: per-file palette -> different palette pointers
     try std.testing.expect(
@@ -1379,8 +1379,8 @@ test "Phase 12: shared palette, per-file tileset - each image has own tileset" {
 
     const images = [_]LoadedImage{ img_a, img_b };
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const mresults = try lib.pipeline.runMulti(arena.allocator(), cfg, &images);
     defer arena.deinit();
+    const mresults = try lib.pipeline.runMulti(arena.allocator(), cfg, &images);
 
     // Assert 1: per-file tileset -> different unique_tiles pointers
     try std.testing.expect(
@@ -1438,7 +1438,7 @@ test "Phase 10: tileset binary - row-major produces same u16 words as hex" {
     // Row-major binary: tile0-row0 chunk0+chunk1, tile1-row0 chunk0+chunk1, tile0-row1 ...
     // chunk for row0 of tile0: pixels [1,2,3,4,1,2,3,4] → chunk0=0x4321, chunk1=0x4321
     // chunk for row0 of tile1: pixels [5,6,7,8,5,6,7,8] → chunk0=0x8765, chunk1=0x8765
-    try binary_out.writeTilesetBinaryRowMajor(buf.writer(std.testing.allocator).any(), &tiles, tile_h, tile_w, 2);
+    try binary_out.writeTilesetBinaryRowMajor(buf.writer(std.testing.allocator).any(), &tiles, tile_h, tile_w, 2, 4);
 
     // First 8 bytes: row0 tile0 chunk0 (LE), chunk1 (LE), tile1 chunk0, chunk1
     // 0x4321 LE = [0x21, 0x43]
@@ -1475,7 +1475,7 @@ test "Phase 10: tileset C-array - row-major includes include guard and tile data
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(std.testing.allocator);
 
-    try c_array_out.writeTilesetCArrayRowMajor(buf.writer(std.testing.allocator).any(), &tiles, tile_h, tile_w, 1, c_cfg);
+    try c_array_out.writeTilesetCArrayRowMajor(buf.writer(std.testing.allocator).any(), &tiles, tile_h, tile_w, 1, 4, c_cfg);
 
     // Should contain include guard
     try std.testing.expect(std.mem.indexOf(u8, buf.items, "#ifndef TILES_H") != null);
@@ -1599,8 +1599,8 @@ test "Phase 11: palette_0_color_0_is_black=true forces black at palettes[0].colo
     };
 
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const result = try pipeline.run(arena.allocator(), cfg, img);
     defer arena.deinit();
+    const result = try pipeline.run(arena.allocator(), cfg, img);
 
     const first_color = result.palettes[0].colors[0];
     // Black in OKLab: L=0, a=0, b=0
@@ -1688,8 +1688,8 @@ test "Phase 11: Config.load() parses ZON file with tile_width=16 and runs pipeli
     defer loaded_img.deinit();
 
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const result = try pipeline.run(arena.allocator(), cfg, loaded_img);
     defer arena.deinit();
+    const result = try pipeline.run(arena.allocator(), cfg, loaded_img);
 
     // 1 unique tile, 1x1 tilemap
     try std.testing.expectEqual(@as(usize, 1), result.unique_tiles.len);
@@ -1749,8 +1749,8 @@ test "Phase 8D: transparency_mode=color treats matching pixels as transparent" {
     };
 
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const result = try pipeline.run(arena.allocator(), cfg, img);
     defer arena.deinit();
+    const result = try pipeline.run(arena.allocator(), cfg, img);
 
     // Assert 1: tilemap entry has transparent=true (tile contains transparent pixels)
     try std.testing.expect(result.tilemap[0].transparent);
@@ -1808,7 +1808,7 @@ test "Phase 10: tileset C-array sequential - tile 0 complete before tile 1" {
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(std.testing.allocator);
 
-    try c_array_out.writeTilesetCArraySequential(buf.writer(std.testing.allocator).any(), &tiles, tile_h, tile_w, c_cfg);
+    try c_array_out.writeTilesetCArraySequential(buf.writer(std.testing.allocator).any(), &tiles, tile_h, tile_w, 4, c_cfg);
 
     // Should contain include guard
     try std.testing.expect(std.mem.indexOf(u8, buf.items, "#ifndef TILES_SEQ_H") != null);
@@ -1829,7 +1829,7 @@ test "Phase 10: tileset C-array sequential - tile 0 complete before tile 1" {
         .include_guard = "TILES_RM_H",
         .entries_per_line = 4,
     };
-    try c_array_out.writeTilesetCArrayRowMajor(buf_rm.writer(std.testing.allocator).any(), &tiles, tile_h, tile_w, 2, c_cfg_rm);
+    try c_array_out.writeTilesetCArrayRowMajor(buf_rm.writer(std.testing.allocator).any(), &tiles, tile_h, tile_w, 2, 4, c_cfg_rm);
     // Strip headers to compare just the data portion
     // For 2 distinct tiles the data arrays will differ in some positions
     try std.testing.expect(!std.mem.eql(u8, buf.items, buf_rm.items));
@@ -1935,8 +1935,8 @@ test "Phase 12: per-file palette, per-file tileset - fully independent" {
 
     const images = [_]LoadedImage{ img_a, img_b };
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const mresults = try lib.pipeline.runMulti(arena.allocator(), cfg, &images);
     defer arena.deinit();
+    const mresults = try lib.pipeline.runMulti(arena.allocator(), cfg, &images);
 
     // Assert 1: per-file palette -> different palette pointers
     try std.testing.expect(
@@ -2124,8 +2124,8 @@ test "Tileset k-means reducer: max_unique_tiles is respected when exceeded" {
     };
 
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const result = try pipeline.run(arena.allocator(), cfg, img);
     defer arena.deinit();
+    const result = try pipeline.run(arena.allocator(), cfg, img);
 
     // Assert 1: unique tile count respects max_unique_tiles
     if (result.unique_tiles.len > cfg.max_unique_tiles) {
@@ -2216,8 +2216,8 @@ test "JSON dump: tilemap, palette, and tileset data are correctly serialized" {
     };
 
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const result = try pipeline.run(arena.allocator(), cfg, img);
     defer arena.deinit();
+    const result = try pipeline.run(arena.allocator(), cfg, img);
 
     // Write JSON dump to a buffer
     var buf: std.ArrayList(u8) = .empty;
@@ -2276,8 +2276,8 @@ test "Phase 12: preloaded palette strategy uses loaded palettes without regenera
     };
 
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const ref_result = try pipeline.run(arena.allocator(), base_cfg, img_ref);
     defer arena.deinit();
+    const ref_result = try pipeline.run(arena.allocator(), base_cfg, img_ref);
 
     // Step 2: write the reference palette to a temp file.
     var tmp_dir = std.testing.tmpDir(.{});
@@ -2349,8 +2349,8 @@ test "Phase 12: preloaded tileset strategy uses loaded tiles without regeneratin
     };
 
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const ref_result = try pipeline.run(arena.allocator(), base_cfg, img_ref);
     defer arena.deinit();
+    const ref_result = try pipeline.run(arena.allocator(), base_cfg, img_ref);
 
     const n_tiles = ref_result.unique_tiles.len;
     std.debug.print("Preloaded tileset: reference has {} unique tile(s)\n", .{n_tiles});
@@ -2365,7 +2365,7 @@ test "Phase 12: preloaded tileset strategy uses loaded tiles without regeneratin
         try hex_out.writeTilesetHexRowMajor(
             ts_buf.writer(gpa).any(),
             ref_result.unique_tiles,
-            8, 8, 256, false,
+            8, 8, 256, 4, false,
         );
         try tmp_dir.dir.writeFile(.{ .sub_path = "tileset.hex", .data = ts_buf.items });
     }
@@ -2433,8 +2433,8 @@ test "Phase 12: multi-file shared pipeline with Sierra dithering produces accept
 
     const images = [_]LoadedImage{ img_a, img_b };
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const mresults = try lib.pipeline.runMulti(arena.allocator(), cfg, &images);
     defer arena.deinit();
+    const mresults = try lib.pipeline.runMulti(arena.allocator(), cfg, &images);
 
     // Assert 1: tilemap dimensions correct for both images.
     try std.testing.expectEqual(@as(usize, 2), mresults.len);
@@ -2474,8 +2474,8 @@ test "tile_reducer=exact_hash succeeds when unique tile count is within limit" {
     };
 
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const result = try pipeline.run(arena.allocator(), cfg, img);
     defer arena.deinit();
+    const result = try pipeline.run(arena.allocator(), cfg, img);
 
     try std.testing.expectEqual(@as(usize, 4), result.unique_tiles.len);
 }
@@ -2499,8 +2499,8 @@ test "tile_reducer=exact_hash fails when unique tile count exceeds limit" {
     };
 
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const result = pipeline.run(arena.allocator(), cfg, img);
     defer arena.deinit();
+    const result = pipeline.run(arena.allocator(), cfg, img);
 
     try std.testing.expectError(error.TooManyUniqueTiles, result);
 }

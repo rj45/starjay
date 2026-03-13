@@ -541,7 +541,7 @@ pub fn runMulti(
             const ts_data = try std.fs.cwd().readFileAlloc(arena, path, 64 * 1024 * 1024);
             const num_tiles = if (cfg.num_preloaded_tiles > 0) cfg.num_preloaded_tiles else cfg.max_unique_tiles;
             const loaded_tiles = try hex_out.loadTilesetFromHex(
-                arena, ts_data, cfg.tile_height, cfg.tile_width, num_tiles,
+                arena, ts_data, cfg.tile_height, cfg.tile_width, num_tiles, cfg.bitsPerColorIndex(),
             );
             if (loaded_tiles.len == 0) return error.EmptyPreloadedTileset;
             // Build a TilesetResult-compatible structure: map each original tile to the

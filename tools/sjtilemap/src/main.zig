@@ -246,8 +246,8 @@ pub fn main() !void {
         cfg.tilemap_height = images[0].height / cfg.tile_height;
 
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const results = try lib.pipeline.runMulti(arena.allocator(), cfg, images);
     defer arena.deinit();
+    const results = try lib.pipeline.runMulti(arena.allocator(), cfg, images);
 
     if (input_paths.len > 1) std.debug.print("Processed {} files\n", .{results.len});
 
@@ -392,10 +392,10 @@ fn writeOutputs(
                 defer gpa.free(path);
                 switch (cfg.tileset_storage_order) {
                     .row_major => try hex_out.writeTilesetHexRowMajor(
-                        buf.writer(gpa).any(), result.unique_tiles, cfg.tile_height, cfg.tile_width, cfg.max_unique_tiles, logisim,
+                        buf.writer(gpa).any(), result.unique_tiles, cfg.tile_height, cfg.tile_width, cfg.max_unique_tiles, cfg.bitsPerColorIndex(), logisim,
                     ),
                     .sequential => try hex_out.writeTilesetHexSequential(
-                        buf.writer(gpa).any(), result.unique_tiles, cfg.tile_height, cfg.tile_width, logisim,
+                        buf.writer(gpa).any(), result.unique_tiles, cfg.tile_height, cfg.tile_width, cfg.bitsPerColorIndex(), logisim,
                     ),
                 }
                 try writeFile(&buf, path);
@@ -426,10 +426,10 @@ fn writeOutputs(
                 defer gpa.free(path);
                 switch (cfg.tileset_storage_order) {
                     .row_major => try binary_out.writeTilesetBinaryRowMajor(
-                        buf.writer(gpa).any(), result.unique_tiles, cfg.tile_height, cfg.tile_width, cfg.max_unique_tiles,
+                        buf.writer(gpa).any(), result.unique_tiles, cfg.tile_height, cfg.tile_width, cfg.max_unique_tiles, cfg.bitsPerColorIndex(),
                     ),
                     .sequential => try binary_out.writeTilesetBinarySequential(
-                        buf.writer(gpa).any(), result.unique_tiles, cfg.tile_height, cfg.tile_width,
+                        buf.writer(gpa).any(), result.unique_tiles, cfg.tile_height, cfg.tile_width, cfg.bitsPerColorIndex(),
                     ),
                 }
                 try writeFile(&buf, path);
@@ -460,10 +460,10 @@ fn writeOutputs(
                 defer gpa.free(path);
                 switch (cfg.tileset_storage_order) {
                     .row_major => try c_array_out.writeTilesetCArrayRowMajor(
-                        buf.writer(gpa).any(), result.unique_tiles, cfg.tile_height, cfg.tile_width, cfg.max_unique_tiles, c_cfg,
+                        buf.writer(gpa).any(), result.unique_tiles, cfg.tile_height, cfg.tile_width, cfg.max_unique_tiles, cfg.bitsPerColorIndex(), c_cfg,
                     ),
                     .sequential => try c_array_out.writeTilesetCArraySequential(
-                        buf.writer(gpa).any(), result.unique_tiles, cfg.tile_height, cfg.tile_width, c_cfg,
+                        buf.writer(gpa).any(), result.unique_tiles, cfg.tile_height, cfg.tile_width, cfg.bitsPerColorIndex(), c_cfg,
                     ),
                 }
                 try writeFile(&buf, path);

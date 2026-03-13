@@ -38,8 +38,8 @@ test "Kodak 23 256x256 integration test" {
     };
 
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const result = try pipeline.run(arena.allocator(), cfg, img);
     defer arena.deinit();
+    const result = try pipeline.run(arena.allocator(), cfg, img);
 
     try std.testing.expect(result.unique_tiles.len <= 256);
     try std.testing.expectEqual(@as(usize, 1024), result.tilemap.len);

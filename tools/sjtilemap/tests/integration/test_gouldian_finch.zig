@@ -41,8 +41,8 @@ test "Gouldian Finch 256x256 integration test" {
     };
 
     var arena = std.heap.ArenaAllocator.init(gpa);
-    const result = try pipeline.run(arena.allocator(), cfg, img);
     defer arena.deinit();
+    const result = try pipeline.run(arena.allocator(), cfg, img);
 
     // Assert 1: Unique tiles <= 256
     if (result.unique_tiles.len > 256) {

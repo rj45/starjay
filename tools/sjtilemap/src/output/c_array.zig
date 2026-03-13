@@ -6,6 +6,7 @@ const quantize_mod = @import("../quantize.zig");
 const QuantizedTile = quantize_mod.QuantizedTile;
 const palette_mod = @import("../palette.zig");
 const Palette = palette_mod.Palette;
+const common = @import("common.zig");
 
 /// Write palettes as a C array of packed 0x{RR}{GG}{BB} values (one u32 per color).
 /// Padded to colors_per_palette entries per palette.
@@ -30,11 +31,8 @@ pub fn writePaletteCArray(
 
     for (palettes) |palette| {
         for (palette.colors) |oklab| {
-            const srgb = zigimg.color.sRGB.fromOkLabAlpha(oklab, .clamp);
-            const r8: u32 = @intFromFloat(@round(srgb.r * 255.0));
-            const g8: u32 = @intFromFloat(@round(srgb.g * 255.0));
-            const b8: u32 = @intFromFloat(@round(srgb.b * 255.0));
-            const packed_rgb: u32 = (r8 << 16) | (g8 << 8) | b8;
+            const rgb = common.oklabToSrgbU8(oklab);
+            const packed_rgb: u32 = (@as(u32, rgb.r) << 16) | (@as(u32, rgb.g) << 8) | rgb.b;
 
             if (entry_count % c_cfg.entries_per_line == 0) try out.writeAll("    ");
             try out.print("0x{X:0>6}", .{packed_rgb});
@@ -88,7 +86,6 @@ pub fn writeTilemapCArray(
     tilemap: []const TilemapEntry,
     c_cfg: CArrayConfig,
 ) !void {
-    // Include guard header
     try out.print("#ifndef {s}\n", .{c_cfg.include_guard});
     try out.print("#define {s}\n", .{c_cfg.include_guard});
     if (c_cfg.add_stdint_include) {
@@ -96,11 +93,9 @@ pub fn writeTilemapCArray(
     }
     try out.writeByte('\n');
 
-    // Array declaration
     const const_kw: []const u8 = if (c_cfg.use_const) "const " else "";
     try out.print("{s}{s} {s}_data[] = {{\n", .{ const_kw, c_cfg.tilemap_entry_type, c_cfg.var_prefix });
 
-    // Entries
     for (tilemap, 0..) |entry, i| {
         if (i % c_cfg.entries_per_line == 0) {
             try out.writeAll("    ");
@@ -119,25 +114,15 @@ pub fn writeTilemapCArray(
     try out.print("#endif /* {s} */\n", .{c_cfg.include_guard});
 }
 
-/// Pack a row of 8 pixel indices (u8, 0-15) into 2 u16 chunks (4 bits per pixel).
-fn packRow8(row_pixels: []const u8) [2]u16 {
-    var chunks: [2]u16 = .{ 0, 0 };
-    for (row_pixels, 0..) |px, i| {
-        const chunk_idx = i / 4;
-        const bit_pos: u4 = @intCast((i % 4) * 4);
-        chunks[chunk_idx] |= @as(u16, px) << bit_pos;
-    }
-    return chunks;
-}
-
 /// Write tileset pixel data as a C array in row-major order.
-/// Each u16 word holds 4 pixels (4 bits each). Padded to max_unique_tiles tiles per row.
+/// Each u16 word holds (16 / bits_per_pixel) pixels. Padded to max_unique_tiles tiles per row.
 pub fn writeTilesetCArrayRowMajor(
     out: std.io.AnyWriter,
     tiles: []const QuantizedTile,
     tile_height: usize,
     tile_width: usize,
     max_unique_tiles: usize,
+    bits_per_pixel: u4,
     c_cfg: CArrayConfig,
 ) !void {
     try out.print("#ifndef {s}\n", .{c_cfg.include_guard});
@@ -147,24 +132,18 @@ pub fn writeTilesetCArrayRowMajor(
     }
     try out.writeByte('\n');
 
-    const tile_row_type = "uint32_t"; // 2 u16 chunks = 1 u32 per tile row; use u32 for display
     const const_kw: []const u8 = if (c_cfg.use_const) "const " else "";
-    // Total entries: tile_height rows × max_unique_tiles tiles × 2 u16 words each
-    // Store as an array of u16 words (tile_height * max_unique_tiles * 2 words).
-    // Alternatively, store as array of u32 (one u32 per tile per row).
-    _ = tile_row_type;
     try out.print("{s}uint16_t {s}_data[] = {{\n", .{ const_kw, c_cfg.var_prefix });
 
-    // Row-major: for each row, emit all tile chunks, padded to max_unique_tiles
+    const n_chunks = common.chunksPerRow(tile_width, bits_per_pixel);
+    var chunks_buf: [common.max_chunks_per_row]u16 = undefined;
     var word_count: usize = 0;
-    const total_words = tile_height * max_unique_tiles * 2;
-    _ = total_words;
     for (0..tile_height) |row| {
         for (tiles) |tile| {
             const row_start = row * tile_width;
             const row_pixels = tile.data[row_start .. row_start + tile_width];
-            const chunks = packRow8(row_pixels);
-            for (chunks) |chunk| {
+            common.packRow(row_pixels, bits_per_pixel, chunks_buf[0..n_chunks]);
+            for (chunks_buf[0..n_chunks]) |chunk| {
                 if (word_count % c_cfg.entries_per_line == 0) try out.writeAll("    ");
                 try out.print("0x{X:0>4}", .{chunk});
                 word_count += 1;
@@ -177,7 +156,7 @@ pub fn writeTilesetCArrayRowMajor(
         }
         // Pad to max_unique_tiles
         for (tiles.len..max_unique_tiles) |_| {
-            for (0..2) |_| {
+            for (0..n_chunks) |_| {
                 if (word_count % c_cfg.entries_per_line == 0) try out.writeAll("    ");
                 try out.writeAll("0x0000");
                 word_count += 1;
@@ -189,7 +168,6 @@ pub fn writeTilesetCArrayRowMajor(
             }
         }
     }
-    // Handle trailing comma/newline
     if (word_count > 0 and word_count % c_cfg.entries_per_line != 0) {
         try out.writeByte('\n');
     }
@@ -206,6 +184,7 @@ pub fn writeTilesetCArraySequential(
     tiles: []const QuantizedTile,
     tile_height: usize,
     tile_width: usize,
+    bits_per_pixel: u4,
     c_cfg: CArrayConfig,
 ) !void {
     try out.print("#ifndef {s}\n", .{c_cfg.include_guard});
@@ -218,13 +197,15 @@ pub fn writeTilesetCArraySequential(
     const const_kw: []const u8 = if (c_cfg.use_const) "const " else "";
     try out.print("{s}uint16_t {s}_data[] = {{\n", .{ const_kw, c_cfg.var_prefix });
 
+    const n_chunks = common.chunksPerRow(tile_width, bits_per_pixel);
+    var chunks_buf: [common.max_chunks_per_row]u16 = undefined;
     var word_count: usize = 0;
     for (tiles) |tile| {
         for (0..tile_height) |row| {
             const row_start = row * tile_width;
             const row_pixels = tile.data[row_start .. row_start + tile_width];
-            const chunks = packRow8(row_pixels);
-            for (chunks) |chunk| {
+            common.packRow(row_pixels, bits_per_pixel, chunks_buf[0..n_chunks]);
+            for (chunks_buf[0..n_chunks]) |chunk| {
                 if (word_count % c_cfg.entries_per_line == 0) try out.writeAll("    ");
                 try out.print("0x{X:0>4}", .{chunk});
                 word_count += 1;
