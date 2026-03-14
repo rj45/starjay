@@ -1,5 +1,8 @@
 const std = @import("std");
 const zigimg = @import("zigimg");
+const config_mod = @import("../config.zig");
+
+pub const PaletteFormat = config_mod.PaletteFormat;
 
 /// Stack buffer capacity: supports up to 128 pixels per row at 8bpp (64 u16 words).
 /// Tile widths beyond this would require allocator-based packing.
@@ -17,6 +20,39 @@ pub fn oklabToSrgbU8(oklab: zigimg.color.OklabAlpha) SrgbU8 {
         .g = @intFromFloat(@round(srgb.g * 255.0)),
         .b = @intFromFloat(@round(srgb.b * 255.0)),
     };
+}
+
+/// Maximum number of bytes a palette color entry can occupy across all formats.
+/// Increase this if a future format needs more bytes.
+pub const max_palette_entry_bytes: usize = 4;
+
+/// Return the canonical byte representation of a palette color in the given format.
+/// The slice is valid for the lifetime of `buf`. All output formats render these bytes
+/// verbatim — hex writers emit 2 hex digits per byte, binary writers write bytes directly,
+/// C array writers emit "0x" + 2 hex chars per byte. No format writer needs to know the
+/// bit layout; changing the format here is the single change needed everywhere.
+///
+/// .rgb:  [B, G, R]        — 3 bytes; little-endian 24-bit color.
+/// .xrgb: [B, G, R, 0x00]  — 4 bytes; little-endian u32, MSB = 0x00 (ignored).
+///        Bit layout: (R<<16)|(G<<8)|B — matches Rust imgconv:
+///        `let rgb: u32 = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);`
+pub fn paletteColorBytes(rgb: SrgbU8, format: PaletteFormat, buf: *[max_palette_entry_bytes]u8) []const u8 {
+    switch (format) {
+        .rgb => {
+            buf[0] = rgb.b; buf[1] = rgb.g; buf[2] = rgb.r;
+            return buf[0..3];
+        },
+        .xrgb => {
+            buf[0] = rgb.b; buf[1] = rgb.g; buf[2] = rgb.r; buf[3] = 0x00;
+            return buf[0..4];
+        },
+    }
+}
+
+/// Number of bytes per palette color entry in the given format.
+/// Single query site for zero-padding loops and size calculations.
+pub fn paletteEntryByteCount(format: PaletteFormat) usize {
+    return switch (format) { .rgb => 3, .xrgb => 4 };
 }
 
 /// Number of u16 words needed to pack tile_width pixels at bits_per_pixel bpp.

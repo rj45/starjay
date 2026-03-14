@@ -1,11 +1,11 @@
 const std = @import("std");
 
 /// A single tilemap entry encoding tile index, palette, transparency and flip flags.
-/// Bit layout: [15]=x_flip, [14]=transparent, [13:8]=palette_index, [7:0]=tile_index
 pub const TilemapEntry = packed struct(u16) {
     tile_index: u8, // bits [7:0]
-    palette_index: u6, // bits [13:8]
-    transparent: bool, // bit [14]
+    unused: u1 = 0, // bits [8]
+    transparent: bool, // bit [9]
+    palette_index: u5, // bits [14:10]
     x_flip: bool, // bit [15]
 
     pub fn toU16(self: @This()) u16 {
@@ -33,7 +33,8 @@ pub const PaletteCount = std.meta.Int(.unsigned, @bitSizeOf(PaletteIndex) + 1); 
 test "TilemapEntry bit layout: all ones" {
     const entry = TilemapEntry{
         .tile_index = 0xFF,
-        .palette_index = 0x3F,
+        .unused = 1,
+        .palette_index = 0x1F,
         .transparent = true,
         .x_flip = true,
     };
@@ -57,13 +58,13 @@ test "TilemapEntry bit layout: tile=0xAB palette=0x15" {
         .transparent = false,
         .x_flip = false,
     };
-    try std.testing.expectEqual(@as(u16, 0x15AB), entry.toU16());
+    try std.testing.expectEqual(@as(u16, 0x54AB), entry.toU16());
 }
 
 test "TilemapEntry fromU16 round-trip" {
     const entry = TilemapEntry.fromU16(0xFFFF);
     try std.testing.expectEqual(@as(u8, 0xFF), entry.tile_index);
-    try std.testing.expectEqual(@as(u6, 0x3F), entry.palette_index);
+    try std.testing.expectEqual(@as(u5, 0x1F), entry.palette_index);
     try std.testing.expectEqual(true, entry.transparent);
     try std.testing.expectEqual(true, entry.x_flip);
 }

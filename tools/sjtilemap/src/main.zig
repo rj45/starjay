@@ -400,7 +400,7 @@ fn writeOutputs(
             {
                 const path = try std.fmt.allocPrint(gpa, "{s}/{s}_palette.hex", .{ output_dir, stem });
                 defer gpa.free(path);
-                try hex_out.writePaletteHex(buf.writer(gpa).any(), result.palettes, cfg.colors_per_palette);
+                try hex_out.writePaletteHex(buf.writer(gpa).any(), result.palettes, cfg.colors_per_palette, cfg.palette_format);
                 try writeFile(&buf, path);
                 if (cfg.verbose) std.debug.print("Wrote: {s}\n", .{path});
             }
@@ -434,7 +434,7 @@ fn writeOutputs(
             {
                 const path = try std.fmt.allocPrint(gpa, "{s}/{s}_palette.bin", .{ output_dir, stem });
                 defer gpa.free(path);
-                try binary_out.writePaletteBinary(buf.writer(gpa).any(), result.palettes, cfg.colors_per_palette);
+                try binary_out.writePaletteBinary(buf.writer(gpa).any(), result.palettes, cfg.colors_per_palette, cfg.palette_format);
                 try writeFile(&buf, path);
                 if (cfg.verbose) std.debug.print("Wrote: {s}\n", .{path});
             }
@@ -471,7 +471,7 @@ fn writeOutputs(
                 var pal_c_cfg = c_cfg;
                 pal_c_cfg.var_prefix = "palette";
                 pal_c_cfg.include_guard = "PALETTE_H";
-                try c_array_out.writePaletteCArray(buf.writer(gpa).any(), result.palettes, cfg.colors_per_palette, pal_c_cfg);
+                try c_array_out.writePaletteCArray(buf.writer(gpa).any(), result.palettes, cfg.colors_per_palette, cfg.palette_format, pal_c_cfg);
                 try writeFile(&buf, path);
                 if (cfg.verbose) std.debug.print("Wrote: {s}\n", .{path});
             }

@@ -8,12 +8,15 @@ const palette_mod = @import("../palette.zig");
 const Palette = palette_mod.Palette;
 const common = @import("common.zig");
 
-/// Write palettes as a C array of packed 0x{RR}{GG}{BB} values (one u32 per color).
+/// Write palettes as a C array of packed color values (one uint32_t per color).
+/// .rgb:  values are 0x00{RR}{GG}{BB} printed as 6 hex digits (0xRRGGBB).
+/// .xrgb: values are 0x00{RR}{GG}{BB} printed as 8 hex digits (0x00RRGGBB). Default.
 /// Padded to colors_per_palette entries per palette.
 pub fn writePaletteCArray(
     out: std.io.AnyWriter,
     palettes: []const Palette,
     colors_per_palette: usize,
+    palette_format: common.PaletteFormat,
     c_cfg: CArrayConfig,
 ) !void {
     try out.print("#ifndef {s}\n", .{c_cfg.include_guard});
@@ -29,13 +32,15 @@ pub fn writePaletteCArray(
     var entry_count: usize = 0;
     const total = palettes.len * colors_per_palette;
 
+    var cbuf: [common.max_palette_entry_bytes]u8 = undefined;
     for (palettes) |palette| {
         for (palette.colors) |oklab| {
             const rgb = common.oklabToSrgbU8(oklab);
-            const packed_rgb: u32 = (@as(u32, rgb.r) << 16) | (@as(u32, rgb.g) << 8) | rgb.b;
+            const bytes = common.paletteColorBytes(rgb, palette_format, &cbuf);
 
             if (entry_count % c_cfg.entries_per_line == 0) try out.writeAll("    ");
-            try out.print("0x{X:0>6}", .{packed_rgb});
+            try out.writeAll("0x");
+            for (bytes) |b| try out.print("{X:0>2}", .{b});
             entry_count += 1;
             if (entry_count < total) {
                 if (entry_count % c_cfg.entries_per_line == 0) {
@@ -48,7 +53,8 @@ pub fn writePaletteCArray(
         // Pad to colors_per_palette
         for (palette.count..colors_per_palette) |_| {
             if (entry_count % c_cfg.entries_per_line == 0) try out.writeAll("    ");
-            try out.writeAll("0x000000");
+            try out.writeAll("0x");
+            for (0..common.paletteEntryByteCount(palette_format)) |_| try out.writeAll("00");
             entry_count += 1;
             if (entry_count < total) {
                 if (entry_count % c_cfg.entries_per_line == 0) {

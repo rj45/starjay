@@ -986,7 +986,7 @@ test "Phase 10: hex tilemap format - basic entries" {
     };
     // tile_index=1 -> 0x0001, tile_index=2 palette_index=1 -> 0x0102
     try hex_out.writeTilemapHex(buf.writer(std.testing.allocator).any(), &tilemap, 2, false);
-    try std.testing.expectEqualStrings("0001 0102 \n", buf.items);
+    try std.testing.expectEqualStrings("0001 0402 \n", buf.items);
 }
 
 test "Phase 10: hex tilemap format - logisim header" {
@@ -1010,7 +1010,7 @@ test "Phase 10: binary tilemap format" {
     };
     // 0x0001 little-endian: [0x01, 0x00], 0x0102 little-endian: [0x02, 0x01]
     try binary_out.writeTilemapBinary(buf.writer(std.testing.allocator).any(), &tilemap);
-    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x01, 0x00, 0x02, 0x01 }, buf.items);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x01, 0x00, 0x02, 0x04 }, buf.items);
 }
 
 test "Phase 10: C array tilemap format - include guard and entries" {
@@ -1019,7 +1019,7 @@ test "Phase 10: C array tilemap format - include guard and entries" {
 
     const tilemap = [_]TilemapEntry{
         TilemapEntry{ .tile_index = 1, .palette_index = 0, .transparent = false, .x_flip = false },
-        TilemapEntry{ .tile_index = 0xFF, .palette_index = 0x3F, .transparent = true, .x_flip = true },
+        TilemapEntry{ .tile_index = 0xFF, .unused = 1, .palette_index = 0x1F, .transparent = true, .x_flip = true },
     };
     const c_cfg = c_array_out.CArrayConfig{
         .var_prefix = "tilemap",
@@ -1489,18 +1489,18 @@ test "Phase 10: tileset C-array - row-major includes include guard and tile data
 // Phase 11: Additional Config tests
 // =============================================================================
 
-test "Phase 11: validate rejects num_palettes + palette_start_offset > 64" {
+test "Phase 11: validate rejects num_palettes + palette_start_offset > 32" {
     const cfg = Config{
-        .num_palettes = 60,
-        .palette_start_offset = 10, // 60 + 10 = 70 > 64
+        .num_palettes = 30,
+        .palette_start_offset = 10, // 60 + 10 = 70 > 32
     };
     try std.testing.expectError(error.PaletteRangeExceedsMax, cfg.validate());
 }
 
-test "Phase 11: validate accepts num_palettes + palette_start_offset = 64" {
+test "Phase 11: validate accepts num_palettes + palette_start_offset = 32" {
     const cfg = Config{
-        .num_palettes = 56,
-        .palette_start_offset = 8, // 56 + 8 = 64 = max
+        .num_palettes = 24,
+        .palette_start_offset = 8, // 24 + 8 = 32 = max
     };
     try cfg.validate();
 }
@@ -1639,7 +1639,7 @@ test "Phase 10: palette hex output - known palette" {
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(std.testing.allocator);
 
-    try hex_out.writePaletteHex(buf.writer(std.testing.allocator).any(), &palettes, 2);
+    try hex_out.writePaletteHex(buf.writer(std.testing.allocator).any(), &palettes, 2, .rgb);
 
     // Expect one line: "000000 ffffff \n"
     try std.testing.expectEqualStrings("000000 ffffff \n", buf.items);
@@ -1858,7 +1858,7 @@ test "Phase 10: palette binary output - known black and white palette" {
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(std.testing.allocator);
 
-    try binary_out.writePaletteBinary(buf.writer(std.testing.allocator).any(), &palettes, 2);
+    try binary_out.writePaletteBinary(buf.writer(std.testing.allocator).any(), &palettes, 2, .rgb);
 
     // 2 colors, 3 bytes each = 6 bytes total
     // black: 0x00, 0x00, 0x00
@@ -1896,15 +1896,16 @@ test "Phase 10: palette C-array output - include guard and RGB entries" {
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(std.testing.allocator);
 
-    try c_array_out.writePaletteCArray(buf.writer(std.testing.allocator).any(), &palettes, 2, c_cfg);
+    try c_array_out.writePaletteCArray(buf.writer(std.testing.allocator).any(), &palettes, 2, .rgb, c_cfg);
 
     // Should contain include guard
     try std.testing.expect(std.mem.indexOf(u8, buf.items, "#ifndef PALETTE_H") != null);
     try std.testing.expect(std.mem.indexOf(u8, buf.items, "#define PALETTE_H") != null);
     try std.testing.expect(std.mem.indexOf(u8, buf.items, "#endif") != null);
-    // Should contain black (0x000000) and red (0xFF0000)
+    // Should contain black (0x000000) and red. In little-endian .rgb format, red (R=255,G=0,B=0)
+    // is stored as bytes [B=0x00, G=0x00, R=0xFF] → "0x0000FF".
     try std.testing.expect(std.mem.indexOf(u8, buf.items, "0x000000") != null);
-    try std.testing.expect(std.mem.indexOf(u8, buf.items, "0xFF0000") != null);
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "0x0000FF") != null);
 }
 
 test "Phase 12: per-file palette, per-file tileset - fully independent" {
@@ -2286,7 +2287,7 @@ test "Phase 12: preloaded palette strategy uses loaded palettes without regenera
     {
         var pal_buf: std.ArrayList(u8) = .empty;
         defer pal_buf.deinit(gpa);
-        try hex_out.writePaletteHex(pal_buf.writer(gpa).any(), ref_result.palettes, 16);
+        try hex_out.writePaletteHex(pal_buf.writer(gpa).any(), ref_result.palettes, 16, .rgb);
         try tmp_dir.dir.writeFile(.{ .sub_path = "palette.hex", .data = pal_buf.items });
     }
 

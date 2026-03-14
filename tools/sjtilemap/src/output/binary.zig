@@ -8,25 +8,24 @@ const palette_mod = @import("../palette.zig");
 const Palette = palette_mod.Palette;
 const common = @import("common.zig");
 
-/// Write palettes as raw binary RGB bytes (3 bytes per color: R, G, B as u8).
-/// One palette per group of colors_per_palette triplets. Padded with zeros.
+/// Write palettes as raw binary.
+/// .rgb:  3 bytes per color (R, G, B). Padded with 3 zero bytes per empty slot.
+/// .xrgb: 4-byte little-endian u32 per color, value = (R<<16)|(G<<8)|B, MSB=0. Padded with 4 zero bytes.
 pub fn writePaletteBinary(
     out: std.io.AnyWriter,
     palettes: []const Palette,
     colors_per_palette: usize,
+    palette_format: common.PaletteFormat,
 ) !void {
+    var cbuf: [common.max_palette_entry_bytes]u8 = undefined;
     for (palettes) |palette| {
         for (palette.colors) |oklab| {
             const rgb = common.oklabToSrgbU8(oklab);
-            try out.writeByte(rgb.r);
-            try out.writeByte(rgb.g);
-            try out.writeByte(rgb.b);
+            try out.writeAll(common.paletteColorBytes(rgb, palette_format, &cbuf));
         }
         // Pad to colors_per_palette
         for (palette.count..colors_per_palette) |_| {
-            try out.writeByte(0);
-            try out.writeByte(0);
-            try out.writeByte(0);
+            for (0..common.paletteEntryByteCount(palette_format)) |_| try out.writeByte(0);
         }
     }
 }

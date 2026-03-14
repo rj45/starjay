@@ -32,6 +32,12 @@ pub const TransparencyMode = enum {
 
 pub const TilesetStorageOrder = enum { row_major, sequential };
 
+/// Palette output color format.
+/// .rgb:  24-bit — 3 bytes per color (R, G, B). Matches the Rust imgconv hex format.
+/// .xrgb: 32-bit — 4 bytes per color, MSB = 0x00 (ignored). Bit layout: (R<<16)|(G<<8)|B.
+///        Default. Matches the Rust imgconv u32 bit formula and C array output.
+pub const PaletteFormat = enum { rgb, xrgb };
+
 pub const PaletteStrategy = enum { shared, per_file, preloaded };
 pub const TilesetStrategy = enum { shared, per_file, preloaded };
 
@@ -47,7 +53,7 @@ pub const Config = struct {
     tilemap_height: ?u32 = null,
 
     // Palette settings
-    /// Number of palettes this run generates. num_palettes + palette_start_offset must not exceed 64.
+    /// Number of palettes this run generates. num_palettes + palette_start_offset must not exceed 32.
     num_palettes: u32 = 32,
     /// First palette slot this run may write into (0-based). Enables partial palette preloading.
     palette_start_offset: u32 = 0,
@@ -84,6 +90,8 @@ pub const Config = struct {
 
     // Output
     tileset_storage_order: TilesetStorageOrder = .row_major,
+    /// Palette color encoding in all output formats (hex, binary, C array).
+    palette_format: PaletteFormat = .xrgb,
 
     // Multi-file strategies
     palette_strategy: PaletteStrategy = .shared,
@@ -157,8 +165,8 @@ pub const Config = struct {
             return error.ColorsPerPaletteTooLarge;
         }
 
-        // Palette slot range: [palette_start_offset, palette_start_offset + num_palettes) must fit in u6 (max 64 slots)
-        if (self.num_palettes + self.palette_start_offset > 64) {
+        // Palette slot range: [palette_start_offset, palette_start_offset + num_palettes) must fit in u5 (max 32 slots)
+        if (self.num_palettes + self.palette_start_offset > 32) {
             return error.PaletteRangeExceedsMax;
         }
 

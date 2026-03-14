@@ -311,7 +311,7 @@ pub const Config = struct {
 
     // Palette
     palette_strategy:     PaletteStrategy  = .shared,  // .shared | .per_file | .preloaded
-    num_palettes:         PaletteCount     = 32,  // u7 -- max = std.math.maxInt(PaletteIndex)+1 = 64; derived from TilemapEntry
+    num_palettes:         PaletteCount     = 32,  // u7 -- max = std.math.maxInt(PaletteIndex)+1 = 32; derived from TilemapEntry
     preloaded_palette:    ?[]const u8      = null,
     palette_start_offset: PaletteIndex     = 0,   // first palette slot this run may write into
     palette_0_color_0_is_black: bool       = true,
@@ -416,10 +416,11 @@ pub const CArrayConfig = struct {
 ### TilemapEntry -- single source of bit layout
 ```zig
 pub const TilemapEntry = packed struct(u16) {
-    tile_index:    u8,    // bits [7:0]   -- max 256 unique tiles
-    palette_index: u6,    // bits [13:8]  -- max 64 palettes
-    transparent:   bool,  // bit  [14]    -- tile contains transparent pixels; color 0 = transparent, colors_per_palette-1 colors usable
-    x_flip:        bool,  // bit  [15]    -- tile is horizontally flipped
+    tile_index: u8,    // bits [7:0]   -- max 256 unique tiles
+    unused: u1 = 0,    // bits [8] 
+    transparent: bool, // bit  [9]     -- tile contains transparent pixels; color 0 = transparent, colors_per_palette-1 colors usable
+    palette_index: u5, // bits [14:10] -- max 32 palettes
+    x_flip: bool,      // bit  [15]    -- tile is horizontally flipped
 
     pub fn toU16(self: @This()) u16 { return @bitCast(self); }
     pub fn fromU16(v: u16) @This() { return @bitCast(v); }
@@ -610,12 +611,12 @@ This drives the first complete vertical slice: `input/`, `tile.zig` (extraction 
 
 The VDP hardware reads specific bits at specific positions. This test verifies that contract is met -- it is a feature test, not a property test.
 
-**Rust reference:** `imgconv.rs:200–217` (struct definition) and `imgconv.rs:915–922` (encoding). **Critical difference:** the Rust version uses `PALETTE_INDEX_SHIFT = 10` (bits [15:10] = palette, bits [9:0] = tile). The Zig VDP hardware contract uses a different layout: bits [7:0] = tile (u8), bits [13:8] = palette (u6), bit [14] = transparent, bit [15] = x_flip. Do NOT copy the Rust encoding. Use the Zig bit layout exclusively.
+**Rust reference:** `imgconv.rs:200–217` (struct definition) and `imgconv.rs:915–922` (encoding). **Critical difference:** the Rust version uses `PALETTE_INDEX_SHIFT = 10` (bits [15:10] = palette, bits [9:0] = tile). The Zig VDP hardware contract uses a different layout: bits [7:0] = tile (u8), bit [9] = x_flip, bits [14:10] = palette (u5), bit [15] = transparent. Do NOT copy the Rust encoding. Use the Zig bit layout exclusively.
 
 Write the test with concrete bit-pattern examples (not a round-trip loop):
-- `tile_index=0xFF, palette_index=0x3F, transparent=true, x_flip=true` → `toU16() == 0xFFFF`
+- `tile_index=0xFF, unused = 1, palette_index=0x1F, transparent=true, x_flip=true` → `toU16() == 0xFFFF`
 - `tile_index=0x01, palette_index=0x00, transparent=false, x_flip=false` → `toU16() == 0x0001`
-- `tile_index=0xAB, palette_index=0x15, transparent=false, x_flip=false` → `toU16() == 0x15AB`
+- `tile_index=0xAB, palette_index=0x15, transparent=false, x_flip=false` → `toU16() == 0x54AB`
 - `fromU16(0xFFFF)` → fields match the first case above
 
 Implement `TilemapEntry` packed struct. No other code changes.
@@ -768,7 +769,7 @@ Write tests that exercise the full config pathway, not just field assignment:
 
 - `generateDefault()` output round-trips: parse it back with `std.zon.parse.fromSlice`, verify all fields equal the documented defaults
 - A ZON file setting `tile_width = 16` is loaded; assert the pipeline produces tiles with 16-pixel-wide pixel data in the tileset output
-- `validate()` called on a config where `num_palettes + palette_start_offset > 64` (exceeds TilemapEntry.palette_index u6 max) returns an error; the error message names the offending fields
+- `validate()` called on a config where `num_palettes + palette_start_offset > 32` (exceeds TilemapEntry.palette_index u6 max) returns an error; the error message names the offending fields
 - CLI `--tile-width 16 --tile-height 16` on a programmatically generated 16×16 image (one unique tile) produces a 1×1 tilemap entry where the single tile's pixel data spans 16 columns × 16 rows (verify by checking the tileset output byte count = 16×16 pixels packed at `bitsPerColorIndex()` bits each)
 - `palette_0_color_0_is_black = true` in config → the OKLab value at `palettes[0].colors[0]` is black (L=0, a=0, b=0) in the output
 

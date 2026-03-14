@@ -56,22 +56,28 @@ pub fn writeTilesetHexRowMajor(
     }
 }
 
-/// Write palettes as hex:
-/// One palette per line, `{RR}{GG}{BB} ` per color in sRGB u8, padded to colors_per_palette entries.
+/// Write palettes as hex.
+/// .rgb:  one palette per line, `{RRGGBB} ` per color (6 hex digits), padded to colors_per_palette entries.
+/// .xrgb: one palette per line, `{00RRGGBB} ` per color (8 hex digits), MSB = 0x00 (ignored).
 /// OKLab colors are converted to sRGB via zigimg.
 pub fn writePaletteHex(
     out: std.io.AnyWriter,
     palettes: []const Palette,
     colors_per_palette: usize,
+    palette_format: common.PaletteFormat,
 ) !void {
+    var cbuf: [common.max_palette_entry_bytes]u8 = undefined;
     for (palettes) |palette| {
         for (palette.colors) |oklab| {
             const rgb = common.oklabToSrgbU8(oklab);
-            try out.print("{x:0>2}{x:0>2}{x:0>2} ", .{ rgb.r, rgb.g, rgb.b });
+            for (common.paletteColorBytes(rgb, palette_format, &cbuf)) |b|
+                try out.print("{x:0>2}", .{b});
+            try out.writeByte(' ');
         }
         // Pad to colors_per_palette entries
         for (palette.count..colors_per_palette) |_| {
-            try out.writeAll("000000 ");
+            for (0..common.paletteEntryByteCount(palette_format)) |_| try out.writeAll("00");
+            try out.writeByte(' ');
         }
         try out.writeByte('\n');
     }
@@ -99,9 +105,11 @@ pub fn loadPaletteFromHex(
             if (t.len == 0) continue;
             if (color_idx >= colors_per_palette) break;
             if (t.len < 6) return error.InvalidPaletteHexFormat;
-            const r8 = try std.fmt.parseInt(u8, t[0..2], 16);
+            // Bytes are stored little-endian: [B, G, R] for .rgb, [B, G, R, 0x00] for .xrgb.
+            // Parse the first 6 hex chars as B, G, R; any trailing X byte is ignored.
+            const b8 = try std.fmt.parseInt(u8, t[0..2], 16);
             const g8 = try std.fmt.parseInt(u8, t[2..4], 16);
-            const b8 = try std.fmt.parseInt(u8, t[4..6], 16);
+            const r8 = try std.fmt.parseInt(u8, t[4..6], 16);
             const srgb = zigimg.color.Colorf32{
                 .r = @as(f32, @floatFromInt(r8)) / 255.0,
                 .g = @as(f32, @floatFromInt(g8)) / 255.0,
