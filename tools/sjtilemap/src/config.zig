@@ -42,9 +42,9 @@ pub const Config = struct {
     tile_width: u32 = 8,
     tile_height: u32 = 8,
 
-    // Tilemap geometry (in tiles)
-    tilemap_width: u32 = 32,
-    tilemap_height: u32 = 32,
+    // Tilemap geometry (in tiles); null means derive from each input image.
+    tilemap_width: ?u32 = null,
+    tilemap_height: ?u32 = null,
 
     // Palette settings
     /// Number of palettes this run generates. num_palettes + palette_start_offset must not exceed 64.
@@ -174,17 +174,17 @@ pub const Config = struct {
     }
 
     /// Validate that an image's pixel dimensions are consistent with this config.
-    /// Image width/height must be exact multiples of tile_width/tile_height and
-    /// must equal tilemap_width * tile_width and tilemap_height * tile_height.
+    /// Image width/height must be exact multiples of tile_width/tile_height.
+    /// If tilemap_width/tilemap_height are set, the image must also match exactly.
     pub fn validateImageDimensions(self: Config, image_width: u32, image_height: u32) !void {
         if (image_width % self.tile_width != 0 or image_height % self.tile_height != 0) {
             return error.ImageDimensionsNotMultipleOfTileSize;
         }
-        if (image_width != self.tilemap_width * self.tile_width) {
-            return error.ImageWidthMismatch;
+        if (self.tilemap_width) |tw| {
+            if (image_width != tw * self.tile_width) return error.ImageWidthMismatch;
         }
-        if (image_height != self.tilemap_height * self.tile_height) {
-            return error.ImageHeightMismatch;
+        if (self.tilemap_height) |th| {
+            if (image_height != th * self.tile_height) return error.ImageHeightMismatch;
         }
     }
 

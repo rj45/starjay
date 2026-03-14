@@ -239,12 +239,6 @@ pub fn main() !void {
         images[i] = try lib.input.loadImage(gpa, path);
     }
 
-    // Override tilemap dimensions from first image if not explicitly set.
-    if (res.args.@"tilemap-width" == null)
-        cfg.tilemap_width = images[0].width / cfg.tile_width;
-    if (res.args.@"tilemap-height" == null)
-        cfg.tilemap_height = images[0].height / cfg.tile_height;
-
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const results = try lib.pipeline.runMulti(arena.allocator(), cfg, images);

@@ -2167,14 +2167,14 @@ test "Tileset k-means reducer: max_unique_tiles is respected when exceeded" {
     const tw = cfg.tile_width;
     const th = cfg.tile_height;
     for (result.tilemap, 0..) |_, tile_pos| {
-        const tile_col = tile_pos % cfg.tilemap_width;
-        const tile_row = tile_pos / cfg.tilemap_width;
+        const tile_col = tile_pos % result.tilemap_width;
+        const tile_row = tile_pos / result.tilemap_width;
         var tile_err: f32 = 0;
         for (0..th) |py| {
             for (0..tw) |px| {
                 const gx = tile_col * tw + px;
                 const gy = tile_row * th + py;
-                const idx = gy * cfg.tilemap_width * tw + gx;
+                const idx = gy * result.tilemap_width * tw + gx;
                 tile_err += color_mod.deltaE(img.pixels[idx], output_pixels[idx]);
             }
         }
