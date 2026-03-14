@@ -137,9 +137,14 @@ pub inline fn emulate_line(self: *State, skip: bool) bool {
                     const tile_address = (@as(usize, bitmap_addr.tile_bitmap_addr) << 9) +
                         (@as(usize, tilemap_entry.tile_index) << 1);
 
+                    const x_flip = tilemap_entry.x_flip;
+                    const j_xor: usize = if (x_flip) 1 else 0;
+                    const k_xor: usize = if (x_flip) 7 else 0;
+
+
                     if (tilemap_entry.transparent) {
                         for (0..2) |j| {
-                            const tile_pixels = vram_u16[tile_address+j];
+                            const tile_pixels = vram_u16[tile_address+(j^j_xor)];
 
                             const palette_splat: @Vector(8, u16) = @splat(tilemap_entry.palette_index);
                             const palette_shifted = palette_splat << @splat(4);
@@ -155,18 +160,18 @@ pub inline fn emulate_line(self: *State, skip: bool) bool {
 
                             inline for (0..8) |k| {
                                 if (!is_transparent[k]) {
-                                    linebuffer_u16[(lb_x+k) & 2047] = combined_pixels[k];
+                                    linebuffer_u16[(lb_x+k) & 2047] = combined_pixels[k^k_xor];
                                 }
                             }
                             lb_x += 8;
                         }
                     } else {
                         for (0..2) |j| {
-                            const tile_pixels = vram_u16[tile_address+j];
+                            const tile_pixels = vram_u16[tile_address+(j^j_xor)];
                             const combined_pixels = splitPixelsCombinePalette(tilemap_entry.palette_index, tile_pixels);
 
                             inline for (0..8) |k| {
-                                linebuffer_u16[(lb_x+k) & 2047] = combined_pixels[k];
+                                linebuffer_u16[(lb_x+k) & 2047] = combined_pixels[k^k_xor];
                             }
                             lb_x += 8;
                         }
