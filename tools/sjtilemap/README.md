@@ -2,7 +2,7 @@
 
 This is a mostly AI written tool to help convert images into the format required by StarJay's VDP. 
 
-It should work perfectly if you stay below 32 palettes of 16 colours per tile, and stay under 256 total tiles. After that and it starts to do intelligent quantization that may or may not do justice to your art.
+It should work losslessly if you stay below 32 palettes and 16 colours per tile, and stay under 256 total tiles. After that and it starts to do intelligent quantization that may or may not do justice to your art.
 
 This is based on an original tool in Go in the [`github.com/rj45/rj32`](https://github.com/rj45/rj32/tree/main/tilemap) repo called `tilemap` which I myself wrote (no AI). 
 
@@ -18,4 +18,5 @@ See [plan.md](./plan.md) for the original prompt used to guide the AI. It should
 
 - Generate tilemap, tileset and palette files in hex, binary, logisim (for Digital) and C array formats (for embedding in a C project -- Zig can just embed the binary), as well as JSON for passing through another tool.
 - Allow batch processing of multiple files with any permutation of sharing the tileset and/or palette between files
-- Config file and CLI options for all useful knobs that could be tweaked
+- Config file and CLI options for all useful knobs that could be tweaked (don't think loading the config file works yet)
+- Can preload a palette and it will use that (untested, AI says it should work)
