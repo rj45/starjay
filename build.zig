@@ -3,9 +3,6 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target_opt = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const sdl2 = b.option(bool, "sdl2", "Build for SDL2 instead of SDL3") orelse false;
-    const sdl3 = !sdl2;
-
     const target = if (target_opt.result.os.tag == .emscripten)
         b.resolveTargetQuery(.{
             .cpu_arch = .wasm32,
@@ -29,15 +26,11 @@ pub fn build(b: *std.Build) void {
     // For dvui and SDL, never use Debug mode; use ReleaseSafe instead.
     const fast_debug_build: @TypeOf(optimize) = if (optimize == .Debug) .ReleaseSafe else optimize;
 
-    const dvui_dep = if (sdl3) b.dependency("dvui", .{
+    const dvui_dep = b.dependency("dvui", .{
         .target = target,
         .optimize = fast_debug_build,
         .backend = .sdl3,
         .freetype = target.result.os.tag != .emscripten,
-    }) else b.dependency("dvui", .{
-        .target = target,
-        .optimize = fast_debug_build,
-        .backend = .sdl2,
     });
 
     const clap = b.dependency("clap", .{
@@ -50,17 +43,19 @@ pub fn build(b: *std.Build) void {
         .optimize = fast_debug_build,
     });
 
-    // const stack_check = if ((optimize == .Debug or optimize == .ReleaseSafe) and target.result.os.tag != .macos) true else false;
+    const extra_checks = if ((optimize == .Debug or optimize == .ReleaseSafe) and target.result.os.tag != .macos and target.result.os.tag != .emscripten) true else false;
 
-    const dvui_sdl_mod = if (sdl3) dvui_dep.module("sdl3") else dvui_dep.module("sdl2");
-    const dvui_mod = if (sdl3) dvui_dep.module("dvui_sdl3") else dvui_dep.module("dvui_sdl2");
+    const dvui_sdl_mod = dvui_dep.module("sdl3");
+    const dvui_mod = dvui_dep.module("dvui_sdl3");
 
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
-        // .stack_check = stack_check,
-        // .stack_protector = stack_check,
+        .stack_check = extra_checks,
+        .stack_protector = extra_checks,
+        // .sanitize_c = if (extra_checks) .full else .off,
+        // .sanitize_thread = extra_checks,
         .link_libc = target.result.os.tag == .emscripten,
         .imports = &.{
             .{ .name = "dvui", .module = dvui_mod },
@@ -69,17 +64,6 @@ pub fn build(b: *std.Build) void {
             .{ .name = "spsc_queue", .module = spsc_queue.module("spsc_queue") },
         },
     });
-
-    // if (b.systemIntegrationOption("sdl3", .{})) {
-    //     exe_mod.linkSystemLibrary("SDL3", .{});
-    // } else {
-    //     if (dvui_dep.builder.lazyDependency("sdl3", .{
-    //         .target = target,
-    //         .optimize = optimize,
-    //     })) |s| {
-    //         exe_mod.linkLibrary(s.artifact("SDL3"));
-    //     }
-    // }
 
     const run_step = b.step("run", "Run the app");
 
