@@ -1,0 +1,20 @@
+.{
+    .name = .slides,
+    .version = "0.0.0",
+    .fingerprint = 0xb8c020917b3789a5,
+    .minimum_zig_version = "0.15.1",
+    .dependencies = .{
+        .starjay = .{
+            .path = "../../../../",
+        },
+        .zclay = .{
+            .url = "git+https://github.com/johan0A/clay-zig-bindings#6247096649f547a55e90dcdc1e821c72186f6d09",
+            .hash = "zclay-0.2.2-Ej1rkPDRAADuk7U5Y1YjpoFfE5Puvf5JIDyyjtnz3aVc",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
