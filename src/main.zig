@@ -34,7 +34,12 @@ fn logFn(
 fn mainWithoutEnv(c_argc: c_int, c_argv: [*][*:0]c_char) callconv(.c) c_int {
     _ = @as([*][*:0]u8, @ptrCast(c_argv))[0..@as(usize, @intCast(c_argc))];
     const gpa = std.heap.c_allocator;
-    App.main(gpa, "sdk/zig/examples/vdp_demo/zig-out/bin/vdp_demo") catch unreachable;
+
+    // TODO: FIXME: errors are technically not unreachable, implement proper error reporting
+    var app = App.init(gpa, "sdk/zig/examples/vdp_demo/zig-out/bin/vdp_demo") catch unreachable;
+    defer app.deinit();
+    app.main_loop() catch unreachable;
+
     return 0;
 }
 
