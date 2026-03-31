@@ -5,13 +5,12 @@ comptime {
     std.debug.assert(@hasDecl(SDLBackend, "SDLBackend"));
 }
 
-const Bus = @import("../device/Bus.zig");
-const System = @import("../System.zig");
-const Vdp = @import("../Vdp.zig");
-const Audio = @import("../Audio.zig");
-const ui = @import("../ui.zig");
+const Bus = @import("device/Bus.zig");
+const System = @import("System.zig");
+const Vdp = @import("Vdp.zig");
+const Audio = @import("Audio.zig");
+const ui = @import("ui.zig");
 
-var gpa: std.mem.Allocator = undefined;
 const c = SDLBackend.c;
 
 const vsync = true;
@@ -21,77 +20,98 @@ const window_width = content_width;
 const window_height = content_height;
 const frame_time_ns: u64 = 16_627_502; // ~60 FPS
 
-var window: *c.SDL_Window = undefined;
-var window_surface: *c.SDL_Surface = undefined;
+const App = @This();
+
+gpa: std.mem.Allocator,
+
+// VDP window
+window: *c.SDL_Window = undefined,
+window_surface: *c.SDL_Surface = undefined,
 
 // VDP thread and double buffering with two SDL surfaces
-var vdp_thread: *Vdp.Thread = undefined;
-var vdp_queue: Bus.Queue = undefined;
-var surfaces: [2]*c.SDL_Surface = undefined;
-var front_surface_index: u32 = 0;
+vdp_thread: *Vdp.Thread = undefined,
+vdp_queue: Bus.Queue = undefined,
+surfaces: [2]*c.SDL_Surface = undefined,
+front_surface_index: u32 = 0,
 
-// CPU thread and frame synchronization
-var system: *System = undefined;
-var system_thread: *System.Thread = undefined;
+// CPU thread
+system: *System = undefined,
+system_thread: *System.Thread = undefined,
 
 // Audio
-var audio_stream: ?*c.SDL_AudioStream = null;
-var audio_started: bool = false;
-var audio_thread: *Audio.Thread = undefined;
-var psg1_queue: Bus.Queue = undefined;
-var psg2_queue: Bus.Queue = undefined;
+audio_stream: ?*c.SDL_AudioStream = null,
+audio_started: bool = false,
+audio_thread: *Audio.Thread = undefined,
+psg1_queue: Bus.Queue = undefined,
+psg2_queue: Bus.Queue = undefined,
 
-var channel: ui.chan.Channel = undefined;
+channel: ui.chan.Channel = undefined,
 
-var run_time: std.time.Timer = undefined;
-var frame_count: u64 = 0;
-var cpu_pending: u32 = 0;
-var vdp_pending: u32 = 0;
-var audio_pending: u32 = 0;
-var last_blit_time: u64 = 0;
-var initial_cpu_frame_done: bool = false;
+run_time: std.time.Timer = undefined,
+frame_count: u64 = 0,
+cpu_pending: u32 = 0,
+vdp_pending: u32 = 0,
+audio_pending: u32 = 0,
+last_blit_time: u64 = 0,
+initial_cpu_frame_done: bool = false,
 
-pub fn main(allocator: std.mem.Allocator, rom_path: ?[]const u8) !void {
+pub fn init(allocator: std.mem.Allocator, rom_path: ?[]const u8) !*App {
     if (@import("builtin").os.tag == .windows) { // optional
         // on windows graphical apps have no console, so output goes to nowhere - attach it manually. related: https://github.com/ziglang/zig/issues/4196
         dvui.Backend.Common.windowsAttachConsole() catch {};
     }
     SDLBackend.enableSDLLogging();
 
-    channel = ui.chan.Channel.init(allocator);
-    defer channel.deinit();
+    errdefer c.SDL_Quit();
 
-    defer c.SDL_Quit();
+    var app: *App = try allocator.create(App);
+    app.* = .{.gpa = allocator};
 
-    try open_vdp_window(allocator);
-    defer destroy_vdp_window();
+    app.channel = ui.chan.Channel.init(allocator);
+    errdefer app.channel.deinit();
 
-    try start_audio_thread(allocator);
-    defer destroy_audio_thread();
+    try app.open_vdp_window();
+    errdefer app.destroy_vdp_window();
 
-    system = try System.init(rom_path, true, &vdp_queue, &psg1_queue, &psg2_queue, allocator);
-    try start_system_thread(allocator);
-    defer destroy_system_thread();
+    try app.start_audio_thread();
+    errdefer app.destroy_audio_thread();
 
-    run_time = try std.time.Timer.start();
-    last_blit_time = run_time.read();
+    app.system = try System.init(rom_path, true, &app.vdp_queue, &app.psg1_queue, &app.psg2_queue, allocator);
+    try app.start_system_thread();
+    errdefer app.destroy_system_thread();
 
-    while (try process_events(null, null)) {
-        if (!try runFrame()) {
+    return app;
+}
+
+pub fn deinit(self: *App) void {
+    self.destroy_system_thread();
+    self.destroy_audio_thread();
+    self.destroy_vdp_window();
+    self.channel.deinit();
+    self.gpa.destroy(self);
+    c.SDL_Quit();
+}
+
+pub fn main_loop(self: *App) !void {
+    self.run_time = try std.time.Timer.start();
+    self.last_blit_time = self.run_time.read();
+
+    while (try self.process_events(null, null)) {
+        if (!try self.runFrame()) {
             break;
         }
     }
 }
 
-pub fn process_events(backend: ?*SDLBackend, dvwin: ?*dvui.Window) !bool {
-    var hid_queue = &system.hid.queue;
+fn process_events(self: *App, backend: ?*SDLBackend, dvwin: ?*dvui.Window) !bool {
+    var hid_queue = &self.system.hid.queue;
 
     var event: c.SDL_Event = undefined;
     while (c.SDL_PollEvent(&event)) {
         const event_window = c.SDL_GetWindowFromEvent(&event);
         var handled = false;
         if (event_window) |evwin| {
-            if (evwin == window) {
+            if (evwin == self.window) {
                 // some global quitting shortcuts
                 switch (event.type) {
                     c.SDL_EVENT_KEY_DOWN => {
@@ -131,19 +151,18 @@ pub fn process_events(backend: ?*SDLBackend, dvwin: ?*dvui.Window) !bool {
     return true;
 }
 
-
 /// Main frame loop: coordinate CPU and VDP threads
 /// This runs once per monitor refresh (vsync)
-pub fn runFrame() !bool {
-    const current_time = run_time.read();
+fn runFrame(self: *App) !bool {
+    const current_time = self.run_time.read();
     const expected_frames = @max(1, current_time / frame_time_ns);
-    var frames_to_do = @min(5, expected_frames - (frame_count + @min(cpu_pending, vdp_pending)));
+    var frames_to_do = @min(5, expected_frames - (self.frame_count + @min(self.cpu_pending, self.vdp_pending)));
 
-    if (!initial_cpu_frame_done) {
-        initial_cpu_frame_done = true;
+    if (!self.initial_cpu_frame_done) {
+        self.initial_cpu_frame_done = true;
         // Run the CPU one frame ahead of the VDP/PSG so the IO it does is known in advance
-        try system_thread.submitCommand(.full_frame);
-        if (channel.receive()) |msg| {
+        try self.system_thread.submitCommand(.full_frame);
+        if (self.channel.receive()) |msg| {
             switch (msg) {
                 .cpu_halt => |halt| {
                     std.debug.print("error_level: {}\r\n", .{halt.error_level});
@@ -161,20 +180,20 @@ pub fn runFrame() !bool {
 
     // While we are behind, try to catch up by skipping frames and running the CPU as fast as possible
     while (frames_to_do > 1) {
-        cpu_pending += 1;
-        try system_thread.submitCommand(.fast_frame);
+        self.cpu_pending += 1;
+        try self.system_thread.submitCommand(.fast_frame);
 
-        audio_pending += 1;
-        try audio_thread.submitCommand(.fast_frame);
+        self.audio_pending += 1;
+        try self.audio_thread.submitCommand(.fast_frame);
 
-        vdp_pending += 1;
-        try submitRenderCommand(true);
+        self.vdp_pending += 1;
+        try self.submitRenderCommand(true);
 
         frames_to_do -= 1;
     }
 
-    while (cpu_pending > 0 or vdp_pending > 0) {
-        if (channel.receive()) |msg| {
+    while (self.cpu_pending > 0 or self.vdp_pending > 0) {
+        if (self.channel.receive()) |msg| {
             switch (msg) {
                 .cpu_halt => |halt| {
                     std.debug.print("error_level: {}\r\n", .{halt.error_level});
@@ -182,15 +201,15 @@ pub fn runFrame() !bool {
                     return false; // Stop main loop
                 },
                 .vdp_frame => |result| {
-                    vdp_pending -= 1;
-                    front_surface_index = result.index;
-                    frame_count += 1;
+                    self.vdp_pending -= 1;
+                    self.front_surface_index = result.index;
+                    self.frame_count += 1;
                 },
                 .cpu_frame => |_| {
-                    cpu_pending -= 1;
+                    self.cpu_pending -= 1;
                 },
                 .audio_frame => |_| {
-                    audio_pending -= 1;
+                    self.audio_pending -= 1;
                 },
             }
         } else {
@@ -202,24 +221,24 @@ pub fn runFrame() !bool {
 
     // Queue another frame while we blit and wait for vsync
     if (frames_to_do > 0) {
-        cpu_pending += 1;
-        try system_thread.submitCommand(.full_frame);
+        self.cpu_pending += 1;
+        try self.system_thread.submitCommand(.full_frame);
 
-        audio_pending += 1;
-        try audio_thread.submitCommand(.full_frame);
+        self.audio_pending += 1;
+        try self.audio_thread.submitCommand(.full_frame);
 
-        vdp_pending += 1;
-        try submitRenderCommand(false);
+        self.vdp_pending += 1;
+        try self.submitRenderCommand(false);
     }
 
-    writeAudio();
+    self.writeAudio();
 
     // Blit front surface to window
     // NOTE: this will wait for vsync
-    blitToWindow();
-    const current_blit_time = run_time.read();
-    const frame_time = current_blit_time - last_blit_time;
-    last_blit_time = current_blit_time;
+    self.blitToWindow();
+    const current_blit_time = self.run_time.read();
+    const frame_time = current_blit_time - self.last_blit_time;
+    self.last_blit_time = current_blit_time;
 
     if (frame_time > (frame_time_ns+(frame_time_ns / 2))) {
         std.debug.print("Warning: Frame took too long: {} us\r\n", .{frame_time/1000});
@@ -228,11 +247,11 @@ pub fn runFrame() !bool {
     return true;
 }
 
-fn submitRenderCommand(skip: bool) !void {
-    const back_index = 1 - front_surface_index;
-    const back_surface = surfaces[back_index];
+fn submitRenderCommand(self: *App, skip: bool) !void {
+    const back_index = 1 - self.front_surface_index;
+    const back_surface = self.surfaces[back_index];
 
-    try vdp_thread.submitRenderCommand(.{
+    try self.vdp_thread.submitRenderCommand(.{
         .buffer = @ptrCast(@alignCast(back_surface.pixels.?)),
         .width = content_width,
         .height = content_height,
@@ -242,28 +261,28 @@ fn submitRenderCommand(skip: bool) !void {
     });
 }
 
-fn blitToWindow() void {
-    const front_surface = surfaces[front_surface_index];
+fn blitToWindow(self: *App) void {
+    const front_surface = self.surfaces[self.front_surface_index];
 
     var window_w: c_int = 0;
     var window_h: c_int = 0;
-    _ = c.SDL_GetWindowSizeInPixels(window, &window_w, &window_h);
+    _ = c.SDL_GetWindowSizeInPixels(self.window, &window_w, &window_h);
 
     const srcrect: c.SDL_Rect = .{ .x = 0, .y = 0, .w = content_width, .h = content_height };
     const dstrect: c.SDL_Rect = .{ .x = 0, .y = 0, .w = window_w, .h = window_h };
 
-    _ = c.SDL_BlitSurfaceScaled(front_surface, &srcrect, window_surface, &dstrect, c.SDL_SCALEMODE_NEAREST);
+    _ = c.SDL_BlitSurfaceScaled(front_surface, &srcrect, self.window_surface, &dstrect, c.SDL_SCALEMODE_NEAREST);
 
-    _ = c.SDL_UpdateWindowSurface(window);
+    _ = c.SDL_UpdateWindowSurface(self.window);
 }
 
-fn writeAudio() void {
+fn writeAudio(self: *App) void {
     var audio_buffer: [65536]f32 = undefined;
     var audio_samples: usize = 0;
-    var psg1_left = &audio_thread.psg1.left_queue;
-    var psg1_right = &audio_thread.psg1.right_queue;
-    var psg2_left = &audio_thread.psg2.left_queue;
-    var psg2_right = &audio_thread.psg2.right_queue;
+    var psg1_left = &self.audio_thread.psg1.left_queue;
+    var psg1_right = &self.audio_thread.psg1.right_queue;
+    var psg2_left = &self.audio_thread.psg2.left_queue;
+    var psg2_right = &self.audio_thread.psg2.right_queue;
 
     var nonzero: bool = false;
 
@@ -303,14 +322,14 @@ fn writeAudio() void {
     }
 
     if (audio_samples > 0) {
-        if (audio_stream) |stream| {
-            if (nonzero and !audio_started) {
-                std.debug.print("Audio started at frame {} with {} samples\r\n", .{frame_count, audio_samples});
-                audio_started = true;
+        if (self.audio_stream) |stream| {
+            if (nonzero and !self.audio_started) {
+                std.debug.print("Audio started at frame {} with {} samples\r\n", .{self.frame_count, audio_samples});
+                self.audio_started = true;
                 _ = c.SDL_ResumeAudioStreamDevice(stream);
             }
 
-            if (audio_started) {
+            if (self.audio_started) {
                 const size: c_int = @truncate(@as(isize, @bitCast(audio_samples * @sizeOf(f32))));
                 _ = c.SDL_PutAudioStreamData(stream, @ptrCast(&audio_buffer[0]), size);
             }
@@ -318,54 +337,52 @@ fn writeAudio() void {
     }
 }
 
-pub fn start_system_thread(allocator: std.mem.Allocator) !void {
-    system_thread = System.Thread.init(allocator, &channel, &vdp_queue, system) catch |err| {
+fn start_system_thread(self: *App) !void {
+    self.system_thread = System.Thread.init(self.gpa, &self.channel, &self.vdp_queue, self.system) catch |err| {
         std.debug.print("Failed to create CPU thread: {}\n", .{err});
         return error.OutOfMemory;
     };
 
-    system_thread.start() catch {
+    self.system_thread.start() catch {
         std.debug.print("Failed to start CPU thread\n", .{});
         return error.BackendError;
     };
 }
 
-pub fn start_audio_thread(allocator: std.mem.Allocator) !void {
-    psg1_queue = Bus.Queue.initCapacity(allocator, 0x2000) catch {
+fn start_audio_thread(self: *App) !void {
+    self.psg1_queue = Bus.Queue.initCapacity(self.gpa, 0x2000) catch {
         std.debug.print("Failed to create psg1 queue\n", .{});
         return error.OutOfMemory;
     };
 
-    psg2_queue = Bus.Queue.initCapacity(allocator, 0x2000) catch {
+    self.psg2_queue = Bus.Queue.initCapacity(self.gpa, 0x2000) catch {
         std.debug.print("Failed to create psg2 queue\n", .{});
         return error.OutOfMemory;
     };
 
-    audio_thread = Audio.Thread.init(allocator, &channel, &psg1_queue, &psg2_queue) catch |err| {
+    self.audio_thread = Audio.Thread.init(self.gpa, &self.channel, &self.psg1_queue, &self.psg2_queue) catch |err| {
         std.debug.print("Failed to create audio thread: {}\n", .{err});
         return error.OutOfMemory;
     };
 
-    audio_thread.start() catch {
+    self.audio_thread.start() catch {
         std.debug.print("Failed to start audio thread\n", .{});
         return error.BackendError;
     };
 }
 
-pub fn destroy_system_thread() void {
-    system_thread.deinit();
-    system.deinit(gpa);
+fn destroy_system_thread(self: *App) void {
+    self.system_thread.deinit();
+    self.system.deinit(self.gpa);
 }
 
-pub fn destroy_audio_thread() void {
-    audio_thread.deinit();
-    psg1_queue.deinit(gpa);
-    psg2_queue.deinit(gpa);
+fn destroy_audio_thread(self: *App) void {
+    self.audio_thread.deinit();
+    self.psg1_queue.deinit(self.gpa);
+    self.psg2_queue.deinit(self.gpa);
 }
 
-pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
-    gpa = allocator;
-
+fn open_vdp_window(self: *App) !void {
     if (!c.SDL_Init(c.SDL_INIT_VIDEO | c.SDL_INIT_AUDIO)) {
         std.debug.print("Couldn't initialize SDL: {s}\n", .{c.SDL_GetError()});
         return error.BackendError;
@@ -375,24 +392,24 @@ pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
     const aspect_ratio: f32 = @as(f32, content_width) / @as(f32, content_height);
     const flags = c.SDL_WINDOW_HIGH_PIXEL_DENSITY | c.SDL_WINDOW_RESIZABLE | hidden_flag;
 
-    window = c.SDL_CreateWindow("StarJay Fantasy Console", @as(c_int, @intCast(window_width)), @as(c_int, @intCast(window_height)), flags) orelse {
+    self.window = c.SDL_CreateWindow("StarJay Fantasy Console", @as(c_int, @intCast(window_width)), @as(c_int, @intCast(window_height)), flags) orelse {
         std.debug.print("Failed to open window: {s}\n", .{c.SDL_GetError()});
         return error.BackendError;
     };
-    // _ = c.SDL_SetWindowPosition(window, 0, 1440 - window_height);
+    // _ = c.SDL_SetWindowPosition(self.window, 0, 1440 - window_height);
     // Lock aspect ratio during resize
-    _ = c.SDL_SetWindowAspectRatio(window, aspect_ratio, aspect_ratio);
+    _ = c.SDL_SetWindowAspectRatio(self.window, aspect_ratio, aspect_ratio);
     if (vsync) {
-        _ = c.SDL_SetWindowSurfaceVSync(window, 1);
+        _ = c.SDL_SetWindowSurfaceVSync(self.window, 1);
     }
-    window_surface = c.SDL_GetWindowSurface(window);
+    self.window_surface = c.SDL_GetWindowSurface(self.window);
 
     // Create two surfaces for double buffering
-    surfaces[0] = c.SDL_CreateSurface(content_width, content_height, c.SDL_PIXELFORMAT_ARGB8888) orelse {
+    self.surfaces[0] = c.SDL_CreateSurface(content_width, content_height, c.SDL_PIXELFORMAT_ARGB8888) orelse {
         std.debug.print("Failed to create surface 0: {s}\n", .{c.SDL_GetError()});
         return error.BackendError;
     };
-    surfaces[1] = c.SDL_CreateSurface(content_width, content_height, c.SDL_PIXELFORMAT_ARGB8888) orelse {
+    self.surfaces[1] = c.SDL_CreateSurface(content_width, content_height, c.SDL_PIXELFORMAT_ARGB8888) orelse {
         std.debug.print("Failed to create surface 1: {s}\n", .{c.SDL_GetError()});
         return error.BackendError;
     };
@@ -401,43 +418,43 @@ pub fn open_vdp_window(allocator: std.mem.Allocator) !void {
         .format = c.SDL_AUDIO_F32,
         .channels = 2,
     };
-    audio_stream = c.SDL_OpenAudioDeviceStream(c.SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &audio_spec, null, null) orelse blk: {
+    self.audio_stream = c.SDL_OpenAudioDeviceStream(c.SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &audio_spec, null, null) orelse blk: {
         std.debug.print("Failed to open audio stream: {s}\n", .{c.SDL_GetError()});
         break :blk null;
     };
 
     // Initialize shadow queue for CPU writes to VDP memory
-    vdp_queue = Bus.Queue.initCapacity(allocator, 0x200000) catch {
+    self.vdp_queue = Bus.Queue.initCapacity(self.gpa, 0x200000) catch {
         std.debug.print("Failed to create shadow queue\n", .{});
         return error.OutOfMemory;
     };
 
     // Initialize VDP thread
-    vdp_thread = Vdp.Thread.init(allocator, &vdp_queue, &channel) catch {
+    self.vdp_thread = Vdp.Thread.init(self.gpa, &self.vdp_queue, &self.channel) catch {
         std.debug.print("Failed to create VDP thread\n", .{});
         return error.OutOfMemory;
     };
 
     // Start the VDP thread
-    vdp_thread.start() catch |err| {
+    self.vdp_thread.start() catch |err| {
         std.debug.print("Failed to start VDP thread: {}\n", .{err});
         return error.BackendError;
     };
 }
 
-pub fn destroy_vdp_window() void {
-    vdp_thread.deinit();
-    vdp_queue.deinit(gpa);
+fn destroy_vdp_window(self: *App) void {
+    self.vdp_thread.deinit();
+    self.vdp_queue.deinit(self.gpa);
 
-    if (audio_stream) |stream| {
+    if (self.audio_stream) |stream| {
         _ = c.SDL_DestroyAudioStream(stream);
-        audio_stream = null;
+        self.audio_stream = null;
     }
 
-    _ = c.SDL_DestroySurface(surfaces[0]);
-    _ = c.SDL_DestroySurface(surfaces[1]);
+    _ = c.SDL_DestroySurface(self.surfaces[0]);
+    _ = c.SDL_DestroySurface(self.surfaces[1]);
 
-    c.SDL_DestroyWindow(window);
+    c.SDL_DestroyWindow(self.window);
 }
 
 test {

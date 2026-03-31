@@ -8,7 +8,7 @@ const hl_emu = @import("emulator/starjette/highlevel/root.zig");
 const ll_emu = @import("emulator/starjette/microcoded/root.zig");
 const System = @import("emulator/System.zig");
 const debugger = @import("debugger/root.zig");
-const vdp = @import("emulator/vdp/main.zig");
+const App = @import("emulator/App.zig");
 const chan = @import("lib/chan.zig"); // for the tests
 
 pub export const cpu: *emulator.CpuState = &@import("debugger/debugger.zig").cpu;
@@ -34,7 +34,7 @@ fn logFn(
 fn mainWithoutEnv(c_argc: c_int, c_argv: [*][*:0]c_char) callconv(.c) c_int {
     _ = @as([*][*:0]u8, @ptrCast(c_argv))[0..@as(usize, @intCast(c_argc))];
     const gpa = std.heap.c_allocator;
-    vdp.main(gpa, "sdk/zig/examples/vdp_demo/zig-out/bin/vdp_demo") catch unreachable;
+    App.main(gpa, "sdk/zig/examples/vdp_demo/zig-out/bin/vdp_demo") catch unreachable;
     return 0;
 }
 
@@ -87,7 +87,9 @@ pub fn main() !void {
         // try debugger.main(gpa, res.args.vdp != 0);
         return;
     } else if (res.args.vdp != 0) {
-        try vdp.main(gpa, res.args.rom);
+        const app = try App.init(gpa, res.args.rom);
+        defer app.deinit();
+        try app.main_loop();
         return;
     }
 
